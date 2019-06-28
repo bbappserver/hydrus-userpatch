@@ -50,7 +50,7 @@ def FrameIndexOutOfRange( index, range_start, range_end ):
     
 def GenerateHydrusBitmap( path, mime, compressed = True ):
     
-    numpy_image = ClientImageHandling.GenerateNumpyImage( path, mime )
+    numpy_image = ClientImageHandling.GenerateNumPyImage( path, mime )
     
     return GenerateHydrusBitmapFromNumPyImage( numpy_image, compressed = compressed )
     
@@ -94,7 +94,7 @@ class ImageRenderer( object ):
     
     def _Initialise( self ):
         
-        self._numpy_image = ClientImageHandling.GenerateNumpyImage( self._path, self._mime )
+        self._numpy_image = ClientImageHandling.GenerateNumPyImage( self._path, self._mime )
         
     
     def GetEstimatedMemoryFootprint( self ):
@@ -129,7 +129,7 @@ class ImageRenderer( object ):
             
         else:
             
-            wx_numpy_image = ClientImageHandling.ResizeNumpyImageForMediaViewer( self._media.GetMime(), self._numpy_image, target_resolution )
+            wx_numpy_image = ClientImageHandling.ResizeNumPyImageForMediaViewer( self._media.GetMime(), self._numpy_image, target_resolution )
             
         
         ( wx_height, wx_width, wx_depth ) = wx_numpy_image.shape
@@ -138,11 +138,11 @@ class ImageRenderer( object ):
         
         if wx_depth == 3:
             
-            return wx.Bitmap.FromBuffer( wx_width, wx_height, wx_data )
+            return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( wx_width, wx_height, 24, wx_data )
             
         else:
             
-            return wx.Bitmap.FromBufferRGBA( wx_width, wx_height, wx_data )
+            return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( wx_width, wx_height, 32, wx_data )
             
         
     
@@ -303,6 +303,8 @@ class RasterContainerVideo( RasterContainer ):
         
         client_files_manager = HG.client_controller.client_files_manager
         
+        time.sleep( 0.00001 )
+        
         if self._media.GetMime() == HC.IMAGE_GIF:
             
             self._durations = HydrusImageHandling.GetGIFFrameDurations( self._path )
@@ -313,6 +315,9 @@ class RasterContainerVideo( RasterContainer ):
             
             self._renderer = HydrusVideoHandling.VideoRendererFFMPEG( self._path, mime, duration, num_frames_in_video, self._target_resolution )
             
+        
+        # give ui a chance to draw a blank frame rather than hard-charge right into CPUland
+        time.sleep( 0.00001 )
         
         self.GetReadyForFrame( self._init_position )
         
@@ -709,14 +714,7 @@ class HydrusBitmap( object ):
         
         ( width, height ) = self._size
         
-        if self._depth == 3:
-            
-            return wx.Bitmap.FromBuffer( width, height, self._GetData() )
-            
-        elif self._depth == 4:
-            
-            return wx.Bitmap.FromBufferRGBA( width, height, self._GetData() )
-            
+        return HG.client_controller.bitmap_manager.GetBitmapFromBuffer( width, height, self._depth * 8, self._GetData() )
         
     
     def GetWxImage( self ):
@@ -729,11 +727,11 @@ class HydrusBitmap( object ):
             
         elif self._depth == 4:
             
-            bitmap = wx.Bitmap.FromBufferRGBA( width, height, self._GetData() )
+            bitmap = HG.client_controller.bitmap_manager.GetBitmapFromBuffer( width, height, 32, self._GetData() )
             
             image = bitmap.ConvertToImage()
             
-            bitmap.Destroy()
+            HG.client_controller.bitmap_manager.ReleaseBitmap( bitmap )
             
             return image
             

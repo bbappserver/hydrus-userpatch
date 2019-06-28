@@ -310,7 +310,7 @@ class TestTagsManager( unittest.TestCase ):
         
         #
         
-        content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_PETITION, ( 'hello', hashes, 'reason' ) )
+        content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_PETITION, ( 'hello', hashes ), reason = 'reason' )
         
         self._other_tags_manager.ProcessContentUpdate( self._content_update_service_key, content_update )
         
@@ -338,7 +338,7 @@ class TestTagsManager( unittest.TestCase ):
         
         #
         
-        content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_PETITION, ( 'hello', hashes, 'reason' ) )
+        content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_PETITION, ( 'hello', hashes ), reason = 'reason' )
         
         self._other_tags_manager.ProcessContentUpdate( self._content_update_service_key, content_update )
         
@@ -492,19 +492,19 @@ class TestTagObjects( unittest.TestCase ):
         
         p = ClientSearch.Predicate( HC.PREDICATE_TYPE_SYSTEM_MIME, set( HC.IMAGES ).intersection( HC.SEARCHABLE_MIMES ) )
         
-        self.assertEqual( p.ToString(), 'system:mime is image' )
+        self.assertEqual( p.ToString(), 'system:filetype is image' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces(), [ ( p.ToString(), p.GetNamespace() ) ] )
         
         p = ClientSearch.Predicate( HC.PREDICATE_TYPE_SYSTEM_MIME, ( HC.VIDEO_WEBM, ) )
         
-        self.assertEqual( p.ToString(), 'system:mime is video/webm' )
+        self.assertEqual( p.ToString(), 'system:filetype is video/webm' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces(), [ ( p.ToString(), p.GetNamespace() ) ] )
         
         p = ClientSearch.Predicate( HC.PREDICATE_TYPE_SYSTEM_MIME, ( HC.VIDEO_WEBM, HC.IMAGE_GIF ) )
         
-        self.assertEqual( p.ToString(), 'system:mime is video/webm, image/gif' )
+        self.assertEqual( p.ToString(), 'system:filetype is video/webm, image/gif' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces(), [ ( p.ToString(), p.GetNamespace() ) ] )
         
