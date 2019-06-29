@@ -5,6 +5,7 @@ from . import HydrusExceptions
 from . import HydrusGlobals as HG
 from . import HydrusThreading
 import os
+import time
 import psutil
 import re
 import send2trash
@@ -692,8 +693,24 @@ def MergeTree( source, dest, text_update_hook = None ):
             
         
     
-def MirrorFile( source, dest ):
+def MirrorFile( source, dest, timeout = None ):
+
+    if not os.path.exists(source):
+        #TODO the caller should know if failure happened du to source missing
+        #This can happen on a restored session where a temporary file was in the middle of copying(not rename)
+        #But hydrus died so the temporary download went away.
+        pass
     
+    #If the volume cotaining the hydrus data went away wait for it to come back up
+    #This can be caused by flaky network volumes,and incorectly removed volumes (removed while hydrus running)
+    dest_dir=os.path.dirname(dest)
+    t0 = time.time
+    
+    while not os.path.exists(dest_dir): 
+        time.sleep(0) #yield this thread
+        if timeout is not None and (time.time -t0) > timeout:
+            break
+        
     if not PathsHaveSameSizeAndDate( source, dest ):
         
         try:
