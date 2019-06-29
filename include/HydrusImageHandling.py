@@ -18,6 +18,14 @@ from . import HydrusGlobals as HG
 from . import HydrusPaths
 import warnings
 
+from cachetools import cached, LFUCache
+
+imgcache = LFUCache(maxsize=32) #This is slightly over a gig of 4megapixle RGB8
+imglock = threading.RLock()
+thumbcache = LFUCache(maxsize=36*3)#6 rows, 6 colums, 3 pages
+thumblock = threading.RLock()
+
+
 if hasattr( PILImageFile, 'LOAD_TRUNCATED_IMAGES' ):
     
     PILImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -119,6 +127,7 @@ def Dequantize( pil_image ):
     
     return pil_image
     
+@cached(imgcache, lock=imglock)    
 def GenerateNumPyImage( path, mime, force_pil = False ):
     
     if HG.media_load_report_mode:
@@ -329,7 +338,8 @@ def GeneratePILImageFromNumPyImage( numpy_image ):
     pil_image = PILImage.frombytes( format, ( w, h ), numpy_image.data.tobytes() )
     
     return pil_image
-    
+
+@cached(thumbcache, lock=thumblock)    
 def GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime ):
     
     if OPENCV_OK:
