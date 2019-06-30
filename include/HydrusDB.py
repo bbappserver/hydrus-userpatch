@@ -476,7 +476,7 @@ class HydrusDB( object ):
                 
                 self._c.execute( 'PRAGMA ' + db_name + '.journal_mode = TRUNCATE;' )
                 
-                self._c.execute( 'PRAGMA ' + db_name + '.synchronous = 2;' )
+                self._c.execute( 'PRAGMA ' + db_name + '.synchronous = 1;' )
                 
                 self._c.execute( 'SELECT * FROM ' + db_name + '.sqlite_master;' ).fetchone()
                 
@@ -487,7 +487,11 @@ class HydrusDB( object ):
                 # if this is set to 1, transactions are not immediately synced to the journal and can be undone following a power-loss
                 # if set to 2, all transactions are synced
                 # either way, transactions are atomically consistent, but let's not mess around when power-cut during heavy file import or w/e
-                self._c.execute( 'PRAGMA ' + db_name + '.synchronous = 2;' )
+                
+                # ATTENTION: You are on the branch that likes to live dangerously, this will speed up I/O a lot, but having a backup
+                # Becomes way more important, because power loss can corrupt your DB. ONLY USE THIS FEATURE if you have a journaled filesystem, or
+                # this error may go undetected, until it is a serious problem.
+                self._c.execute( 'PRAGMA ' + db_name + '.synchronous = 1;' )
                 
                 try:
                     
