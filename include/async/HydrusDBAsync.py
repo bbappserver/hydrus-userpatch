@@ -40,9 +40,12 @@ class HydrusDB( object ):
     TRANSACTION_COMMIT_TIME = 10
     
 
-    def __init__( self, controller, db_dir, db_name, event_loop ):
-      self._db=dbsynchronous.HydrusDB(controller,db_dir,db_name)
-      self._loop = event_loop
+    def __init__( self, controller, db ):
+      '''Use an existing database controler as the backend
+      You should do this epecially if you already have a connection
+      as you are porting the old synchronous code'''
+      assert(isinstance(db,dbsynchronous.HydrusDB))
+      self._db=db
                       
     def _DoCallback(self,on_complete,result):
         if on_complete is not None:
