@@ -3,6 +3,7 @@ class TagPreprocessor(object):
     
     RESULT_ACCEPT=0 #Automatic acceptance
     RESULT_CHECK=1 #Check by human
+    #RESULT_REJECT=2 #DON'T UNCOMMENT THIS, IT'S JUST HERE TO REMIND YOU IT WOULD BE A BAD IDEA
 
     HASHLIKE_NAMESPACE=("md5","sha1","sha2","sha128","sha256","sha512",)
     HASHLIKE_LENGTH=(32,64,128,512,512)
