@@ -6,8 +6,8 @@ class TagPreprocessor(object):
     #RESULT_REJECT=2 #DON'T UNCOMMENT THIS, IT'S JUST HERE TO REMIND YOU IT WOULD BE A BAD IDEA
 
     HASHLIKE_NAMESPACE=("md5","sha1","sha2","sha128","sha256","sha512",)
-    HASHLIKE_LENGTH=(32,64,128,512,512)
-    HEX_REGEX="[a-z0-9]{32,64,128,256,512}"
+    HASHLIKE_LENGTH=(32,64,128,256,512)
+    HEX_REGEX="[a-f0-9]{32,64,128,256,512}"
 
     PAGE_REGEX="[a-z]?\d{1,3}"
     RANDOM_REGEX="[^a-z]{"
@@ -53,25 +53,25 @@ class TagPreprocessor(object):
 
     def evaluate_tag(self,tag):
         if tag in self.keep:
-            return self.RESULT_ACCEPT
+            return (self.RESULT_ACCEPT,"auto")
         namespace,name=tag
 
         #START Regardless of namespace
         if "length" in self.checks and len(name)+len(namespace) > self.max_length:
-            return self.RESULT_CHECK
+            return (self.RESULT_CHECK,"length")
         if "screech" in re.search(name,self.SCREECHING_REGEX):
-            return self.RESULT_CHECK
+            return (self.RESULT_CHECK,"screech")
         if "narcissim" in name in self.NARCISSISM:
-            return self.RESULT_CHECK
+            return (self.RESULT_CHECK,"narcissism")
         if "hashlike" in self.resembles_hash(namespace,name):
-            return self.RESULT_CHECK
+            return (self.RESULT_CHECK,"hashlike")
 
         #END Regardless of namespace
         if namespace is None:
             if "unnamespaced-num" in self.checks \
                 and re.match(name,r"\d+") and not re.match(name,self.TIMESTAMP_REGEX): 
-                return self.RESULT_CHECK #Unnamespaced number
+                return (self.RESULT_CHECK,unnamspaced-num) #Unnamespaced number
         elif namespace in ("page") and "page-num" in self.checks: 
-            if self.strange_page(name,namespace):return self.RESULT_CHECK #non-numberish page
+            if self.strange_page(name,namespace):return (self.RESULT_CHECK,"page-num") #non-numberish page
         elif namespace in ("chapter","volume") and "chapter+volume" in self.checks:
-            if self.strange_page(name,namespace):return self.RESULT_CHECK #non-numberish
+            if self.strange_page(name,namespace):return (self.RESULT_CHECK,"chapter+volume") #non-numberish
