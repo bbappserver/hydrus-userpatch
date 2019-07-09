@@ -22,7 +22,9 @@ class TagPreprocessor(object):
     ("narcissism","Checks for tags that look like \"don't steal my art it's mine\""),
     ("length","Checks for tags that look suspiciously long"),
     ("screech","Checks for strings that look like 'get reckttttttt'"),
-    ("unnamspaced-num","Checks for numbers not in a namespace excluding those resembling years")
+    ("unnamspaced-num","Checks for numbers not in a namespace excluding those resembling years"),
+    ("page-num","Checks for non-numberlike page numbers, some tollerance for letters"),
+    ("chapter+volume","Checks for non numeric volumes and chapters")
     )
 
     def all_checks(self):
@@ -66,7 +68,7 @@ class TagPreprocessor(object):
 
         #END Regardless of namespace
         if namespace is None:
-            if "unnamespaced-nu" in self.checks \
+            if "unnamespaced-num" in self.checks \
                 and re.match(name,r"\d+") and not re.match(name,self.TIMESTAMP_REGEX): 
                 return self.RESULT_CHECK #Unnamespaced number
         elif namespace in ("page") and "page-num" in self.checks: 
