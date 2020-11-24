@@ -67,7 +67,7 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         session.cookies.clear_expired_cookies()
         
     
-    def _GenerateSession( self, network_context ):
+    def _GenerateSession( self, network_context ) -> requests.Session :
         
         session = requests.Session()
         
@@ -176,7 +176,7 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetSession( self, network_context ):
+    def GetSession( self, network_context ) -> requests.Session:
         
         with self._lock:
             

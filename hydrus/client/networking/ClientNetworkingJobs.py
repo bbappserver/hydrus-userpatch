@@ -266,7 +266,7 @@ class NetworkJob( object ):
         return ( connect_timeout, read_timeout )
         
     
-    def _SendRequestAndGetResponse( self ):
+    def _SendRequestAndGetResponse( self ) -> requests.Response:
         
         with self._lock:
             
@@ -693,17 +693,32 @@ class NetworkJob( object ):
             
             time.sleep( 0.1 )
             
-        
+    def _ThrottleByServerRequest(self, duration_seconds):
+
+        self._serverside_bandwidth_wake_time = max(HydrusData.GetNow() + duration_seconds,self._serverside_bandwidth_wake_time)
+
     
     def _WaitOnServersideBandwidth( self, status_text ):
         
         # 429 or 509 response from server. basically means 'I'm under big load mate'
         # a future version of this could def talk to domain manager and add a temp delay so other network jobs can be informed
         
-        serverside_bandwidth_wait_time = HG.client_controller.new_options.GetInteger( 'serverside_bandwidth_wait_time' )
-        
-        self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
-        
+        #Only use the value from preferences if a wait time hasn't been externally specified
+        if self._serverside_bandwidth_wake_time == 0:
+
+            serverside_bandwidth_wait_time = HG.client_controller.new_options.GetInteger( 'serverside_bandwidth_wait_time' )
+            
+            #TODO exponetnial backoff
+            #use_exponential_backoff = HG.client_controller.new_options.GetBool( 'serverside_bandwidth_wait_time' )
+            # if use_exponential_backoff:
+            #     backoff_factor=1.25
+            #     delta_time = serverside_bandwidth_wait_time * (backoff_factor ** ( self._current_connection_attempt_number - 1 ) )
+            #     self._serverside_bandwidth_wake_time = HydrusData.GetNow() + delta_time
+            # else:
+            #     self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
+
+            self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
+          
         while not HydrusData.TimeHasPassed( self._serverside_bandwidth_wake_time ) and not self._IsCancelled():
             
             with self._lock:
@@ -712,6 +727,9 @@ class NetworkJob( object ):
                 
             
             time.sleep( 1 )
+        
+        #We are done waiting so set wait time back to zero
+        self._serverside_bandwidth_wake_time = 0
             
         
     
@@ -864,7 +882,7 @@ class NetworkJob( object ):
             
         
     
-    def GetCreationTime( self ):
+    def GetCreationTime( self )-> int:
         
         with self._lock:
             
@@ -920,7 +938,7 @@ class NetworkJob( object ):
             
         
     
-    def GetSession( self ):
+    def GetSession( self ) -> requests.Session:
         
         with self._lock:
             
@@ -956,7 +974,7 @@ class NetworkJob( object ):
             
         
     
-    def HasError( self ):
+    def HasError( self ) -> bool:
         
         with self._lock:
             
@@ -964,7 +982,7 @@ class NetworkJob( object ):
             
         
     
-    def IsAsleep( self ):
+    def IsAsleep( self ) -> bool:
         
         with self._lock:
             
@@ -972,7 +990,7 @@ class NetworkJob( object ):
             
         
     
-    def IsCancelled( self ):
+    def IsCancelled( self ) -> bool:
         
         with self._lock:
             
@@ -980,7 +998,7 @@ class NetworkJob( object ):
             
         
     
-    def IsDone( self ):
+    def IsDone( self ) -> bool:
         
         with self._lock:
             
@@ -988,7 +1006,7 @@ class NetworkJob( object ):
             
         
     
-    def IsHydrusJob( self ):
+    def IsHydrusJob( self ) -> bool:
         
         with self._lock:
             
@@ -1019,12 +1037,12 @@ class NetworkJob( object ):
             
         
     
-    def NoEngineYet( self ):
+    def NoEngineYet( self ) -> bool:
         
         return self.engine is None
         
     
-    def ObeysBandwidth( self ):
+    def ObeysBandwidth( self ) -> bool:
         
         return self._ObeysBandwidth()
         
@@ -1226,6 +1244,13 @@ class NetworkJob( object ):
                             
                         
                         self._ReadResponse( response, self._stream_io, 104857600 )
+
+                        if response.status_code == 429:
+                            if 'Retry-After' in response.headers:
+                                t= int(response.headers['Retry-After'])
+                                self._ThrottleByServerRequest(t)
+                            
+
                         
                         with self._lock:
                             
