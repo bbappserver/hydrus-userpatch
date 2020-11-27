@@ -471,7 +471,7 @@ class NetworkLoginManager( HydrusSerialisable.SerialisableBase ):
         return self.GenerateLoginProcess( network_context )
         
     
-    def GetDomainsToLoginInfo( self ):
+    def GetDomainsToLoginInfo( self ) -> dict:
         
         with self._lock:
             
@@ -521,7 +521,7 @@ class NetworkLoginManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def IsDirty( self ):
+    def IsDirty( self ) -> bool :
         
         with self._lock:
             
@@ -588,7 +588,7 @@ class NetworkLoginManager( HydrusSerialisable.SerialisableBase ):
         self.SetLoginScripts( new_login_scripts )
         
     
-    def SetClean( self ):
+    def SetClean( self ) -> None:
         
         with self._lock:
             
@@ -884,6 +884,7 @@ class LoginCredentialDefinition( HydrusSerialisable.SerialisableBaseNamed ):
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_LOGIN_CREDENTIAL_DEFINITION ] = LoginCredentialDefinition
 
 class LoginProcess( object ):
+    """An abstract superclass for features sharedb y different login processes."""
     
     def __init__( self, engine, network_context, login_script ):
         
@@ -917,6 +918,7 @@ class LoginProcess( object ):
         
     
 class LoginProcessDomain( LoginProcess ):
+    """The login process for web dommains"""
     
     def __init__( self, engine, network_context, login_script, credentials ):
         
@@ -925,7 +927,7 @@ class LoginProcessDomain( LoginProcess ):
         self.credentials = credentials
         
     
-    def _Start( self ):
+    def _Start( self ) -> None:
         
         login_domain = self.network_context.context_data
         
@@ -950,14 +952,14 @@ class LoginProcessDomain( LoginProcess ):
     
 class LoginProcessHydrus( LoginProcess ):
     
-    def _Start( self ):
+    def _Start( self ) -> None:
         
         self.login_script.Start( self.engine, self.network_context )
         
     
 class LoginScriptHydrus( object ):
     
-    def _IsLoggedIn( self, engine, network_context ):
+    def _IsLoggedIn( self, engine, network_context ) -> bool:
         
         session = engine.session_manager.GetSession( network_context )
         
@@ -968,7 +970,7 @@ class LoginScriptHydrus( object ):
         return 'session_key' in cookies
         
     
-    def IsLoggedIn( self, engine, network_context ):
+    def IsLoggedIn( self, engine, network_context ) -> bool:
         
         return self._IsLoggedIn( engine, network_context )
         
@@ -1024,6 +1026,7 @@ class LoginScriptHydrus( object ):
         
     
 class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
+    '''The model for the Login Scripts features, submits web forms to obtain cookies for a domain for use by a session.'''
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_LOGIN_SCRIPT_DOMAIN
     SERIALISABLE_NAME = 'Login Script - Domain'
@@ -1113,7 +1116,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
             
         
     
-    def _IsLoggedIn( self, engine, network_context, validation_check = False ):
+    def _IsLoggedIn( self, engine, network_context, validation_check = False ) -> bool:
         
         session = engine.session_manager.GetSession( network_context )
         
@@ -1159,7 +1162,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
         return True
         
     
-    def CheckCanLogin( self, given_credentials ):
+    def CheckCanLogin( self, given_credentials ) -> None:
         
         self.CheckIsValid()
         
@@ -1192,7 +1195,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
             
         
     
-    def CheckIsValid( self ):
+    def CheckIsValid( self ) -> None:
         
         defined_cred_names = { credential_definition.GetName() for credential_definition in self._credential_definitions }
         required_cred_names = { name for name in itertools.chain.from_iterable( ( step.GetRequiredCredentials() for step in self._login_steps ) ) }
@@ -1333,7 +1336,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
         return required_creds
         
     
-    def GetSafeSummary( self ):
+    def GetSafeSummary( self )-> str:
         
         return 'Login Script "' + self._name + '" - ' + ', '.join( self.GetExampleDomains() )
         
@@ -1343,17 +1346,17 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
         return self._IsLoggedIn( engine, network_context )
         
     
-    def RegenerateLoginScriptKey( self ):
+    def RegenerateLoginScriptKey( self ) -> None:
         
         self._login_script_key = HydrusData.GenerateKey()
         
     
-    def SetLoginScriptKey( self, login_script_key ):
+    def SetLoginScriptKey( self, login_script_key ) -> None:
         
         self._login_script_key = login_script_key
         
     
-    def SetLoginScriptKeyAndName( self, login_script_key_and_name ):
+    def SetLoginScriptKeyAndName( self, login_script_key_and_name ) -> None:
         
         ( login_script_key, name ) = login_script_key_and_name
         

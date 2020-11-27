@@ -1,3 +1,11 @@
+"""This module contains features specific to particular network domains.
+This includes utilities for URL processing, components of the downloader system, such as GUGs and URL classes,
+procedures for saving and loading their serializations and various functions for determinin how to request and treat remote resources.
+
+See Also
+    ClientNetworkingBandwitdth: Per domain bandwidth limits
+    ClientNetorkingSessions: Session data like cookies
+"""
 import collections
 import http.cookiejar
 import os

@@ -1,3 +1,4 @@
+"""This module contains definitions of network jobs, which are threadable containers for network requests and responses"""
 import io
 import os
 import requests
@@ -134,7 +135,14 @@ def ConvertStatusCodeAndDataIntoExceptionInfo( status_code, data, is_hydrus_serv
     return ( e, error_text )
     
 class NetworkJob( object ):
+    '''A network job fully encapsulates all of the headers, request, response, and state of a network request, as well as the status of a file download.
+    Network job is a base class for several other classes which subtely alter its behaviour depending on which part of Hydrus it is being used for, it shoud not be instantiated directly.
     
+    See Also:
+        NetworkJobDownloader, NetworkJobSubscription, NetworkJobHydrus, NetworkJobIPFS, NetWorkJobWatcherPage
+
+    '''
+
     WILLING_TO_WAIT_ON_INVALID_LOGIN = True
     IS_HYDRUS_SERVICE = False
     IS_IPFS_SERVICE = False
@@ -710,12 +718,13 @@ class NetworkJob( object ):
             
             #TODO exponetnial backoff
             #use_exponential_backoff = HG.client_controller.new_options.GetBool( 'serverside_bandwidth_wait_time' )
-            # if use_exponential_backoff:
-            #     backoff_factor=1.25
-            #     delta_time = serverside_bandwidth_wait_time * (backoff_factor ** ( self._current_connection_attempt_number - 1 ) )
-            #     self._serverside_bandwidth_wake_time = HydrusData.GetNow() + delta_time
-            # else:
-            #     self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
+            use_exponential_backoff = self._current_connection_attempt_number > 1
+            if use_exponential_backoff:
+                backoff_factor=2
+                delta_time = 90 * (backoff_factor ** ( self._current_connection_attempt_number - 1 ) )
+                self._serverside_bandwidth_wake_time = HydrusData.GetNow() + delta_time
+            else:
+                self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
 
             self._serverside_bandwidth_wake_time = HydrusData.GetNow() + ( ( self._current_connection_attempt_number - 1 ) * serverside_bandwidth_wait_time )
           

@@ -1,3 +1,4 @@
+'''Network Contexts are serialized tables which can hold arbitrary information about netowkring jobs accross executions.'''
 import os
 
 from hydrus.core import HydrusGlobals as HG

@@ -39,7 +39,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def _CanStartRequest( self, network_contexts ):
+    def _CanStartRequest( self, network_contexts ) -> bool:
         
         for network_context in network_contexts:
             
@@ -116,7 +116,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
         self._dirty = True
         
     
-    def AlreadyHaveExactlyTheseBandwidthRules( self, network_context, bandwidth_rules ):
+    def AlreadyHaveExactlyTheseBandwidthRules( self, network_context, bandwidth_rules ) -> bool:
         
         with self._lock:
             
@@ -154,7 +154,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def CanContinueDownload( self, network_contexts ):
+    def CanContinueDownload( self, network_contexts ) -> bool:
         
         with self._lock:
             
@@ -174,7 +174,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def CanDoWork( self, network_contexts, expected_requests = 1, expected_bytes = 1048576, threshold = 30 ):
+    def CanDoWork( self, network_contexts, expected_requests = 1, expected_bytes = 1048576, threshold = 30 ) -> bool:
         
         with self._lock:
             
@@ -222,7 +222,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def DeleteHistory( self, network_contexts ):
+    def DeleteHistory( self, network_contexts ) -> None:
         
         with self._lock:
             
@@ -363,7 +363,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def HasRules( self, network_context ):
+    def HasRules( self, network_context ) -> bool:
         
         with self._lock:
             
@@ -371,7 +371,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def IsDirty( self ):
+    def IsDirty( self ) -> bool:
         
         with self._lock:
             
@@ -379,7 +379,9 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def ReportDataUsed( self, network_contexts, num_bytes ):
+    def ReportDataUsed( self, network_contexts, num_bytes : int ) -> None:
+
+        #if num_bytes<0: raise ValueError("num_bytes must be positive or 0")
         
         with self._lock:
             
@@ -392,7 +394,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def ReportRequestUsed( self, network_contexts ):
+    def ReportRequestUsed( self, network_contexts ) -> None:
         
         with self._lock:
             
@@ -400,7 +402,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def SetClean( self ):
+    def SetClean( self ) -> None:
         
         with self._lock:
             
@@ -408,7 +410,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def SetRules( self, network_context, bandwidth_rules ):
+    def SetRules( self, network_context, bandwidth_rules ) -> None:
         
         with self._lock:
             
@@ -468,7 +470,12 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def TryToStartRequest( self, network_contexts ):
+    def TryToStartRequest( self, network_contexts ) -> bool:
+        """
+        This wraps _CanStartRequest and _ReportRequestUsed in one transaction to stop 5/1 rq/s happening due to race condition
+
+        :return: False: If unable to start request, otherwise True
+        """
         
         # this wraps canstart and reportrequest in one transaction to stop 5/1 rq/s happening due to race condition
         
@@ -485,7 +492,7 @@ class NetworkBandwidthManager( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def UsesDefaultRules( self, network_context ):
+    def UsesDefaultRules( self, network_context ) -> None:
         
         with self._lock:
             
