@@ -436,7 +436,169 @@ class THREADCallToThread( DAEMON ):
             
             return
             
+class SchedulableJob( object ):
+    
+    def __init__( self, controller, scheduler, initial_delay, work_callable ):
         
+        self._controller = controller
+        self._scheduler = scheduler
+        self._work_callable = work_callable
+        
+        self._should_delay_on_wakeup = False
+        
+        self._next_work_time = HydrusData.GetNowFloat() + initial_delay
+        
+        self._thread_slot_type = None
+        
+        self._work_lock = threading.Lock()
+        
+        self._currently_working = threading.Event()
+        self._is_cancelled = threading.Event()
+        
+    
+    def __lt__( self, other ): # for the scheduler to do bisect.insort noice
+        
+        return self._next_work_time < other._next_work_time
+        
+    
+    def __repr__( self ):
+        
+        return repr( self.__class__ ) + ': ' + repr( self._work_callable ) + ' next in ' + HydrusData.TimeDeltaToPrettyTimeDelta( self._next_work_time - HydrusData.GetNowFloat() )
+        
+    
+    def _BootWorker( self ):
+        
+        self._controller.CallToThread( self.Work )
+        
+    
+    def Cancel( self ):
+        '''Abort scheduled work'''
+        
+        self._is_cancelled.set()
+        
+        self._scheduler.JobCancelled()
+        
+    
+    def CurrentlyWorking( self ):
+        '''A scheduler is running this job'''
+        
+        return self._currently_working.is_set()
+        
+    
+    def GetTimeDeltaUntilDue( self ):
+        
+        return HydrusData.GetTimeDeltaUntilTimeFloat( self._next_work_time )
+        
+    
+    def IsCancelled( self ):
+        
+        return self._is_cancelled.is_set()
+        
+    
+    def IsDead( self ):
+        
+        return False
+        
+    
+    def IsDue( self ):
+        
+        return HydrusData.TimeHasPassedFloat( self._next_work_time )
+        
+    
+    def PubSubWake( self, *args, **kwargs ):
+        
+        self.Wake()
+        
+    
+    def SetThreadSlotType( self, thread_type ):
+        '''Set the identifier used for HydrusController.AcquireThreadSlot()'''
+        
+        self._thread_slot_type = thread_type
+        
+    
+    def ShouldDelayOnWakeup( self, value ):
+        
+        self._should_delay_on_wakeup = value
+        
+    
+    def SlotOK( self ):
+        '''Ask the controller if anyone is doing this type of job, prevents any one job type form monopolizing compute resources.'''
+        if self._thread_slot_type is not None:
+            
+            if HG.controller.AcquireThreadSlot( self._thread_slot_type ):
+                
+                return True
+                
+            else:
+                
+                self._next_work_time = HydrusData.GetNowFloat() + 10 + random.random()
+                
+                return False
+                
+            
+        
+        return True
+        
+    
+    def StartWork( self ):
+        
+        if self._is_cancelled.is_set():
+            
+            return
+            
+        
+        self._currently_working.set()
+        
+        self._BootWorker()
+        
+    
+    def Wake( self, next_work_time = None ):
+        
+        if next_work_time is None:
+            
+            next_work_time = HydrusData.GetNowFloat()
+            
+        
+        self._next_work_time = next_work_time
+        
+        self._scheduler.WorkTimesHaveChanged()
+        
+    
+    def WakeOnPubSub( self, topic ):
+        
+        HG.controller.sub( self, 'PubSubWake', topic )
+        
+    
+    def Work( self ):
+        
+        try:
+            
+            if self._should_delay_on_wakeup:
+                
+                while HG.controller.JustWokeFromSleep():
+                    
+                    if IsThreadShuttingDown():
+                        
+                        return
+                        
+                    
+                    time.sleep( 1 )
+                    
+                
+            
+            with self._work_lock:
+                
+                self._work_callable()
+                
+            
+        finally:
+            
+            if self._thread_slot_type is not None:
+                
+                HG.controller.ReleaseThreadSlot( self._thread_slot_type )
+                
+            
+            self._currently_working.clear()        
     
 class JobScheduler( threading.Thread ):
     '''
@@ -693,169 +855,6 @@ class JobScheduler( threading.Thread ):
             
         
     
-class SchedulableJob( object ):
-    
-    def __init__( self, controller, scheduler, initial_delay, work_callable ):
-        
-        self._controller = controller
-        self._scheduler = scheduler
-        self._work_callable = work_callable
-        
-        self._should_delay_on_wakeup = False
-        
-        self._next_work_time = HydrusData.GetNowFloat() + initial_delay
-        
-        self._thread_slot_type = None
-        
-        self._work_lock = threading.Lock()
-        
-        self._currently_working = threading.Event()
-        self._is_cancelled = threading.Event()
-        
-    
-    def __lt__( self, other ): # for the scheduler to do bisect.insort noice
-        
-        return self._next_work_time < other._next_work_time
-        
-    
-    def __repr__( self ):
-        
-        return repr( self.__class__ ) + ': ' + repr( self._work_callable ) + ' next in ' + HydrusData.TimeDeltaToPrettyTimeDelta( self._next_work_time - HydrusData.GetNowFloat() )
-        
-    
-    def _BootWorker( self ):
-        
-        self._controller.CallToThread( self.Work )
-        
-    
-    def Cancel( self ):
-        '''Abort scheduled work'''
-        
-        self._is_cancelled.set()
-        
-        self._scheduler.JobCancelled()
-        
-    
-    def CurrentlyWorking( self ):
-        '''A scheduler is running this job'''
-        
-        return self._currently_working.is_set()
-        
-    
-    def GetTimeDeltaUntilDue( self ):
-        
-        return HydrusData.GetTimeDeltaUntilTimeFloat( self._next_work_time )
-        
-    
-    def IsCancelled( self ):
-        
-        return self._is_cancelled.is_set()
-        
-    
-    def IsDead( self ):
-        
-        return False
-        
-    
-    def IsDue( self ):
-        
-        return HydrusData.TimeHasPassedFloat( self._next_work_time )
-        
-    
-    def PubSubWake( self, *args, **kwargs ):
-        
-        self.Wake()
-        
-    
-    def SetThreadSlotType( self, thread_type ):
-        '''Set the identifier used for HydrusController.AcquireThreadSlot()'''
-        
-        self._thread_slot_type = thread_type
-        
-    
-    def ShouldDelayOnWakeup( self, value ):
-        
-        self._should_delay_on_wakeup = value
-        
-    
-    def SlotOK( self ):
-        '''Ask the controller if anyone is doing this type of job, prevents any one job type form monopolizing compute resources.'''
-        if self._thread_slot_type is not None:
-            
-            if HG.controller.AcquireThreadSlot( self._thread_slot_type ):
-                
-                return True
-                
-            else:
-                
-                self._next_work_time = HydrusData.GetNowFloat() + 10 + random.random()
-                
-                return False
-                
-            
-        
-        return True
-        
-    
-    def StartWork( self ):
-        
-        if self._is_cancelled.is_set():
-            
-            return
-            
-        
-        self._currently_working.set()
-        
-        self._BootWorker()
-        
-    
-    def Wake( self, next_work_time = None ):
-        
-        if next_work_time is None:
-            
-            next_work_time = HydrusData.GetNowFloat()
-            
-        
-        self._next_work_time = next_work_time
-        
-        self._scheduler.WorkTimesHaveChanged()
-        
-    
-    def WakeOnPubSub( self, topic ):
-        
-        HG.controller.sub( self, 'PubSubWake', topic )
-        
-    
-    def Work( self ):
-        
-        try:
-            
-            if self._should_delay_on_wakeup:
-                
-                while HG.controller.JustWokeFromSleep():
-                    
-                    if IsThreadShuttingDown():
-                        
-                        return
-                        
-                    
-                    time.sleep( 1 )
-                    
-                
-            
-            with self._work_lock:
-                
-                self._work_callable()
-                
-            
-        finally:
-            
-            if self._thread_slot_type is not None:
-                
-                HG.controller.ReleaseThreadSlot( self._thread_slot_type )
-                
-            
-            self._currently_working.clear()
             
         
     
