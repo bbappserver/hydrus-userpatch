@@ -1,3 +1,4 @@
+'''Defines the NetworkEngine and network job states... those probably should be moved to ClientNetworkJobs'''
 import collections
 import threading
 import time
@@ -22,10 +23,14 @@ job_status_str_lookup[ JOB_STATUS_AWAITING_SLOT ] = 'waiting for slot'
 job_status_str_lookup[ JOB_STATUS_RUNNING ] = 'running'
 
 class NetworkEngine( object ):
+    '''The network engine processes network jobs (ClientNetworkingJobs).  
+    When a job is inserted into the network engine it is evaluated and then scheduled in the engine's main loop.
+    The network engine also provides a path from between the job and the managers for bandwidth,session,logins and domains as well as the application controller.
+    '''
     
-    def __init__( self, controller, bandwidth_manager, session_manager, domain_manager, login_manager ):
+    def __init__( self, app_controller, bandwidth_manager, session_manager, domain_manager, login_manager ):
         
-        self.controller = controller
+        self.controller = app_controller
         
         self.bandwidth_manager = bandwidth_manager
         self.session_manager = session_manager
