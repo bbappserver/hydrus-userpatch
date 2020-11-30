@@ -1200,6 +1200,7 @@ def RandomPop( population ):
     return row
     
 def RecordRunningStart( db_path, instance ):
+    '''Create a PID file. Called on successful launch'''
     
     path = os.path.join( db_path, instance + '_running' )
     

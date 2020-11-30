@@ -103,6 +103,10 @@ def MessageHandler( msg_type, context, text ):
         
 
 class App( QW.QApplication ):
+    '''
+    A QT wrapper for the hydrus app controller, mostly boilerplater.
+    Also intercepts messages from the Operating System's Workspace
+    '''
     
     def __init__( self, pubsub, *args, **kwargs ):
         
@@ -801,6 +805,9 @@ class Controller( HydrusController.HydrusController ):
         
     
     def InitModel( self ):
+        '''
+        All model-controller (MVC) objects which are attached to the application controller get initialized here
+        '''
         
         self.frame_splash_status.SetTitleText( 'booting db\u2026' )
         
@@ -1001,7 +1008,11 @@ class Controller( HydrusController.HydrusController ):
         
     
     def InitView( self ):
+        '''
+        Starts the GUI and also hooks up various message passing that needs the GUI ready
         
+        :Todo:, some of this really seems like additional model initialization
+        '''
         if self.options[ 'password' ] is not None:
             
             self.frame_splash_status.SetText( 'waiting for password' )
@@ -1372,6 +1383,7 @@ class Controller( HydrusController.HydrusController ):
         
         ClientGUICore.GUICore()
         
+        #Create a QT app controller to interface QT to the HydrusController (Legacy application controller)
         self.app = App( self._pubsub, sys.argv )
         
         self.main_qt_thread = self.app.thread()
@@ -1865,6 +1877,7 @@ class Controller( HydrusController.HydrusController ):
         
     
     def THREADBootEverything( self ):
+        '''Initialize the actual program after the splash screen and preflight checks.'''
         
         try:
             
@@ -1883,10 +1896,13 @@ class Controller( HydrusController.HydrusController ):
             
             self.RecordRunningStart()
             
+            #Prepare the backend, spawns models and threads
             self.InitModel()
             
+            #Display the GUI
             self.InitView()
             
+            #We have booted successfully
             self._is_booted = True
             
         except ( HydrusExceptions.DBCredentialsException, HydrusExceptions.ShutdownException ) as e:
@@ -1919,6 +1935,7 @@ class Controller( HydrusController.HydrusController ):
         
     
     def THREADExitEverything( self ):
+        '''Performs a clean shutdown of everything spun up in THREADBootEverything'''
         
         try:
             

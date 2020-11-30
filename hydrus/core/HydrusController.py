@@ -16,6 +16,7 @@ from hydrus.core import HydrusPubSub
 from hydrus.core import HydrusThreading
 
 class HydrusController( object ):
+    '''The abstract base class of the Application controllers for both the client and server applications.'''
     
     def __init__( self, db_dir ):
         
@@ -616,6 +617,10 @@ class HydrusController( object ):
         
     
     def RecordRunningStart( self ):
+        '''
+        Check if we crashed by seeing if the PID file from the previous run was cleaned up ( it should be on clean shutdown ).
+        Then create a new PID file.
+        '''
         
         self._last_shutdown_was_bad = HydrusData.LastShutdownWasBad( self.db_dir, self._name )
         
