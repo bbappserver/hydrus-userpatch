@@ -137,6 +137,10 @@ def SubprocessCommunicate( process: subprocess.Popen ):
         
     
 class DAEMON( threading.Thread ):
+    '''
+    A thread with extras comperable to a UNIX daemon process, can be suspended and notified of termination.
+    Usually used as an abstract base class for other DAEMON* named classes.
+    '''
     
     def __init__( self, controller, name ):
         
@@ -182,8 +186,16 @@ class DAEMON( threading.Thread ):
         
     
 class DAEMONWorker( DAEMON ):
+    '''
+    A DAEMON thread which checks for work at a set interval.
+    '''
     
     def __init__( self, controller, name, callable, topics = None, period = 3600, init_wait = 3, pre_call_wait = 0 ):
+        '''
+        :param: controller: A reference to the applicaiton controller.
+        :param: name: A human redable name for this worker
+        :param: callable: The function this worker will call.  The function will have a single argument which takes the HydrusController.
+        :param: period: The rate at which this worker will check for work in seconds.'''
         
         if topics is None:
             
@@ -207,16 +219,26 @@ class DAEMONWorker( DAEMON ):
         
     
     def _CanStart( self ):
+        '''Check all preconditions to see if this task is allowed to start, by default just verifies if the applicaiton says it's ok which is true by defualt.'''
         
         return self._ControllerIsOKWithIt()
         
     
     def _ControllerIsOKWithIt( self ):
+        '''Ask the application if this daemon is allowed to run.  **Always** true unless overriden by a subclass.'''
         
         return True
         
     
     def _DoAWait( self, wait_time, event_can_wake = True ):
+        '''
+        Suspend execution for the wait_time, unless allowed to be worken by an event and that event fired.
+        This will **block** the thread it is called on, use with care.
+        
+        Arguments:
+        :param: wait_time: How long to wait in seconds.
+        :param event_can_wake: If true this suspend can be woken by calling DAEMON.wake()
+        '''
         
         time_to_start = HydrusData.GetNow() + wait_time
         
@@ -243,6 +265,7 @@ class DAEMONWorker( DAEMON ):
         
     
     def _WaitUntilCanStart( self ):
+        '''If not _CanStart poll every second until ready. Execution cannot be suspended in this state.'''
         
         while not self._CanStart():
             
@@ -258,7 +281,7 @@ class DAEMONWorker( DAEMON ):
         
     
     def run( self ):
-        
+        '''Actually execute the callable (after preconditions pass)'''
         try:
             
             self._DoAWait( self._init_wait )
@@ -286,7 +309,7 @@ class DAEMONWorker( DAEMON ):
                     return
                     
                 except Exception as e:
-                    
+                    #HACK it is probably not a good idea to catch all exceptions and do error handeling/logging in the failed daemon.
                     HydrusData.ShowText( 'Daemon ' + self._name + ' encountered an exception:' )
                     
                     HydrusData.ShowException( e )
@@ -323,6 +346,7 @@ class DAEMONForegroundWorker( DAEMONWorker ):
         
     
 class THREADCallToThread( DAEMON ):
+    '''A DAEMON for running producer-consumer style worker jobs.'''
     
     def __init__( self, controller, name ):
         
@@ -360,6 +384,10 @@ class THREADCallToThread( DAEMON ):
             
             while True:
                 
+                #If it appears emtpy suspend for 10 seconds, then check again.
+                #Queue.empty uses the queue count outside of a critical section, so it is heuristic.
+                #It is safe since we are the only ones who can empty this queue, so if we see an empty queue,
+                #then immediately get suspended and an element gets added at worst we will sleep 10 seconds, and then see a non empty queue.
                 while self._queue.empty():
                     
                     CheckIfThreadShuttingDown()
@@ -374,7 +402,8 @@ class THREADCallToThread( DAEMON ):
                 self._DoPreCall()
                 
                 try:
-                    
+                    #Note: It is possible to get here while the work queue is emtpy
+                    #Get work, blocking indefinitely until an element is added if empty
                     ( callable, args, kwargs ) = self._queue.get()
                     
                     self._callable = ( callable, args, kwargs )
@@ -410,7 +439,11 @@ class THREADCallToThread( DAEMON ):
         
     
 class JobScheduler( threading.Thread ):
-    
+    '''
+    Schedules jobs with priority according to their __lt__() instead of FCFS. NOT a DAEMON, just a regular thread.
+    TODO: Would this class be better served by https://docs.python.org/3/library/heapq.html than by inseriton sort?
+    '''
+
     def __init__( self, controller ):
         
         threading.Thread.__init__( self, name = 'Job Scheduler' )
@@ -538,7 +571,7 @@ class JobScheduler( threading.Thread ):
             
         
     
-    def AddJob( self, job ):
+    def AddJob( self, job : SchedulableJob ):
         
         with self._waiting_lock:
             
@@ -586,11 +619,12 @@ class JobScheduler( threading.Thread ):
         
     
     def JobCancelled( self ):
-        
+        '''Should be called when a shcheduled job is cancelled, will trigger job filteirng.'''
         self._cancel_filter_needed.set()
         
     
     def shutdown( self ):
+        '''TOOO the name of this method is inconsistent with convention'''
         
         ShutdownThread( self )
         
@@ -695,6 +729,7 @@ class SchedulableJob( object ):
         
     
     def Cancel( self ):
+        '''Abort scheduled work'''
         
         self._is_cancelled.set()
         
@@ -702,6 +737,7 @@ class SchedulableJob( object ):
         
     
     def CurrentlyWorking( self ):
+        '''A scheduler is running this job'''
         
         return self._currently_working.is_set()
         
@@ -732,6 +768,7 @@ class SchedulableJob( object ):
         
     
     def SetThreadSlotType( self, thread_type ):
+        '''Set the identifier used for HydrusController.AcquireThreadSlot()'''
         
         self._thread_slot_type = thread_type
         
@@ -742,7 +779,7 @@ class SchedulableJob( object ):
         
     
     def SlotOK( self ):
-        
+        '''Ask the controller if anyone is doing this type of job, prevents any one job type form monopolizing compute resources.'''
         if self._thread_slot_type is not None:
             
             if HG.controller.AcquireThreadSlot( self._thread_slot_type ):

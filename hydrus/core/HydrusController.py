@@ -263,6 +263,16 @@ class HydrusController( object ):
         
     
     def AcquireThreadSlot( self, thread_type ):
+        '''
+        Prevents more than a fixed number of a certain job type from executing at once.
+        If the controller has no limit on the allowed number of jobs for the named "thread type" always allowed.
+
+        Warning:
+            Remember to ReleaseThreadSlot() when finished.
+
+        :returns: True if a slot was successfully aquired, Falseo otherwise.
+        
+        '''
         
         with self._thread_slot_lock:
             
