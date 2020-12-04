@@ -23,6 +23,10 @@ from hydrus.client.networking import ClientNetworkingBandwidth
 from hydrus.client.networking import ClientNetworkingDomain
 
 class Subscription( HydrusSerialisable.SerialisableBaseNamed ):
+    '''
+    Model and serialization of fully materialized subscription.  
+    Contrast with SubscriptionQueryHeader which defines only the data needed tochange the subscripiton listings.
+    '''
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_SUBSCRIPTION
     SERIALISABLE_NAME = 'Subscription'

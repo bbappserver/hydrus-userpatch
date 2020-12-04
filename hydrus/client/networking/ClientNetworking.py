@@ -8,6 +8,8 @@ from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
 
+from .ClientNetworkingJobs import NetworkJob
+
 JOB_STATUS_AWAITING_VALIDITY = 0
 JOB_STATUS_AWAITING_BANDWIDTH = 1
 JOB_STATUS_AWAITING_LOGIN = 2
@@ -69,7 +71,7 @@ class NetworkEngine( object ):
         self.controller.sub( self, 'RefreshOptions', 'notify_new_options' )
         
     
-    def AddJob( self, job ):
+    def AddJob( self, job : NetworkJob ):
         
         if HG.network_report_mode:
             
@@ -345,7 +347,7 @@ class NetworkEngine( object ):
                 
             
         
-        def ProcessReadyJob( job ):
+        def ProcessReadyJob( job : NetworkJob ):
             
             if job.IsDone():
                 
@@ -395,7 +397,11 @@ class NetworkEngine( object ):
                         
                         HydrusData.ShowText( 'Network Job Starting: ' + job._method + ' ' + job._url )
                         
-                    
+                    if 'instagram' in job.GetSecondLevelDomain(): #HACK hardcoded bot detection evasion
+                        import random
+                        job.SetStatus( 'pretending to be human' )
+                        job.Sleep(random.uniform(13,180)) #wait between 13 seconds and 3 minutes to resume browsing, it makes you look more human
+
                     self._active_domains_counter[ job.GetSecondLevelDomain() ] += 1
                     
                     self.controller.CallToThread( job.Start )

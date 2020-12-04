@@ -623,11 +623,13 @@ class SubscriptionQueryHeader( HydrusSerialisable.SerialisableBase ):
         
     
     def PausePlay( self ):
+        '''Toggle resume state.'''
         
         self._paused = not self._paused
         
     
     def RegisterSyncComplete( self, checker_options: ClientImportOptions.CheckerOptions, query_log_container: SubscriptionQueryLogContainer ):
+        '''Stores the results of a sync, occurs regardless of completion (e.g. cancelled first syncs get logged as complete).'''
         
         self._last_check_time = HydrusData.GetNow()
         

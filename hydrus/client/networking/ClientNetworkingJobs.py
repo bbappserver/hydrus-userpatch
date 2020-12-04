@@ -1166,6 +1166,9 @@ class NetworkJob( object ):
         
         try:
             
+            #we're scheduled, but wait until we wake up
+            while self.IsAsleep():
+                time.sleep( max(self._wake_time - HydrusData.GetNow(),0) ) #yield thread until I'm supposed to wake
             with self._lock:
                 
                 self._is_started = True
