@@ -932,6 +932,9 @@ class ListBox( QW.QScrollArea ):
         self._selected_terms = set()
         self._terms_to_texts = {}
         
+        self._last_drag_start_index = None
+        self._drag_started = False
+        
         self._last_hit_index = None
         
         self._last_view_start = None
@@ -953,7 +956,6 @@ class ListBox( QW.QScrollArea ):
         
         #
         
-        self.setMouseTracking( True )
         self.setFont( QW.QApplication.font() )
         
         self._widget_event_filter = QP.WidgetEventFilter( self.widget() )
@@ -1109,6 +1111,15 @@ class ListBox( QW.QScrollArea ):
         
         y = mouse_event.pos().y()
         
+        if mouse_event.type() == QC.QEvent.MouseMove:
+            
+            visible_rect = QP.ScrollAreaVisibleRect( self )
+            
+            visible_rect_y = visible_rect.y()
+            
+            y += visible_rect_y
+            
+        
         text_height = self.fontMetrics().height()
         
         row_index = y // text_height
@@ -1259,28 +1270,44 @@ class ListBox( QW.QScrollArea ):
         
         deselect_all = False
         
-        if only_add:
+        if shift:
             
             if hit_index is not None:
                 
-                to_select.add( hit_index )
-                
-            
-        elif shift:
-            
-            # we are now saying if you shift-click on something already selected, we'll make no changes, but we'll move focus ghost
-            if hit_index is not None and not self._IsSelected( hit_index ):
-                
-                if self._last_hit_index is not None:
+                if ctrl:
                     
-                    lower = min( hit_index, self._last_hit_index )
-                    upper = max( hit_index, self._last_hit_index )
-                    
-                    to_select = list( range( lower, upper + 1 ) )
+                    if self._IsSelected( hit_index ):
+                        
+                        if self._last_hit_index is not None:
+                            
+                            lower = min( hit_index, self._last_hit_index )
+                            upper = max( hit_index, self._last_hit_index )
+                            
+                            to_deselect = list( range( lower, upper + 1 ) )
+                            
+                        else:
+                            
+                            to_deselect.add( hit_index )
+                            
+                        
                     
                 else:
                     
-                    to_select.add( hit_index )
+                    # we are now saying if you shift-click on something already selected, we'll make no changes, but we'll move focus ghost
+                    if not self._IsSelected( hit_index ):
+                        
+                        if self._last_hit_index is not None:
+                            
+                            lower = min( hit_index, self._last_hit_index )
+                            upper = max( hit_index, self._last_hit_index )
+                            
+                            to_select = list( range( lower, upper + 1 ) )
+                            
+                        else:
+                            
+                            to_select.add( hit_index )
+                            
+                        
                     
                 
             
@@ -1513,7 +1540,7 @@ class ListBox( QW.QScrollArea ):
                 
                 ( x, y ) = ( x_start, current_index * text_height )
                 
-                this_text_size = painter.fontMetrics().size( QC.Qt.TextSingleLine, text )
+                ( this_text_size, text ) = ClientGUIFunctions.GetTextSizeFromPainter( painter, text )
                 
                 this_text_width = this_text_size.width()
                 this_text_height = this_text_size.height()
@@ -1761,12 +1788,36 @@ class ListBox( QW.QScrollArea ):
             
             hit_index = self._GetIndexUnderMouse( event )
             
-            self._Hit( False, False, hit_index, only_add = True )
+            if self._last_drag_start_index is None:
+                
+                self._last_drag_start_index = hit_index
+                
+            elif hit_index != self._last_drag_start_index:
+                
+                ctrl = event.modifiers() & QC.Qt.ControlModifier
+                
+                if not self._drag_started:
+                    
+                    self._Hit( True, ctrl, self._last_drag_start_index )
+                    
+                    self._drag_started = True
+                    
+                
+                self._Hit( True, ctrl, hit_index )
+                
             
         else:
             
             event.ignore()
             
+        
+    
+    def mouseReleaseEvent( self, event ):
+        
+        self._last_drag_start_index = None
+        self._drag_started = False
+        
+        event.ignore()
         
     
     def EventMouseSelect( self, event ):
@@ -1958,6 +2009,10 @@ class ListBoxTags( ListBox ):
                 if term.GetType() in ( ClientSearch.PREDICATE_TYPE_TAG, ClientSearch.PREDICATE_TYPE_NAMESPACE, ClientSearch.PREDICATE_TYPE_WILDCARD ):
                     
                     tag = term.GetValue()
+                    
+                elif term.GetType() == ClientSearch.PREDICATE_TYPE_PARENT:
+                    
+                    tag = HydrusTags.CleanTag( term.GetValue() )
                     
                 else:
                     

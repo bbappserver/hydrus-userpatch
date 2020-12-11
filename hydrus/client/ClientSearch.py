@@ -1250,6 +1250,15 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
         self._parents = None
         self._parent_predicates = set()
         
+        if self._predicate_type == PREDICATE_TYPE_PARENT:
+            
+            self._parent_key = HydrusData.GenerateKey()
+            
+        else:
+            
+            self._parent_key = None
+            
+        
         if predicate_type == PREDICATE_TYPE_TAG:
             
             self._matchable_search_texts = { self._value }
@@ -1264,6 +1273,11 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
         
         if isinstance( other, Predicate ):
             
+            if self._predicate_type == PREDICATE_TYPE_PARENT:
+                
+                return False
+                
+            
             return self.__hash__() == other.__hash__()
             
         
@@ -1271,6 +1285,11 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
         
     
     def __hash__( self ):
+        
+        if self._predicate_type == PREDICATE_TYPE_PARENT:
+            
+            return self._parent_key.__hash__()
+            
         
         return ( self._predicate_type, self._value, self._inclusive ).__hash__()
         
@@ -1652,6 +1671,11 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
     def HasNonZeroCount( self ):
         
         return self._min_current_count > 0 or self._min_pending_count > 0
+        
+    
+    def HasIdealSibling( self ):
+        
+        return self._ideal_sibling is not None
         
     
     def HasParentPredicates( self ):
@@ -2846,13 +2870,15 @@ class PredicateResultsCacheTag( PredicateResultsCache ):
             
         else:
             
-            # a cache for 'cha' is invalid for 'character:sam'
+            # a cache for 'cha' is probably invalid for 'character:samus aran'
             
             ( strict_search_text_namespace, strict_search_text_subtag ) = HydrusTags.SplitTag( strict_search_text )
             
             if strict_search_text_namespace == self._strict_search_text_namespace:
                 
-                return strict_search_text_subtag.startswith( self._strict_search_text_subtag )
+                # != '', because a cache for 'character:' probably can't match a search for 'character:samus aran'
+                
+                return self._strict_search_text_subtag != '' and strict_search_text_subtag.startswith( self._strict_search_text_subtag )
                 
             else:
                 

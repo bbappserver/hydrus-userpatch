@@ -81,6 +81,19 @@ from hydrus.client.networking import ClientNetworkingContexts
 
 MENU_ORDER = [ 'file', 'undo', 'pages', 'database', 'network', 'services', 'tags', 'pending', 'help' ]
 
+def GetTagServiceKeyForMaintenance( win: QW.QWidget ):
+    
+    tag_services = HG.client_controller.services_manager.GetServices( HC.REAL_TAG_SERVICES )
+    
+    choice_tuples = [ ( 'all services', None, 'Do it for everything. Can take a long time!' ) ]
+    
+    for service in tag_services:
+        
+        choice_tuples.append( ( service.GetName(), service.GetServiceKey(), service.GetName() ) )
+        
+    
+    return ClientGUIDialogsQuick.SelectFromListButtons( win, 'Which service?', choice_tuples )
+    
 def THREADUploadPending( service_key ):
     
     try:
@@ -509,6 +522,9 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
         library_versions.append( ( 'install dir', HC.BASE_DIR ) )
         library_versions.append( ( 'db dir', HG.client_controller.db_dir ) )
         library_versions.append( ( 'temp dir', HydrusPaths.GetCurrentTempDir() ) )
+        library_versions.append( ( 'db journal mode', HG.db_journal_mode ) )
+        library_versions.append( ( 'db synchronous value', str( HG.db_synchronous ) ) )
+        library_versions.append( ( 'db using memory for temp?', str( HG.no_db_temp_files ) ) )
         
         import locale
         
@@ -1422,6 +1438,8 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
     def _FlipClipboardWatcher( self, option_name ):
         
         self._controller.new_options.FlipBoolean( option_name )
+        
+        self._controller.WriteSynchronous( 'serialisable', self._controller.new_options )
         
         self._last_clipboard_watched_text = ''
         
@@ -2989,6 +3007,22 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
         self._statusbar.SetStatusText( db_status, 5, tooltip = db_tooltip )
         
     
+    def _RegenerateLocalTagCache( self ):
+        
+        message = 'This will delete and then recreate the local tag cache, which keeps a small record of tags for files on your hard drive. It isn\'t super important, but it speeds most operations up, and this routine fixes it when broken.'
+        message += os.linesep * 2
+        message += 'If you have a lot of tags and files, it can take a long time, during which the gui may hang.'
+        message += os.linesep * 2
+        message += 'If you do not have a specific reason to run this, it is pointless.'
+        
+        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'do it', no_label = 'forget it' )
+        
+        if result == QW.QDialog.Accepted:
+            
+            self._controller.Write( 'regenerate_local_tag_cache' )
+            
+        
+    
     def _RegenerateTagDisplayMappingsCache( self ):
         
         message = 'This will delete and then recreate the tag \'display\' mappings cache, which is used for user-presented tag searching, loading, and autocomplete counts. This is useful if miscounting (particularly related to siblings/parents) has somehow occurred.'
@@ -2997,27 +3031,47 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
         message += os.linesep * 2
         message += 'If you do not have a specific reason to run this, it is pointless.'
         
-        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'do it', no_label = 'forget it' )
+        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'do it--now choose which service', no_label = 'forget it' )
         
         if result == QW.QDialog.Accepted:
             
-            self._controller.Write( 'regenerate_tag_display_mappings_cache' )
+            try:
+                
+                tag_service_key = GetTagServiceKeyForMaintenance( self )
+                
+            except HydrusExceptions.CancelledException:
+                
+                return
+                
+            
+            self._controller.Write( 'regenerate_tag_display_mappings_cache', tag_service_key = tag_service_key )
             
         
     
     def _RegenerateTagMappingsCache( self ):
         
-        message = 'This will delete and then recreate the entire tag \'storage\' mappings cache, which is used for raw tag searching, loading, and autocomplete counts. This is useful if miscounting has somehow occurred.'
+        message = 'WARNING: Do not run this for no reason! On a large database, this could take hours to finish!'
+        message += os.linesep * 2
+        message += 'This will delete and then recreate the entire tag \'storage\' mappings cache, which is used for tag calculation based on actual values and autocomplete counts in editing contexts like _manage tags_. This is useful if miscounting has somehow occurred.'
         message += os.linesep * 2
         message += 'If you have a lot of tags and files, it can take a long time, during which the gui may hang. It necessarily involves a regeneration of the tag display mappings cache, which relies on the storage cache. All siblings and parents will have to be resynced.'
         message += os.linesep * 2
         message += 'If you do not have a specific reason to run this, it is pointless.'
         
-        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'do it', no_label = 'forget it' )
+        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'do it--now choose which service', no_label = 'forget it' )
         
         if result == QW.QDialog.Accepted:
             
-            self._controller.Write( 'regenerate_tag_mappings_cache' )
+            try:
+                
+                tag_service_key = GetTagServiceKeyForMaintenance( self )
+                
+            except HydrusExceptions.CancelledException:
+                
+                return
+                
+            
+            self._controller.Write( 'regenerate_tag_mappings_cache', tag_service_key = tag_service_key )
             
         
     
@@ -3067,7 +3121,7 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
         message += os.linesep * 2
         message += 'It can only recover tags for files currently stored by your client. It will take some time, during which the gui may hang. Once it is done, you probably want to regenerate your tag mappings cache, so that you are completely synced again.'
         
-        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'I have a reason to run this, let\'s do it', no_label = 'forget it' )
+        result = ClientGUIDialogsQuick.GetYesNo( self, message, yes_label = 'I have a reason to run this, let\'s do it--now choose which service', no_label = 'forget it' )
         
         if result == QW.QDialog.Accepted:
             
@@ -3077,7 +3131,16 @@ class FrameGUI( ClientGUITopLevelWindows.MainFrameThatResizes ):
             
             self._controller.pub( 'modal_message', job_key )
             
-            self._controller.Write( 'repopulate_mappings_from_cache', job_key = job_key )
+            try:
+                
+                tag_service_key = GetTagServiceKeyForMaintenance( self )
+                
+            except HydrusExceptions.CancelledException:
+                
+                return
+                
+            
+            self._controller.Write( 'repopulate_mappings_from_cache', tag_service_key = tag_service_key, job_key = job_key )
             
         
     
@@ -4111,6 +4174,10 @@ The password is cleartext here but obscured in the entry dialog. Enter a blank p
             
             HG.pubsub_profile_mode = not HG.pubsub_profile_mode
             
+        elif name == 'server_profile_mode':
+            
+            HG.server_profile_mode = not HG.server_profile_mode
+            
         elif name == 'shortcut_report_mode':
             
             HG.shortcut_report_mode = not HG.shortcut_report_mode
@@ -4855,6 +4922,7 @@ The password is cleartext here but obscured in the entry dialog. Enter a blank p
             
             ClientGUIMenus.AppendMenuItem( submenu, 'clear service info cache', 'Delete all cached service info like total number of mappings or files, in case it has become desynchronised. Some parts of the gui may be laggy immediately after this as these numbers are recalculated.', self._DeleteServiceInfo )
             ClientGUIMenus.AppendMenuItem( submenu, 'similar files search tree', 'Delete and recreate the similar files search tree.', self._RegenerateSimilarFilesTree )
+            ClientGUIMenus.AppendMenuItem( submenu, 'local tag cache', 'Repopulate the cache hydrus uses for fast tag search for local files.', self._RegenerateLocalTagCache )
             ClientGUIMenus.AppendMenuItem( submenu, 'tag definition search cache', 'Repopulate the cache hydrus uses for fast tag search.', self._RepopulateTagSearchCache )
             
             ClientGUIMenus.AppendMenu( menu, submenu, 'regenerate' )
@@ -5218,6 +5286,14 @@ The password is cleartext here but obscured in the entry dialog. Enter a blank p
             
             profile_modes = QW.QMenu( debug )
             
+            profile_mode_message = 'If something is running slow, you can turn on one of these modes to have hydrus gather information on how long each part takes to run. You probably want \'db profile mode\'.'
+            profile_mode_message += os.linesep * 2
+            profile_mode_message += 'Turn the mode on, do the slow thing for a bit, and then turn it off. In your database directory will be a new profile log, which is really helpful for hydrus dev to figure out what in your case is running slow.'
+            profile_mode_message += os.linesep * 2
+            profile_mode_message += 'More information is available in the help, under \'reducing program lag\'.'
+            
+            ClientGUIMenus.AppendMenuItem( profile_modes, 'what is this?', 'Show profile info.', QW.QMessageBox.information, self, 'Profile modes', profile_mode_message )
+            ClientGUIMenus.AppendMenuCheckItem( profile_modes, 'client api profile mode', 'Run detailed \'profiles\' on every client api query and dump this information to the log (this is very useful for hydrus dev to have, if something is running slow for you!).', HG.server_profile_mode, self._SwitchBoolean, 'server_profile_mode' )
             ClientGUIMenus.AppendMenuCheckItem( profile_modes, 'db profile mode', 'Run detailed \'profiles\' on every database query and dump this information to the log (this is very useful for hydrus dev to have, if something is running slow for you!).', HG.db_profile_mode, self._SwitchBoolean, 'db_profile_mode' )
             ClientGUIMenus.AppendMenuCheckItem( profile_modes, 'menu profile mode', 'Run detailed \'profiles\' on menu actions.', HG.menu_profile_mode, self._SwitchBoolean, 'menu_profile_mode' )
             ClientGUIMenus.AppendMenuCheckItem( profile_modes, 'pubsub profile mode', 'Run detailed \'profiles\' on every internal publisher/subscriber message and dump this information to the log. This can hammer your log with dozens of large dumps every second. Don\'t run it unless you know you need to.', HG.pubsub_profile_mode, self._SwitchBoolean, 'pubsub_profile_mode' )
@@ -5280,7 +5356,6 @@ The password is cleartext here but obscured in the entry dialog. Enter a blank p
             ClientGUIMenus.AppendMenuItem( memory_actions, 'print garbage', 'Print some information about the python garbage to the log.', self._DebugPrintGarbage )
             ClientGUIMenus.AppendMenuItem( memory_actions, 'take garbage snapshot', 'Capture current garbage object counts.', self._DebugTakeGarbageSnapshot )
             ClientGUIMenus.AppendMenuItem( memory_actions, 'show garbage snapshot changes', 'Show object count differences from the last snapshot.', self._DebugShowGarbageDifferences )
-            ClientGUIMenus.AppendMenuItem( memory_actions, 'load whole db in disk cache', 'Contiguously read as much of the db as will fit into memory. This will massively speed up any subsequent big job.', self._controller.CallToThread, self._controller.Read, 'load_into_disk_cache' )
             
             ClientGUIMenus.AppendMenu( debug, memory_actions, 'memory actions' )
             
