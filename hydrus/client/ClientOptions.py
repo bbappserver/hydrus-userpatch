@@ -15,6 +15,7 @@ from hydrus.client import ClientDefaults
 from hydrus.client import ClientDownloading
 from hydrus.client import ClientDuplicates
 from hydrus.client.importing import ClientImporting
+from hydrus.client.importing import ClientImportOptions
 
 class ClientOptions( HydrusSerialisable.SerialisableBase ):
     
@@ -33,7 +34,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         self._InitialiseDefaults()
         
     
-    def _GetDefaultMediaViewOptions( self ):
+    def _GetDefaultMediaViewOptions( self ) -> HydrusSerialisable.SerialisableDictionary:
         
         media_view = HydrusSerialisable.SerialisableDictionary() # integer keys, so got to be cleverer dict
         
@@ -80,7 +81,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         return media_view
         
     
-    def _GetMediaViewOptions( self, mime ):
+    def _GetMediaViewOptions( self, mime : str ) -> tuple:
         
         if mime in self._dictionary[ 'media_view' ]:
             
@@ -113,8 +114,8 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         return serialisable_info
         
     
-    def _InitialiseDefaults( self ):
-        
+    def _InitialiseDefaults( self ) -> None:
+        '''Set user defaults to known values for factory reset or first run.'''
         self._dictionary[ 'booleans' ] = {}
         
         self._dictionary[ 'booleans' ][ 'advanced_mode' ] = False
@@ -532,7 +533,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         present_already_in_inbox_files = False
         present_already_in_archive_files = False
         
-        from hydrus.client.importing import ClientImportOptions
+        
         
         quiet_file_import_options = ClientImportOptions.FileImportOptions()
         
@@ -613,7 +614,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
-        
+        '''Deserialize the client options from the given hydrus serialization object.'''
         loaded_dictionary = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_info )
         
         for ( key, value ) in list(loaded_dictionary.items()):
@@ -630,6 +631,10 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
+        '''
+        Convert old serializations to newer versions.
+        TODO This should probably be named _UpgradeSerializableInfo to avoid ambiguity.
+        '''
         
         if version == 1:
             
@@ -806,7 +811,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def FlipBoolean( self, name ):
-        
+        '''Toggle the state of a named persisted global flag'''
         with self._lock:
             
             self._dictionary[ 'booleans' ][ name ] = not self._dictionary[ 'booleans' ][ name ]
@@ -814,7 +819,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def GetBoolean( self, name ):
-        
+        '''Get the state of a named persisted global flag'''
         with self._lock:
             
             return self._dictionary[ 'booleans' ][ name ]
@@ -864,7 +869,8 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetDefaultFileImportOptions( self, options_type ):
+    def GetDefaultFileImportOptions( self, options_type : str ) -> ClientImportOptions.FileImportOptions:
+        '''Return the file import option named by options_type stored in the user defaults'''
         
         with self._lock:
             
@@ -881,7 +887,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def GetDefaultSort( self ):
-        
+        '''Return the default file display sorting key in the user defaults.'''
         with self._lock:
             
             return self._dictionary[ 'default_sort' ]
@@ -889,7 +895,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def GetDefaultSubscriptionCheckerOptions( self ):
-        
+        '''Global defaults for subscription checker rates'''
         with self._lock:
             
             return self._dictionary[ 'misc' ][ 'default_subscription_checker_options' ]
@@ -897,7 +903,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
         
     
     def GetDefaultWatcherCheckerOptions( self ):
-        
+        '''Global defaults for watch page checker rates'''
         with self._lock:
             
             return self._dictionary[ 'misc' ][ 'default_thread_watcher_options' ]
@@ -927,7 +933,7 @@ class ClientOptions( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetFavouriteTagFilters( self ):
+    def GetFavouriteTagFilters( self ) -> dict:
         
         with self._lock:
             
