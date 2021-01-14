@@ -643,7 +643,7 @@ class NetworkJob( object ):
                         ClientNetworkingDomain.AddCookieToSession( session, name, value, domain, path, expires, secure = secure, rest = rest )
                         
                     
-                    self.engine.session_manager.SetDirty()
+                    self.engine.session_manager.SetSessionDirty( snc )
                     
                 except Exception as e:
                     
@@ -1362,6 +1362,13 @@ class NetworkJob( object ):
                     self._WaitOnConnectionError( 'read timed out' )
                     
                 finally:
+                    
+                    with self._lock:
+                        
+                        snc = self._session_network_context
+                        
+                    
+                    self.engine.session_manager.SetSessionDirty( snc )
                     
                     if response is not None:
                         
