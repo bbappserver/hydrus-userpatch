@@ -581,7 +581,10 @@ class HydrusDB( object ):
         
         for db_name in db_names:
             
-            self._c.execute( 'PRAGMA {}.cache_size = -200000;'.format( db_name ) )
+            # MB -> KB
+            cache_size = HG.db_cache_size * 1024
+            
+            self._c.execute( 'PRAGMA {}.cache_size = -{};'.format( db_name, cache_size ) )
             
             self._c.execute( 'PRAGMA {}.journal_mode = {};'.format( db_name, HG.db_journal_mode ) )
             

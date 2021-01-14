@@ -399,12 +399,22 @@ class THREADCallToThread( DAEMON ):
                 
                 CheckIfThreadShuttingDown()
                 
-                self._DoPreCall()
-                
                 try:
-                    #Note: It is possible to get here while the work queue is emtpy
-                    #Get work, blocking indefinitely until an element is added if empty
-                    ( callable, args, kwargs ) = self._queue.get()
+                    
+                    try:
+                        
+                        ( callable, args, kwargs ) = self._queue.get( 1.0 )
+                        
+                    except queue.Empty:
+                        
+                        # https://github.com/hydrusnetwork/hydrus/issues/750
+                        # this shouldn't happen, but...
+                        # even if we assume we'll never get this, we don't want to make a business of hanging forever on things
+                        
+                        continue
+                        
+                    
+                    self._DoPreCall()
                     
                     self._callable = ( callable, args, kwargs )
                     
