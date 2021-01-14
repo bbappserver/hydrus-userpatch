@@ -1,6 +1,6 @@
 import json
 import zlib
-
+import typing
 LZ4_OK = False
 
 try:
@@ -114,8 +114,8 @@ SERIALISABLE_TYPE_NUMBER_TEST = 93
 
 SERIALISABLE_TYPES_TO_OBJECT_TYPES = {}
 
-def CreateFromNetworkBytes( network_string ):
-    
+def CreateFromNetworkBytes( network_string :bytes ) -> object:
+    '''Uncompress a blob into a serialized string and then attemot to decode it into an object.'''
     try:
         
         obj_bytes = zlib.decompress( network_string )
@@ -136,8 +136,10 @@ def CreateFromNetworkBytes( network_string ):
     
     return CreateFromString( obj_string )
     
-def CreateFromNoneableSerialisableTuple( obj_tuple_or_none ):
-    
+def CreateFromNoneableSerialisableTuple( obj_tuple_or_none ) -> object:
+    '''The same as calling CreateFromSerialisableTuple, but returns None if None is passed,
+     instead of raising an exception.
+     '''
     if obj_tuple_or_none is None:
         
         return None
@@ -147,13 +149,19 @@ def CreateFromNoneableSerialisableTuple( obj_tuple_or_none ):
         return CreateFromSerialisableTuple( obj_tuple_or_none )
         
     
-def CreateFromString( obj_string ):
-    
+def CreateFromString( obj_string ) -> object:
+    '''Deserialize a string into an object'''
     obj_tuple = json.loads( obj_string )
     
     return CreateFromSerialisableTuple( obj_tuple )
     
-def CreateFromSerialisableTuple( obj_tuple ):
+def CreateFromSerialisableTuple( obj_tuple :tuple ) -> object:
+    '''
+    Deserialize a tuple of the form (type,name,version,data) or (type,version,data)
+    :param type a type constant named in HydrusSerializable
+    :param version an integer version
+    :param name
+    '''
     
     if len( obj_tuple ) == 3:
         
@@ -172,7 +180,7 @@ def CreateFromSerialisableTuple( obj_tuple ):
     
     return obj
     
-def GetNoneableSerialisableTuple( obj_or_none ):
+def GetNoneableSerialisableTuple( obj_or_none ) -> tuple:
     
     if obj_or_none is None:
         
@@ -190,7 +198,7 @@ def SetNonDupeName( obj, disallowed_names ):
     obj.SetName( non_dupe_name )
 
 class SerialisableBase( object ):
-    
+    '''Baseclass for all serializable objects, do not instantiate directly.''' 
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_BASE
     SERIALISABLE_NAME = 'Base Serialisable Object'
     SERIALISABLE_VERSION = 1
@@ -259,7 +267,7 @@ class SerialisableBase( object ):
         
     
 class SerialisableBaseNamed( SerialisableBase ):
-    
+    '''Base classe for all named serializable objects, do not instantiate directly.'''
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_BASE_NAMED
     SERIALISABLE_NAME = 'Named Base Serialisable Object'
     
@@ -344,29 +352,30 @@ class SerialisableDictionary( SerialisableBase, dict ):
         return ( simple_key_simple_value_pairs, simple_key_serialisable_value_pairs, serialisable_key_simple_value_pairs, serialisable_key_serialisable_value_pairs )
         
     
-    def _InitialiseFromSerialisableInfo( self, serialisable_info ):
+    def _InitialiseFromSerialisableInfo( self, serialisable_info:tuple ) -> None:
         
         ( simple_key_simple_value_pairs, simple_key_serialisable_value_pairs, serialisable_key_simple_value_pairs, serialisable_key_serialisable_value_pairs ) = serialisable_info
         
+        #unpack primitives
         for ( key, value ) in simple_key_simple_value_pairs:
             
             self[ key ] = value
             
-        
+        #recursivly deserialize complex objects keyed by primitives
         for ( key, serialisable_value ) in simple_key_serialisable_value_pairs:
             
             value = CreateFromSerialisableTuple( serialisable_value )
             
             self[ key ] = value
             
-        
+        #recursivly deserialize primitives keyed by complex objects
         for ( serialisable_key, value ) in serialisable_key_simple_value_pairs:
             
             key = CreateFromSerialisableTuple( serialisable_key )
             
             self[ key ] = value
             
-        
+        #recursivly deserialize cpmplex objects keyed by complex objects
         for ( serialisable_key, serialisable_value ) in serialisable_key_serialisable_value_pairs:
             
             key = CreateFromSerialisableTuple( serialisable_key )
@@ -458,7 +467,7 @@ class SerialisableBytesDictionary( SerialisableBase, dict ):
 SERIALISABLE_TYPES_TO_OBJECT_TYPES[ SERIALISABLE_TYPE_BYTES_DICT ] = SerialisableBytesDictionary
 
 class SerialisableList( SerialisableBase, list ):
-    
+    '''Given a list of serialized tuples produces a list containing their deserialized forms as entries.'''
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_LIST
     SERIALISABLE_NAME = 'Serialisable List'
     SERIALISABLE_VERSION = 1
@@ -469,12 +478,12 @@ class SerialisableList( SerialisableBase, list ):
         SerialisableBase.__init__( self )
         
     
-    def _GetSerialisableInfo( self ):
+    def _GetSerialisableInfo( self )->list:
         
         return [ obj.GetSerialisableTuple() for obj in self ]
         
     
-    def _InitialiseFromSerialisableInfo( self, serialisable_info ):
+    def _InitialiseFromSerialisableInfo( self, serialisable_info : typing.Iterable ):
         
         for obj_tuple in serialisable_info:
             
