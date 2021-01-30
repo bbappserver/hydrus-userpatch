@@ -14272,15 +14272,18 @@ class DB( HydrusDB.HydrusDB ):
             
             top_node_result = self._c.execute( 'SELECT phash_id FROM shape_vptree WHERE parent_id IS NULL;' ).fetchone()
             
+            #We are the first node ever
             if top_node_result is None:
                 
                 return []
                 
-            
+            #Obtained tree root
             ( root_node_phash_id, ) = top_node_result
             
+            #obtain phashes associated to this file, one file may have multiple phashes
             search_phashes = self._STL( self._c.execute( 'SELECT phash FROM shape_perceptual_hashes NATURAL JOIN shape_perceptual_hash_map WHERE hash_id = ?;', ( hash_id, ) ) )
             
+            #A file can also have zero phashes
             if len( search_phashes ) == 0:
                 
                 return []
@@ -14291,8 +14294,12 @@ class DB( HydrusDB.HydrusDB ):
             num_cycles = 0
             total_nodes_searched = 0
             
+            #repeat the search for every phash associated to this file
             for search_phash in search_phashes:
                 
+                #Actually perform search
+
+                #Search starts at the top of the vp tree so set the root as the only bounding sphere
                 next_potentials = [ root_node_phash_id ]
                 
                 while len( next_potentials ) > 0:
@@ -14320,6 +14327,7 @@ class DB( HydrusDB.HydrusDB ):
                         with HydrusDB.TemporaryIntegerTable( self._c, group_of_current_potentials, 'phash_id' ) as temp_table_name:
                             
                             # temp phash_ids to actual phashes and tree info
+                            # basically this lets us lookup info on nodes by integer instead of the longer phash
                             results = self._c.execute( 'SELECT phash_id, phash, radius, inner_id, outer_id FROM {} CROSS JOIN shape_perceptual_hashes USING ( phash_id ) CROSS JOIN shape_vptree USING ( phash_id );'.format( temp_table_name ) ).fetchall()
                             
                         
@@ -14330,25 +14338,34 @@ class DB( HydrusDB.HydrusDB ):
                             node_hamming_distance = HydrusData.Get64BitHammingDistance( search_phash, node_phash )
                             
                             if node_hamming_distance <= search_radius:
-                                
+                                #We were close to the node
                                 if node_phash_id in similar_phash_ids_to_distances:
-                                    
+                                    #this node was cached
                                     current_distance = similar_phash_ids_to_distances[ node_phash_id ]
                                     
                                     similar_phash_ids_to_distances[ node_phash_id ] = min( node_hamming_distance, current_distance )
                                     
                                 else:
-                                    
+                                    #this node was not cached
                                     similar_phash_ids_to_distances[ node_phash_id ] = node_hamming_distance
                                     
                                 
                             
                             # now how about its children?
-                            
+                            # in a vp-tree each node has two children
+                            # (a)elements bound by the sphere of the current node(inside)
+                            # (b)other elements (outside)
+                            # the bounding sphere of the T-th subtree is built such that it encloses approximatly half of the points int its parent.
                             if node_radius is not None:
                                 
                                 # we have two spheres--node and search--their centers separated by node_hamming_distance
-                                # we want to search inside/outside the node_sphere if the search_sphere intersects with those spaces
+                                # - the elements in the search sphere are those elements which are within hamming distance of the searched phash
+                                # - the centre of the search sphere is the phash being searched for.
+                                # - the elements in the search sphere are not known, to find them we would have to compare every phash against the search phash
+                                # instead we reduce the elements to a subset of candidates using the vptree
+                                # - we are searching for the smallest (deepest) node in the tree that fully encloses the search sphere
+                                # this will give us candidates which are close to the searched phash, some of which might not be close enough, but still way fewer than all of them
+                                # - to traverse the tree we want to search inside/outside the node_sphere if the search_sphere intersects with those spaces
                                 # there are four possibles:
                                 # (----N----)-(--S--)    intersects with outer only - distance between N and S > their radii
                                 # (----N---(-)-S--)      intersects with both
@@ -14356,6 +14373,7 @@ class DB( HydrusDB.HydrusDB ):
                                 # (---(-N-S--)-)         intersects with inner only - distance between N and S + radius_S does not exceed radius_N
                                 
                                 if inner_phash_id is not None:
+                                    #There exist a child with the inner set
                                     
                                     spheres_disjoint = node_hamming_distance > ( node_radius + search_radius )
                                     
@@ -14366,6 +14384,7 @@ class DB( HydrusDB.HydrusDB ):
                                     
                                 
                                 if outer_phash_id is not None:
+                                    #There exist a child with the outer set
                                     
                                     search_sphere_subset_of_node_sphere = ( node_hamming_distance + search_radius ) <= node_radius
                                     
