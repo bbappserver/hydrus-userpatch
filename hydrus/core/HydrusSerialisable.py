@@ -1,4 +1,5 @@
 import json
+import os
 import zlib
 import typing
 LZ4_OK = False
@@ -16,6 +17,7 @@ except: # ImportError wasn't enough here as Linux went up the shoot with a __ver
     
 
 from hydrus.core import HydrusData
+from hydrus.core import HydrusExceptions
 
 SERIALISABLE_TYPE_BASE = 0
 SERIALISABLE_TYPE_BASE_NAMED = 1
@@ -117,13 +119,11 @@ SERIALISABLE_TYPE_NETWORK_SESSION_MANAGER_SESSION_CONTAINER = 96
 SERIALISABLE_TYPE_NETWORK_BANDWIDTH_MANAGER_TRACKER_CONTAINER = 97
 
 SERIALISABLE_TYPES_TO_OBJECT_TYPES = {}
-
-def CreateFromNetworkBytes( network_string :bytes ) -> object:
+def CreateFromNetworkBytes( network_string, raise_error_on_future_version = False ):
     '''Uncompress a blob into a serialized string and then attemot to decode it into an object.'''
     try:
         
         obj_bytes = zlib.decompress( network_string )
-        
     except zlib.error:
         
         if LZ4_OK:
@@ -138,28 +138,26 @@ def CreateFromNetworkBytes( network_string :bytes ) -> object:
     
     obj_string = str( obj_bytes, 'utf-8' )
     
-    return CreateFromString( obj_string )
+    return CreateFromString( obj_string, raise_error_on_future_version = raise_error_on_future_version )
     
-def CreateFromNoneableSerialisableTuple( obj_tuple_or_none ) -> object:
-    '''The same as calling CreateFromSerialisableTuple, but returns None if None is passed,
-     instead of raising an exception.
-     '''
+def CreateFromNoneableSerialisableTuple( obj_tuple_or_none, raise_error_on_future_version = False ) ->object:
+    
     if obj_tuple_or_none is None:
         
         return None
         
     else:
         
-        return CreateFromSerialisableTuple( obj_tuple_or_none )
+        return CreateFromSerialisableTuple( obj_tuple_or_none, raise_error_on_future_version = raise_error_on_future_version )
         
     
-def CreateFromString( obj_string ) -> object:
-    '''Deserialize a string into an object'''
+def CreateFromString( obj_string, raise_error_on_future_version = False ) ->object:
+    
     obj_tuple = json.loads( obj_string )
     
-    return CreateFromSerialisableTuple( obj_tuple )
+    return CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = raise_error_on_future_version )
     
-def CreateFromSerialisableTuple( obj_tuple :tuple ) -> object:
+def CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = False )-> object:
     '''
     Deserialize a tuple of the form (type,name,version,data) or (type,version,data)
     :param type a type constant named in HydrusSerializable
@@ -180,7 +178,7 @@ def CreateFromSerialisableTuple( obj_tuple :tuple ) -> object:
         obj = SERIALISABLE_TYPES_TO_OBJECT_TYPES[ serialisable_type ]( name )
         
     
-    obj.InitialiseFromSerialisableInfo( version, serialisable_info )
+    obj.InitialiseFromSerialisableInfo( version, serialisable_info, raise_error_on_future_version = raise_error_on_future_version )
     
     return obj
     
@@ -200,7 +198,20 @@ def SetNonDupeName( obj, disallowed_names ):
     non_dupe_name = HydrusData.GetNonDupeName( obj.GetName(), disallowed_names )
     
     obj.SetName( non_dupe_name )
-
+    
+def ObjectVersionIsFromTheFuture( obj_tuple ):
+    
+    if len( obj_tuple ) == 3:
+        
+        ( serialisable_type, version, serialisable_info ) = obj_tuple
+        
+    else:
+        
+        ( serialisable_type, name, version, serialisable_info ) = obj_tuple
+        
+    
+    return SERIALISABLE_TYPES_TO_OBJECT_TYPES[ serialisable_type ].SERIALISABLE_VERSION > version
+    
 class SerialisableBase( object ):
     '''Baseclass for all serializable objects, do not instantiate directly.''' 
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_BASE
@@ -260,7 +271,25 @@ class SerialisableBase( object ):
         return ( self.SERIALISABLE_TYPE, self.SERIALISABLE_VERSION, serialisable_info )
         
     
-    def InitialiseFromSerialisableInfo( self, version, serialisable_info ):
+    def InitialiseFromSerialisableInfo( self, version, serialisable_info, raise_error_on_future_version = False ):
+        
+        if version > self.SERIALISABLE_VERSION:
+            
+            if raise_error_on_future_version:
+                
+                message = 'Unfortunately, an object of type {} could not be loaded because it was created in a client that uses an updated version of that object! This client supports versions up to {}, but the object was version {}.'.format( self.SERIALISABLE_NAME, self.SERIALISABLE_VERSION, version )
+                message += os.linesep * 2
+                message += 'Please update your client to import this object.'
+                
+                raise HydrusExceptions.SerialisationException( message )
+                
+            else:
+                
+                message = 'An object of type {} was created in a client that uses an updated version of that object! This client supports versions up to {}, but the object was version {}. For now, the client will try to continue work, but things may break. If you know why this has occured, please correct it. If you do not, please let hydrus dev know.'.format( self.SERIALISABLE_NAME, self.SERIALISABLE_VERSION, version )
+                
+                HydrusData.ShowText( message )
+                
+            
         
         while version < self.SERIALISABLE_VERSION:
             
@@ -358,6 +387,8 @@ class SerialisableDictionary( SerialisableBase, dict ):
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info:tuple ) -> None:
         
+        have_shown_load_error = False
+        
         ( simple_key_simple_value_pairs, simple_key_serialisable_value_pairs, serialisable_key_simple_value_pairs, serialisable_key_serialisable_value_pairs ) = serialisable_info
         
         #unpack primitives
@@ -368,23 +399,68 @@ class SerialisableDictionary( SerialisableBase, dict ):
         #recursivly deserialize complex objects keyed by primitives
         for ( key, serialisable_value ) in simple_key_serialisable_value_pairs:
             
-            value = CreateFromSerialisableTuple( serialisable_value )
+            try:
+                
+                value = CreateFromSerialisableTuple( serialisable_value )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                if not have_shown_load_error:
+                    
+                    HydrusData.ShowText( 'An object in a dictionary could not load. It has been discarded from the dictionary. More may also have failed to load, but to stop error spam, they will go silently. Your client may be running on code versions behind its database. Depending on the severity of this error, you may need to rollback to a previous backup. If you have no backup, you may want to kill your hydrus process now to stop the cleansed dictionary being saved back to the db.' )
+                    HydrusData.ShowException( e )
+                    
+                    have_shown_load_error = True
+                    
+                
+                continue
+                
             
             self[ key ] = value
             
         #recursivly deserialize primitives keyed by complex objects
         for ( serialisable_key, value ) in serialisable_key_simple_value_pairs:
             
-            key = CreateFromSerialisableTuple( serialisable_key )
+            try:
+                
+                key = CreateFromSerialisableTuple( serialisable_key )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                if not have_shown_load_error:
+                    
+                    HydrusData.ShowText( 'An object in a dictionary could not load. It has been discarded from the dictionary. More may also have failed to load, but to stop error spam, they will go silently. Your client may be running on code versions behind its database. Depending on the severity of this error, you may need to rollback to a previous backup. If you have no backup, you may want to kill your hydrus process now to stop the cleansed dictionary being saved back to the db.' )
+                    HydrusData.ShowException( e )
+                    
+                    have_shown_load_error = True
+                    
+                
+                continue
+                
             
             self[ key ] = value
             
         #recursivly deserialize cpmplex objects keyed by complex objects
         for ( serialisable_key, serialisable_value ) in serialisable_key_serialisable_value_pairs:
             
-            key = CreateFromSerialisableTuple( serialisable_key )
-            
-            value = CreateFromSerialisableTuple( serialisable_value )
+            try:
+                
+                key = CreateFromSerialisableTuple( serialisable_key )
+                
+                value = CreateFromSerialisableTuple( serialisable_value )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                if not have_shown_load_error:
+                    
+                    HydrusData.ShowText( 'An object in a dictionary could not load. It has been discarded from the dictionary. More may also have failed to load, but to stop error spam, they will go silently. Your client may be running on code versions behind its database. Depending on the severity of this error, you may need to rollback to a previous backup. If you have no backup, you may want to kill your hydrus process now to stop the cleansed dictionary being saved back to the db.' )
+                    HydrusData.ShowException( e )
+                    
+                    have_shown_load_error = True
+                    
+                
+                continue
+                
             
             self[ key ] = value
             
@@ -489,9 +565,28 @@ class SerialisableList( SerialisableBase, list ):
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info : typing.Iterable ):
         
+        have_shown_load_error = False
+        
         for obj_tuple in serialisable_info:
             
-            self.append( CreateFromSerialisableTuple( obj_tuple ) )
+            try:
+                
+                obj = CreateFromSerialisableTuple( obj_tuple )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                if not have_shown_load_error:
+                    
+                    HydrusData.ShowText( 'An object in a list could not load. It has been discarded from the list. More may also have failed to load, but to stop error spam, they will go silently. Your client may be running on code versions behind its database. Depending on the severity of this error, you may need to rollback to a previous backup. If you have no backup, you may want to kill your hydrus process now to stop the cleansed list being saved back to the db.' )
+                    HydrusData.ShowException( e )
+                    
+                    have_shown_load_error = True
+                    
+                
+                continue
+                
+            
+            self.append( obj )
             
         
     
