@@ -139,8 +139,15 @@ class NetworkEngine( object ):
         
     
     def MainLoop( self ):
+        '''
+        The main loop runs in a n observer thread looping over queued jobs and performs their preprocessing.
+        Then dumps the ready jobs into a worker thread using controller.CallToThread()
+        '''
         
-        def ProcessValidationJob( job ):
+        def ProcessValidationJob( job : NetworkJob)->bool:
+            '''
+            :returns: false if this job is ready for the next step
+            '''
             
             if job.IsDone():
                 
@@ -201,7 +208,10 @@ class NetworkEngine( object ):
                 
             
         
-        def ProcessBandwidthJob( job ):
+        def ProcessBandwidthJob( job: NetworkJob )->bool:
+            '''
+            :returns: false if this job is ready for the next step
+            '''
             
             if job.IsDone():
                 
@@ -255,7 +265,10 @@ class NetworkEngine( object ):
                 
             
         
-        def ProcessLoginJob( job ):
+        def ProcessLoginJob( job : NetworkJob )-> bool:
+            '''
+            :returns: false if this job is ready for the next step
+            '''
             
             if job.IsDone():
                 
@@ -347,8 +360,10 @@ class NetworkEngine( object ):
                 
             
         
-        def ProcessReadyJob( job : NetworkJob ):
-            
+        def ProcessReadyJob( job : NetworkJob ) ->bool:
+            '''
+            :returns: false if this job is ready for the next step
+            '''            
             if job.IsDone():
                 
                 return False
@@ -399,8 +414,9 @@ class NetworkEngine( object ):
                         
                     if 'instagram' in job.GetSecondLevelDomain(): #HACK hardcoded bot detection evasion
                         import random
-                        job.SetStatus( 'pretending to be human' )
-                        job.Sleep(random.uniform(13,180)) #wait between 13 seconds and 3 minutes to resume browsing, it makes you look more human
+                        t=random.uniform(13,180)
+                        job.SetStatus( 'pretending to be human ({} s)'.format(t) )
+                        job.Sleep(t) #wait between 13 seconds and 3 minutes to resume browsing, it makes you look more human
 
                     self._active_domains_counter[ job.GetSecondLevelDomain() ] += 1
                     
@@ -419,7 +435,7 @@ class NetworkEngine( object ):
                 
             
         
-        def ProcessRunningJob( job ):
+        def ProcessRunningJob( job : NetworkJob ):
             
             if job.IsDone():
                 
@@ -447,9 +463,14 @@ class NetworkEngine( object ):
         
         self._is_running = True
         
-        while not ( self._local_shutdown or HG.model_shutdown ):
+        #TODO I should only have to care about local shutdown I should not be aware of the globals
+        while not ( self._local_shutdown or HG.model_shutdown ): 
             
             with self._lock:
+                #Each Process* function is executed in filterfor its side effects.
+                #If a processed job passes a step, the end of the Process* step will add it to the next list
+                #When a job is ready to proceed its Process step returns false causing filter to remove it
+                #from the list of the previous step.
                 
                 self._jobs_awaiting_validity = list( filter( ProcessValidationJob, self._jobs_awaiting_validity ) )
                 

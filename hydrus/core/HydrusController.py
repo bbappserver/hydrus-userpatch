@@ -72,6 +72,9 @@ class HydrusController( object ):
         
     
     def _GetCallToThread( self ):
+        '''
+        If there is a thread in the thread pool that isn't busy return it, return any thread at random.
+        '''
         
         with self._call_to_thread_lock:
             
@@ -105,6 +108,12 @@ class HydrusController( object ):
         
     
     def _GetCallToThreadLongRunning( self ):
+        '''
+        Get a worker thread from the long running pool.  
+        Unlike _GetCallToThread a different pool is used so that long running jobs do not get interleaved into between short jobs.
+        In theory this means that if a short job does not depend on a long job it will be able to proceed without waiting on the long job.
+        In a practical sense when Hydrus is under load many jobs have to wait on IO anyway.
+        '''
         
         with self._call_to_thread_lock:
             
@@ -333,6 +342,10 @@ class HydrusController( object ):
         
     
     def CallToThread( self, callable, *args, **kwargs ):
+        '''
+        Invokes the job on an available worker if one is not busy, otherwise it is added to the work queue of a random
+        worker.
+        '''
         
         if HG.callto_report_mode:
             
@@ -381,6 +394,9 @@ class HydrusController( object ):
         
     
     def CleanRunningFile( self ):
+        '''The last step after everything hash shutdown.  Removing the running file indicates clean shutdown.
+        If the file exists before it was created, the last run of hydrus had unclean shutdown.
+        '''
         
         if self._i_own_running_file:
             
@@ -438,7 +454,7 @@ class HydrusController( object ):
         return self._timestamps[ 'boot' ]
         
     
-    def GetDBDir( self ):
+    def GetDBDir( self ) -> str:
         
         return self.db_dir
         
@@ -504,17 +520,17 @@ class HydrusController( object ):
         return threads
         
     
-    def GoodTimeToStartBackgroundWork( self ):
+    def GoodTimeToStartBackgroundWork( self ) -> bool:
         
         return self.CurrentlyIdle() and not ( self.JustWokeFromSleep() or self.SystemBusy() )
         
     
-    def GoodTimeToStartForegroundWork( self ):
+    def GoodTimeToStartForegroundWork( self ) -> bool:
         
         return not self.JustWokeFromSleep()
         
     
-    def JustWokeFromSleep( self ):
+    def JustWokeFromSleep( self ) -> bool:
         
         self.SleepCheck()
         
@@ -571,8 +587,8 @@ class HydrusController( object ):
         self._daemon_jobs[ 'services_upnp' ] = job
         
     
-    def IsFirstStart( self ):
-        
+    def IsFirstStart( self ) -> bool:
+        '''Returns true if this is the first run of this copy of Hydrus'''
         if self.db is None:
             
             return False
@@ -583,13 +599,13 @@ class HydrusController( object ):
             
         
     
-    def LastShutdownWasBad( self ):
-        
+    def LastShutdownWasBad( self ) -> bool :
+        '''Returns true if last shutdown was unclean, detected by whther the PID file was cleaned up'''
         return self._last_shutdown_was_bad
         
     
     def MaintainDB( self, maintenance_mode = HC.MAINTENANCE_IDLE, stop_time = None ):
-        
+        '''GNDN'''
         pass
         
     
@@ -818,7 +834,7 @@ class HydrusController( object ):
         
     
     def WaitUntilDBEmpty( self ):
-        
+        ''' Wait unti the **QUEUED** database requests have completed.''' 
         while True:
             
             if HG.model_shutdown:
@@ -837,6 +853,7 @@ class HydrusController( object ):
         
     
     def WaitUntilModelFree( self ):
+        '''Wait until nothing is pending in the DB work queue and no messgaes are being sent.'''
         
         self.WaitUntilPubSubsEmpty()
         
@@ -844,6 +861,7 @@ class HydrusController( object ):
         
     
     def WaitUntilPubSubsEmpty( self ):
+        '''Await pubsub termination quiet.'''
         
         while True:
             

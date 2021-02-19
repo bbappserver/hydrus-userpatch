@@ -55,7 +55,7 @@ class FileImportJob( object ):
         self._file_modified_timestamp = None
         
     
-    def CheckIsGoodToImport( self ):
+    def CheckIsGoodToImport( self ) -> None: 
         
         if HG.file_import_report_mode:
             

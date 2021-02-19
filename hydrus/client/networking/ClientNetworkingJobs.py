@@ -423,7 +423,7 @@ class NetworkJob( object ):
         
     
     def _ReadResponse( self, response, stream_dest, max_allowed = None ):
-        
+        '''Copy the response into the destination stream'''
         with self._lock:
             
             if self._content_type is not None and self._content_type in HC.mime_enum_lookup:
@@ -531,14 +531,14 @@ class NetworkJob( object ):
         self.engine.bandwidth_manager.ReportDataUsed( self._network_contexts, num_bytes )
         
     
-    def _SetCancelled( self ):
-        
+    def _SetCancelled( self ) -> None:
+        '''Stop the network job without completing it'''
         self._is_cancelled = True
         
         self._SetDone()
         
     
-    def _SetError( self, e, error ):
+    def _SetError( self, e : Exception, error : str ):
         
         self._error_exception = e
         self._error_text = error
@@ -554,14 +554,17 @@ class NetworkJob( object ):
         
     
     def _SetDone( self ):
-        
+        '''Mark the network job completed.'''
         self._is_done = True
         
         self._is_done_event.set()
         
     
     def _Sleep( self, seconds ):
-        
+        '''
+        Labels the job as deferring execution in its observer, doesn't actually
+        sleep the calling thread.
+        '''
         self._wake_time = HydrusData.GetNow() + seconds
         
     
@@ -924,7 +927,7 @@ class NetworkJob( object ):
             
         
     
-    def GetErrorText( self ):
+    def GetErrorText( self )-> str:
         
         with self._lock:
             
@@ -940,7 +943,7 @@ class NetworkJob( object ):
             
         
     
-    def GetNetworkContexts( self ):
+    def GetNetworkContexts( self )->list:
         
         with self._lock:
             
@@ -1032,7 +1035,7 @@ class NetworkJob( object ):
             
         
     
-    def IsValid( self ):
+    def IsValid( self ) -> bool:
         
         with self._lock:
             
@@ -1040,7 +1043,7 @@ class NetworkJob( object ):
             
         
     
-    def NeedsLogin( self ):
+    def NeedsLogin( self ) -> bool:
         
         with self._lock:
             
@@ -1065,7 +1068,7 @@ class NetworkJob( object ):
         return self._ObeysBandwidth()
         
     
-    def OnlyTryConnectionOnce( self ):
+    def OnlyTryConnectionOnce( self )-> None:
         
         self._max_connection_attempts_allowed = 1
         
@@ -1225,7 +1228,8 @@ class NetworkJob( object ):
                         
                     
                     if response.ok:
-                        
+                        #The network job will attempt to donwload the repsonse to a tmp dir.
+                        #An upsrream observer of the network job is responsible for using the tmpfile
                         with self._lock:
                             
                             self._status_text = 'downloading\u2026'
@@ -1692,7 +1696,7 @@ class NetworkJobHydrus( NetworkJob ):
         NetworkJob._ReportDataUsed( self, num_bytes )
         
     
-    def _SendRequestAndGetResponse( self ):
+    def _SendRequestAndGetResponse( self ) -> requests.Response:
         
         service = self.engine.controller.services_manager.GetService( self._service_key )
         
