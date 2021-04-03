@@ -1065,7 +1065,7 @@ class FileSeed( HydrusSerialisable.SerialisableBase ):
                     return False
                     
                 
-                in_inbox = HG.client_controller.Read( 'in_inbox', hash )
+                in_inbox = hash in HG.client_controller.Read( 'inbox_hashes', ( hash, ) )
                 
             
             if file_import_options.ShouldPresent( self.status, in_inbox ):
@@ -1143,9 +1143,13 @@ class FileSeed( HydrusSerialisable.SerialisableBase ):
                     
                     status_hook( 'downloading file page' )
                     
-                    if self._referral_url not in ( post_url, url_to_check ):
+                    if self._referral_url is not None and self._referral_url != url_to_check:
                         
                         referral_url = self._referral_url
+                        
+                    elif url_to_check != post_url:
+                        
+                        referral_url = post_url
                         
                     else:
                         
@@ -2376,7 +2380,7 @@ class FileSeedCache( HydrusSerialisable.SerialisableBase ):
         
         if len( file_seed_hashes ) > 0:
             
-            inbox_hashes = HG.client_controller.Read( 'in_inbox', file_seed_hashes )
+            inbox_hashes = HG.client_controller.Read( 'inbox_hashes', file_seed_hashes )
             
         else:
             

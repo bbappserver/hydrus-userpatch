@@ -21,6 +21,7 @@ from hydrus.client.gui import ClientGUITopLevelWindowsPanels
 from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.lists import ClientGUIListConstants as CGLC
 from hydrus.client.gui.lists import ClientGUIListCtrl
+from hydrus.client.networking import ClientNetworkingJobs
 
 class BandwidthRulesCtrl( ClientGUICommon.StaticBox ):
     
@@ -297,7 +298,7 @@ class BytesControl( QW.QWidget ):
     def _HandleValueChanged( self, val ):
         
         self.valueChanged.emit()
-              
+        
     
     def GetSeparatedValue( self ):
         
@@ -430,7 +431,6 @@ class NetworkJobControl( QW.QFrame ):
         self.setFrameStyle( QW.QFrame.Box | QW.QFrame.Raised )
         
         self._network_job = None
-        self._download_started = False
         
         self._auto_override_bandwidth_rules = False
         
@@ -444,6 +444,13 @@ class NetworkJobControl( QW.QFrame ):
         
         self._cog_button = ClientGUICommon.BetterBitmapButton( self, CC.global_pixmaps().cog, self._ShowCogMenu )
         self._cancel_button = ClientGUICommon.BetterBitmapButton( self, CC.global_pixmaps().stop, self.Cancel )
+        self._error_button = ClientGUICommon.BetterBitmapButton( self, CC.global_pixmaps().dump_fail, self._ShowErrorMenu )
+        
+        self._error_button.setToolTip( 'Click here to see the last job\'s error.' )
+        
+        self._error_button.hide()
+        
+        self._error_text = None
         
         #
         
@@ -466,6 +473,7 @@ class NetworkJobControl( QW.QFrame ):
         QP.AddToLayout( hbox, left_vbox, CC.FLAGS_EXPAND_SIZER_BOTH_WAYS )
         QP.AddToLayout( hbox, self._cog_button, CC.FLAGS_CENTER_PERPENDICULAR )
         QP.AddToLayout( hbox, self._cancel_button, CC.FLAGS_CENTER_PERPENDICULAR )
+        QP.AddToLayout( hbox, self._error_button, CC.FLAGS_CENTER_PERPENDICULAR )
         
         self.setLayout( hbox )
         
@@ -500,6 +508,21 @@ class NetworkJobControl( QW.QFrame ):
             
         
         ClientGUIMenus.AppendMenuCheckItem( menu, 'auto-override bandwidth rules for all jobs here after five seconds', 'Ignore existing bandwidth rules for all jobs under this control, instead waiting a flat five seconds.', self._auto_override_bandwidth_rules, self.FlipAutoOverrideBandwidth )
+        
+        CGC.core().PopupMenu( self._cog_button, menu )
+        
+    
+    def _ShowErrorMenu( self ):
+        
+        if self._error_text is None:
+            
+            return
+            
+        
+        menu = QW.QMenu()
+        
+        ClientGUIMenus.AppendMenuItem( menu, 'show error', 'Show the recent error in a messagebox.', self.ShowError )
+        ClientGUIMenus.AppendMenuItem( menu, 'copy error', 'Copy the recent error to the clipboard.', self.CopyError )
         
         CGC.core().PopupMenu( self._cog_button, menu )
         
@@ -545,25 +568,17 @@ class NetworkJobControl( QW.QFrame ):
             
             self._left_text.setText( status_text )
             
-            if not self._download_started and current_speed > 0:
-                
-                self._download_started = True
-                
-            
             speed_text = ''
             
-            if self._download_started and not self._network_job.HasError():
+            if bytes_read is not None and bytes_read > 0 and not self._network_job.HasError():
                 
-                if bytes_read is not None:
+                if bytes_to_read is not None and bytes_read != bytes_to_read:
                     
-                    if bytes_to_read is not None and bytes_read != bytes_to_read:
-                        
-                        speed_text += HydrusData.ConvertValueRangeToBytes( bytes_read, bytes_to_read )
-                        
-                    else:
-                        
-                        speed_text += HydrusData.ToHumanBytes( bytes_read )
-                        
+                    speed_text += HydrusData.ConvertValueRangeToBytes( bytes_read, bytes_to_read )
+                    
+                else:
+                    
+                    speed_text += HydrusData.ToHumanBytes( bytes_read )
                     
                 
                 if current_speed != bytes_to_read: # if it is a real quick download, just say its size
@@ -613,6 +628,23 @@ class NetworkJobControl( QW.QFrame ):
             
         
     
+    def ClearError( self ):
+        
+        self._error_text = None
+        
+        self._error_button.hide()
+        
+    
+    def CopyError( self ):
+        
+        if self._error_text is None:
+            
+            return
+            
+        
+        HG.client_controller.pub( 'clipboard', 'text', self._error_text )
+        
+    
     def ClearNetworkJob( self ):
         
         self.SetNetworkJob( None )
@@ -623,7 +655,7 @@ class NetworkJobControl( QW.QFrame ):
         self._auto_override_bandwidth_rules = not self._auto_override_bandwidth_rules
         
     
-    def SetNetworkJob( self, network_job ):
+    def SetNetworkJob( self, network_job: typing.Optional[ ClientNetworkingJobs.NetworkJob ] ):
         
         if network_job is None:
             
@@ -641,11 +673,29 @@ class NetworkJobControl( QW.QFrame ):
             if self._network_job != network_job:
                 
                 self._network_job = network_job
-                self._download_started = False
+                
+                self._Update()
                 
                 HG.client_controller.gui.RegisterUIUpdateWindow( self )
                 
             
+        
+    
+    def SetError( self, error: str ):
+        
+        self._error_text = error
+        
+        self._error_button.show()
+        
+    
+    def ShowError( self ):
+        
+        if self._error_text is None:
+            
+            return
+            
+        
+        QW.QMessageBox.critical( self, 'network error', self._error_text )
         
     
     def TIMERUIUpdate( self ):
