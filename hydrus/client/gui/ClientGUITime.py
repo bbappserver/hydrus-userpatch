@@ -8,10 +8,10 @@ from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
-from hydrus.client.gui import ClientGUICommon
 from hydrus.client.gui import ClientGUIScrolledPanels
 from hydrus.client.gui import ClientGUITopLevelWindowsPanels
 from hydrus.client.gui import QtPorting as QP
+from hydrus.client.gui.widgets import ClientGUICommon
 from hydrus.client.importing import ClientImporting
 from hydrus.client.importing import ClientImportOptions
 
@@ -521,6 +521,8 @@ class TimeDeltaCtrl( QW.QWidget ):
     
 class VelocityCtrl( QW.QWidget ):
     
+    velocityChanged = QC.Signal()
+    
     def __init__( self, parent, min_unit_value, max_unit_value, min_time_delta, days = False, hours = False, minutes = False, seconds = False, per_phrase = 'per', unit = None ):
         
         QW.QWidget.__init__( self, parent )
@@ -548,6 +550,9 @@ class VelocityCtrl( QW.QWidget ):
         
         self.setLayout( hbox )
         
+        self._num.valueChanged.connect( self.velocityChanged )
+        self._times.timeDeltaChanged.connect( self.velocityChanged )
+        
     
     def GetValue( self ):
         
@@ -566,6 +571,7 @@ class VelocityCtrl( QW.QWidget ):
             if isinstance( c, QW.QWidget ):
                 
                 c.setToolTip( text )
+                
             
         
     

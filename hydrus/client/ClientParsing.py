@@ -1865,6 +1865,7 @@ HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIAL
 CONTENT_PARSER_SORT_TYPE_NONE = 0
 CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC = 1
 CONTENT_PARSER_SORT_TYPE_HUMAN_SORT = 2
+CONTENT_PARSER_SORT_TYPE_REVERSE = 3
 
 class ContentParser( HydrusSerialisable.SerialisableBase ):
     
@@ -3710,10 +3711,170 @@ class StringMatch( StringProcessingStep ):
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_STRING_MATCH ] = StringMatch
 
+class StringSlicer( StringProcessingStep ):
+    
+    SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_STRING_SLICER
+    SERIALISABLE_NAME = 'String Selector/Slicer'
+    SERIALISABLE_VERSION = 1
+    
+    def __init__( self, index_start: typing.Optional[ int ] = None, index_end: typing.Optional[ int ] = None ):
+        
+        StringProcessingStep.__init__( self )
+        
+        self._index_start = index_start
+        self._index_end = index_end
+        
+    
+    def _GetSerialisableInfo( self ):
+        
+        return ( self._index_start, self._index_end )
+        
+    
+    def _InitialiseFromSerialisableInfo( self, serialisable_info ):
+        
+        ( self._index_start, self._index_end ) = serialisable_info
+        
+    
+    def GetIndexStartEnd( self ) -> typing.Tuple[ typing.Optional[ int ], typing.Optional[ int ] ]:
+        
+        return ( self._index_start, self._index_end )
+        
+    
+    def MakesChanges( self ) -> bool:
+        
+        return self._index_start is not None or self._index_end is not None
+        
+    
+    def SelectsNothingEver( self ) -> bool:
+        
+        if self._index_end == 0:
+            
+            return True
+            
+        
+        if self._index_start is None or self._index_end is None:
+            
+            return False
+            
+        
+        both_positive = self._index_start >= 0 and self._index_end >= 0
+        both_negative = self._index_start < 0 and self._index_end < 0
+        
+        if both_positive or both_negative:
+            
+            if self._index_start >= self._index_end:
+                
+                return True
+                
+            
+        
+        return False
+        
+    
+    def SelectsOne( self ) -> bool:
+        
+        if self.SelectsNothingEver():
+            
+            return False
+            
+        
+        if self._index_start == -1 and self._index_end is None:
+            
+            return True
+            
+        
+        if self._index_start is None or self._index_end is None:
+            
+            return False
+            
+        
+        both_positive = self._index_start >= 0 and self._index_end >= 0
+        both_negative = self._index_start < 0 and self._index_end < 0
+        
+        return ( both_positive or both_negative ) and self._index_start == self._index_end - 1
+        
+    
+    def Slice( self, texts: typing.Sequence[ str ] ) -> typing.List[ str ]:
+        
+        try:
+            
+            if self._index_start is None and self._index_end is None:
+                
+                return list( texts )
+                
+            elif self._index_end is None:
+                
+                return texts[ self._index_start : ]
+                
+            elif self._index_start is None:
+                
+                return texts[ : self._index_end ]
+                
+            else:
+                
+                return texts[ self._index_start : self._index_end ]
+                
+            
+        except IndexError as e:
+            
+            return []
+            
+        
+    
+    def ToString( self, simple = False, with_type = False ) -> str:
+        
+        if simple:
+            
+            return 'selector/slicer'
+            
+        
+        if self.SelectsNothingEver():
+            
+            result = 'selecting nothing'
+            
+        elif self.SelectsOne():
+            
+            result = 'selecting the {} string'.format( HydrusData.ConvertIndexToPrettyOrdinalString( self._index_start ) )
+            
+        elif self._index_start is None and self._index_end is None:
+            
+            result = 'selecting everything'
+            
+        elif self._index_end is None:
+            
+            result = 'selecting the {} string and onwards'.format( HydrusData.ConvertIndexToPrettyOrdinalString( self._index_start ) )
+            
+        elif self._index_start is None:
+            
+            result = 'selecting up to and including the {} string'.format( HydrusData.ConvertIndexToPrettyOrdinalString( self._index_end - 1 ) )
+            
+        else:
+            
+            result = 'selecting the {} string up to and including the {} string'.format( HydrusData.ConvertIndexToPrettyOrdinalString( self._index_start ), HydrusData.ConvertIndexToPrettyOrdinalString( self._index_end - 1 ) )
+            
+        
+        if with_type:
+            
+            if self.SelectsOne():
+                
+                result = 'SELECT: {}'.format( result )
+                
+            else:
+                
+                result = 'SLICE: {}'.format( result )
+                
+            
+        
+        return result
+        
+    
+HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_STRING_SLICER ] = StringSlicer
+
 sort_str_enum = {
     CONTENT_PARSER_SORT_TYPE_NONE : 'no sorting',
     CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC : 'strict lexicographic',
-    CONTENT_PARSER_SORT_TYPE_HUMAN_SORT : 'human sort'
+    CONTENT_PARSER_SORT_TYPE_HUMAN_SORT : 'human sort',
+    CONTENT_PARSER_SORT_TYPE_REVERSE : 'reverse'
 }
 
 class StringSorter( StringProcessingStep ):
@@ -3767,49 +3928,56 @@ class StringSorter( StringProcessingStep ):
             
             texts = list( texts )
             
-            data_convert = lambda d_s: d_s
-            invalid_data_convert_texts = []
-            
-            if self._regex is not None:
+            if self._sort_type == CONTENT_PARSER_SORT_TYPE_REVERSE:
                 
-                re_job = re.compile( self._regex )
+                texts.reverse()
                 
-                def d( d_s ):
+            else:
+                
+                data_convert = lambda d_s: d_s
+                invalid_data_convert_texts = []
+                
+                if self._regex is not None:
                     
-                    m = re_job.search( d_s )
+                    re_job = re.compile( self._regex )
                     
-                    if m is None:
+                    def d( d_s ):
                         
-                        return ''
+                        m = re_job.search( d_s )
                         
-                    else:
-                        
-                        return m.group()
+                        if m is None:
+                            
+                            return ''
+                            
+                        else:
+                            
+                            return m.group()
+                            
                         
                     
+                    data_convert = d
+                    
+                    invalid_data_convert_texts = [ text for text in texts if data_convert( text ) == '' ]
+                    texts = [ text for text in texts if data_convert( text ) != '' ]
+                    
                 
-                data_convert = d
+                sort_convert = lambda s: s
                 
-                invalid_data_convert_texts = [ text for text in texts if data_convert( text ) == '' ]
-                texts = [ text for text in texts if data_convert( text ) != '' ]
+                if self._sort_type == CONTENT_PARSER_SORT_TYPE_HUMAN_SORT:
+                    
+                    sort_convert = HydrusData.HumanTextSortKey
+                    
                 
-            
-            sort_convert = lambda s: s
-            
-            if self._sort_type == CONTENT_PARSER_SORT_TYPE_HUMAN_SORT:
+                key = lambda k_s: sort_convert( data_convert( k_s ) )
                 
-                sort_convert = HydrusData.HumanTextSortKey
+                reverse = not self._asc
                 
-            
-            key = lambda k_s: sort_convert( data_convert( k_s ) )
-            
-            reverse = not self._asc
-            
-            texts.sort( key = key, reverse = reverse )
-            
-            invalid_data_convert_texts.sort( key = sort_convert, reverse = reverse )
-            
-            texts.extend( invalid_data_convert_texts )
+                texts.sort( key = key, reverse = reverse )
+                
+                invalid_data_convert_texts.sort( key = sort_convert, reverse = reverse )
+                
+                texts.extend( invalid_data_convert_texts )
+                
             
             return texts
             
@@ -3974,7 +4142,7 @@ class StringProcessor( HydrusSerialisable.SerialisableBase ):
         return proc_strings
         
     
-    def ProcessStrings( self, starting_strings: typing.Iterable[ str ], max_steps_allowed = None ) -> typing.List[ str ]:
+    def ProcessStrings( self, starting_strings: typing.Iterable[ str ], max_steps_allowed = None, no_slicing = False ) -> typing.List[ str ]:
         
         current_strings = list( starting_strings )
         
@@ -3994,6 +4162,24 @@ class StringProcessor( HydrusSerialisable.SerialisableBase ):
                 except HydrusExceptions.StringSortException:
                     
                     next_strings = current_strings
+                    
+                
+            elif isinstance( processing_step, StringSlicer ):
+                
+                if no_slicing:
+                    
+                    next_strings = current_strings
+                    
+                else:
+                    
+                    try:
+                        
+                        next_strings = processing_step.Slice( current_strings )
+                        
+                    except:
+                        
+                        next_strings = current_strings
+                        
                     
                 
             else:
@@ -4094,6 +4280,11 @@ class StringProcessor( HydrusSerialisable.SerialisableBase ):
             if True in ( isinstance( ps, StringSorter ) for ps in self._processing_steps ):
                 
                 components.append( 'sorting' )
+                
+            
+            if True in ( isinstance( ps, StringSlicer ) for ps in self._processing_steps ):
+                
+                components.append( 'selecting/slicing' )
                 
             
             return 'some {}'.format( ', '.join( components ) )

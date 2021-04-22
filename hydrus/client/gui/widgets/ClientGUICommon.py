@@ -220,12 +220,34 @@ class BetterButton( ShortcutAwareToolTipMixin, QW.QPushButton ):
         self._func = func
         self._args = args
         self._kwargs = kwargs
+        
+        self._yes_no_text = None
+        
         self.clicked.connect( self.EventButton )
         
     
     def EventButton( self ):
         
+        if self._yes_no_text is not None:
+            
+            from hydrus.client.gui import ClientGUIDialogsQuick
+            
+            result = ClientGUIDialogsQuick.GetYesNo( self, message = self._yes_no_text )
+            
+            if result != QW.QDialog.Accepted:
+                
+                return
+                
+            
+        
         self._func( *self._args,  **self._kwargs )
+        
+    
+    def SetYesNoText( self, text: str ):
+        
+        # this should probably be setyesnotextfactory, but WHATEVER for now
+        
+        self._yes_no_text = text
         
     
     def setText( self, label ):
@@ -866,9 +888,15 @@ class Gauge( QW.QProgressBar ):
     
     def Pulse( self ):
         
-        self.setMaximum( 0 )
+        # pulse looked stupid, was turning on too much, should improve it later
         
-        self.setMinimum( 0 )
+        #self.setMaximum( 0 )
+        
+        #self.setMinimum( 0 )
+        
+        self.SetRange( 1 )
+        self.SetValue( 1 )
+        self.SetValue( 0 )
         
         self._is_pulsing = True
         
@@ -1224,108 +1252,6 @@ class ListBook( QW.QWidget ):
                 self._Select( selection )
                 
             
-        
-    
-class MenuBitmapButton( BetterBitmapButton ):
-    
-    def __init__( self, parent, bitmap, menu_items ):
-        
-        BetterBitmapButton.__init__( self, parent, bitmap, self.DoMenu )
-        
-        self._menu_items = menu_items
-        
-    
-    def _PopulateMenu( self, menu, menu_items ):
-        
-        for ( item_type, title, description, data ) in menu_items:
-            
-            if item_type == 'normal':
-                
-                func = data
-                
-                ClientGUIMenus.AppendMenuItem( menu, title, description, func )
-                
-            elif item_type == 'check':
-                
-                check_manager = data
-                
-                current_value = check_manager.GetCurrentValue()
-                func = check_manager.Invert
-                
-                if current_value is not None:
-                    ClientGUIMenus.AppendMenuCheckItem( menu, title, description, current_value, func )
-                    
-                
-            elif item_type == 'separator':
-                
-                ClientGUIMenus.AppendSeparator( menu )
-                
-            elif item_type == 'submenu':
-                
-                submenu = QW.QMenu( menu )
-                
-                self._PopulateMenu( submenu, data )
-                
-                ClientGUIMenus.AppendMenu( menu, submenu, title )
-                
-            
-        
-    
-    def DoMenu( self ):
-        
-        menu = QW.QMenu()
-        
-        self._PopulateMenu( menu, self._menu_items )
-        
-        CGC.core().PopupMenu( self, menu )
-        
-    
-class MenuButton( BetterButton ):
-    
-    def __init__( self, parent, label, menu_items ):
-        
-        BetterButton.__init__( self, parent, label, self.DoMenu )
-        
-        self._menu_items = menu_items
-        
-    
-    def DoMenu( self ):
-        
-        menu = QW.QMenu()
-        
-        for ( item_type, title, description, data ) in self._menu_items:
-            
-            if item_type == 'normal':
-                
-                callable = data
-                
-                ClientGUIMenus.AppendMenuItem( menu, title, description, callable )
-                
-            elif item_type == 'check':
-                
-                check_manager = data
-                
-                initial_value = check_manager.GetInitialValue()
-                
-                ClientGUIMenus.AppendMenuCheckItem( menu, title, description, initial_value, check_manager.Invert )
-                
-                
-            elif item_type == 'separator':
-                
-                ClientGUIMenus.AppendSeparator( menu )
-                
-            elif item_type == 'label':
-                
-                ClientGUIMenus.AppendMenuLabel( menu, title, description )
-                
-            
-        
-        CGC.core().PopupMenu( self, menu )
-        
-    
-    def SetMenuItems( self, menu_items ):
-        
-        self._menu_items = menu_items
         
     
 class NoneableSpinCtrl( QW.QWidget ):

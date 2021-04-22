@@ -663,6 +663,7 @@ class Subscription( HydrusSerialisable.SerialisableBaseNamed ):
         gallery_seed_log = query_log_container.GetGallerySeedLog()
         
         this_is_initial_sync = query_header.IsInitialSync()
+        num_file_seeds_at_start = len( file_seed_cache )
         total_new_urls_for_this_sync = 0
         total_already_in_urls_for_this_sync = 0
         
@@ -807,55 +808,76 @@ class Subscription( HydrusSerialisable.SerialisableBaseNamed ):
                             file_seeds_to_add_ordered.append( file_seed )
                             
                         
-                        if file_limit_for_this_sync is not None and total_new_urls_for_this_sync + num_urls_added >= file_limit_for_this_sync:
+                        if file_limit_for_this_sync is not None:
                             
-                            # we have found enough new files this sync, so should stop adding files and new gallery pages
-                            
-                            if this_is_initial_sync:
+                            if total_new_urls_for_this_sync + num_urls_added >= file_limit_for_this_sync:
                                 
-                                stop_reason = 'hit initial file limit'
+                                # we have found enough new files this sync, so should stop adding files and new gallery pages
                                 
-                            else:
-                                
-                                if total_already_in_urls_for_this_sync + num_urls_already_in_file_seed_cache > 0:
+                                if this_is_initial_sync:
                                     
-                                    # this sync produced some knowns, so it is likely we have stepped through a mix of old and tagged-late new files
-                                    # we might also be on the second sync with a periodic limit greater than the initial limit
-                                    # either way, this is no reason to go crying to the user
-                                    
-                                    stop_reason = 'hit periodic file limit after seeing several already-seen files'
+                                    stop_reason = 'hit initial file limit'
                                     
                                 else:
                                     
-                                    # this page had all entirely new files
-                                    
-                                    self._ShowHitPeriodicFileLimitMessage( query_name )
-                                    
-                                    stop_reason = 'hit periodic file limit without seeing any already-seen files!'
+                                    if total_already_in_urls_for_this_sync + num_urls_already_in_file_seed_cache > 0:
+                                        
+                                        # this sync produced some knowns, so it is likely we have stepped through a mix of old and tagged-late new files
+                                        # this is no reason to go crying to the user
+                                        
+                                        stop_reason = 'hit periodic file limit after seeing several already-seen files'
+                                        
+                                    else:
+                                        
+                                        # this page had all entirely new files
+                                        
+                                        self._ShowHitPeriodicFileLimitMessage( query_name )
+                                        
+                                        stop_reason = 'hit periodic file limit without seeing any already-seen files!'
+                                        
                                     
                                 
+                                can_search_for_more_files = False
+                                
+                                break
+                                
                             
-                            can_search_for_more_files = False
+                        
+                        if self._initial_file_limit is not None and self._periodic_file_limit is not None:
                             
-                            break
+                            # if the user has initial file sync of 5 but then normal sync of 100, we don't want to keep stomping through to older files on any subsequent normal sync
+                            # therefore, if we started this normal sync with fewer than normal sync files, we won't tolerate more than initial sync number of already in db
+                            if not this_is_initial_sync and num_file_seeds_at_start < self._periodic_file_limit and total_already_in_urls_for_this_sync + num_urls_already_in_file_seed_cache >= self._initial_file_limit:
+                                
+                                stop_reason = 'believe I caught up with initial sync'
+                                
+                                can_search_for_more_files = False
+                                
+                                # since most initial file limits will be > 5, this will likely be superceded immediately by the WE_HIT_OLD_GROUND_THRESHOLD bit in a sec, but whatever
+                                
+                                break
+                                
                             
                         
                     
                     WE_HIT_OLD_GROUND_THRESHOLD = 5
                     
-                    if current_contiguous_num_urls_already_in_file_seed_cache >= WE_HIT_OLD_GROUND_THRESHOLD:
+                    if can_search_for_more_files:
                         
-                        # this gallery page has caught up to before, so it should not spawn any more gallery pages
+                        if current_contiguous_num_urls_already_in_file_seed_cache >= WE_HIT_OLD_GROUND_THRESHOLD:
+                            
+                            # this gallery page has caught up to before, so it should not spawn any more gallery pages
+                            
+                            can_search_for_more_files = False
+                            
+                            stop_reason = 'saw ' + HydrusData.ToHumanInt( current_contiguous_num_urls_already_in_file_seed_cache ) + ' previously seen urls, so assuming we caught up'
+                            
                         
-                        can_search_for_more_files = False
-                        
-                        stop_reason = 'saw ' + HydrusData.ToHumanInt( current_contiguous_num_urls_already_in_file_seed_cache ) + ' previously seen urls, so assuming we caught up'
-                        
-                    
-                    if num_urls_added == 0:
-                        
-                        can_search_for_more_files = False
-                        stop_reason = 'no new urls found'
+                        if num_urls_added == 0:
+                            
+                            can_search_for_more_files = False
+                            stop_reason = 'no new urls found'
+                            
                         
                     
                     return ( num_urls_added, num_urls_already_in_file_seed_cache, can_search_for_more_files, stop_reason )
@@ -1830,7 +1852,7 @@ class SubscriptionsManager( object ):
             
             cannot_run = sorted( self._names_that_cannot_run )
             
-            next_times = sorted( self._names_to_next_work_time.items(), key = lambda n, nwt: nwt )
+            next_times = sorted( self._names_to_next_work_time.items(), key = lambda n_nwt_tuple: n_nwt_tuple[1] )
             
             message = '{} subs: {}'.format( HydrusData.ToHumanInt( len( self._names_to_subscriptions ) ), ', '.join( sub_names ) )
             message += os.linesep * 2

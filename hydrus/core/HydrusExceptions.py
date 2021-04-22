@@ -29,6 +29,8 @@ class HydrusException( Exception ):
         return os.linesep.join( s )
         
     
+class UnknownException( HydrusException ): pass
+
 class CantRenderWithCVException( HydrusException ): pass
 class DataMissing( HydrusException ): pass
 
@@ -88,6 +90,7 @@ class NotFoundException( NetworkException ): pass
 class NotModifiedException( NetworkException ): pass
 class BadRequestException( NetworkException ): pass
 class ConflictException( NetworkException ): pass
+class RangeNotSatisfiableException( NetworkException ): pass
 class MissingCredentialsException( NetworkException ): pass
 class DoesNotSupportCORSException( NetworkException ): pass
 class InsufficientCredentialsException( NetworkException ): pass

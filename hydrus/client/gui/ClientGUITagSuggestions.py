@@ -14,12 +14,12 @@ from hydrus.client.media import ClientMedia
 from hydrus.client import ClientParsing
 from hydrus.client import ClientSearch
 from hydrus.client import ClientThreading
-from hydrus.client.gui import ClientGUICommon
 from hydrus.client.gui import ClientGUIDialogs
 from hydrus.client.gui import ClientGUIParsing
 from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.lists import ClientGUIListBoxes
 from hydrus.client.gui.lists import ClientGUIListBoxesData
+from hydrus.client.gui.widgets import ClientGUICommon
 from hydrus.client.metadata import ClientTags
 from hydrus.client.metadata import ClientTagSorting
 
@@ -184,7 +184,7 @@ class FavouritesTagsPanel( QW.QWidget ):
         
         favourites = list( HG.client_controller.new_options.GetSuggestedTagsFavourites( self._service_key ) )
         
-        ClientTagSorting.SortTags( HC.options[ 'default_tag_sort' ], favourites )
+        ClientTagSorting.SortTags( HG.client_controller.new_options.GetDefaultTagSort(), favourites )
         
         tags = FilterSuggestedTagsForMedia( favourites, self._media, self._service_key )
         

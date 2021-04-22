@@ -11,12 +11,13 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
 from hydrus.client import ClientThreading
-from hydrus.client.gui import ClientGUICommon
-from hydrus.client.gui import ClientGUIControls
 from hydrus.client.gui import ClientGUIDialogsQuick
 from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUITopLevelWindows
 from hydrus.client.gui import QtPorting as QP
+from hydrus.client.gui.networking import ClientGUINetworkJobControl
+from hydrus.client.gui.widgets import ClientGUICommon
+from hydrus.client.gui.widgets import ClientGUIControls
 
 class PopupWindow( QW.QFrame ):
     
@@ -117,7 +118,7 @@ class PopupMessage( PopupWindow ):
         self._no = ClientGUICommon.BetterButton( self, 'no', self._NoButton )
         self._no.hide()
         
-        self._network_job_ctrl = ClientGUIControls.NetworkJobControl( self )
+        self._network_job_ctrl = ClientGUINetworkJobControl.NetworkJobControl( self )
         self._network_job_ctrl.hide()
         
         self._copy_to_clipboard_button = ClientGUICommon.BetterButton( self, 'copy to clipboard', self.CopyToClipboard )
@@ -571,9 +572,12 @@ class PopupMessageManager( QW.QWidget ):
         
         self._old_excepthook = sys.excepthook
         self._old_show_exception = HydrusData.ShowException
+        self._old_show_exception_tuple = HydrusData.ShowExceptionTuple
+        self._old_show_text = HydrusData.ShowText
         
         sys.excepthook = ClientData.CatchExceptionClient
         HydrusData.ShowException = ClientData.ShowExceptionClient
+        HydrusData.ShowExceptionTuple = ClientData.ShowExceptionTupleClient
         HydrusData.ShowText = ClientData.ShowTextClient
         
         job_key = ClientThreading.JobKey()
@@ -952,6 +956,8 @@ class PopupMessageManager( QW.QWidget ):
         sys.excepthook = self._old_excepthook
         
         HydrusData.ShowException = self._old_show_exception
+        HydrusData.ShowExceptionTuple = self._old_show_exception_tuple
+        HydrusData.ShowText = self._old_show_text
         
     
     def Dismiss( self, window ):

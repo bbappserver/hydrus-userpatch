@@ -6,17 +6,15 @@ from twisted.internet import reactor, defer
 from twisted.internet.threads import deferToThread
 from twisted.web.server import NOT_DONE_YET
 from twisted.web.resource import Resource
-from twisted.web.static import File as FileResource, NoRangeStaticProducer
+from twisted.web.static import File as FileResource, NoRangeStaticProducer, SingleRangeStaticProducer, MultipleRangeStaticProducer
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
-from hydrus.core import HydrusFileHandling
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusImageHandling
-from hydrus.core import HydrusNetworking
 from hydrus.core import HydrusPaths
 from hydrus.core import HydrusSerialisable
+from hydrus.core.networking import HydrusServerRequest
 
 def GenerateEris( service ):
     
@@ -210,67 +208,6 @@ def GenerateEris( service ):
                                      <font color="gray">MMMM</font>
 </pre></body></html>'''
     
-def ParseFileArguments( path, decompression_bombs_ok = False ):
-    
-    HydrusImageHandling.ConvertToPNGIfBMP( path )
-    
-    hash = HydrusFileHandling.GetHashFromPath( path )
-    
-    try:
-        
-        mime = HydrusFileHandling.GetMime( path )
-        
-        if mime in HC.DECOMPRESSION_BOMB_IMAGES and not decompression_bombs_ok:
-            
-            if HydrusImageHandling.IsDecompressionBomb( path ):
-                
-                raise HydrusExceptions.InsufficientCredentialsException( 'File seemed to be a Decompression Bomb, which you cannot upload!' )
-                
-            
-        
-        ( size, mime, width, height, duration, num_frames, has_audio, num_words ) = HydrusFileHandling.GetFileInfo( path, mime )
-        
-    except Exception as e:
-        
-        raise HydrusExceptions.BadRequestException( 'File ' + hash.hex() + ' could not parse: ' + str( e ) )
-        
-    
-    args = HydrusNetworking.ParsedRequestArguments()
-    
-    args[ 'path' ] = path
-    args[ 'hash' ] = hash
-    args[ 'size' ] = size
-    args[ 'mime' ] = mime
-    
-    if width is not None: args[ 'width' ] = width
-    if height is not None: args[ 'height' ] = height
-    if duration is not None: args[ 'duration' ] = duration
-    if num_frames is not None: args[ 'num_frames' ] = num_frames
-    args[ 'has_audio' ] = has_audio
-    if num_words is not None: args[ 'num_words' ] = num_words
-    
-    if mime in HC.MIMES_WITH_THUMBNAILS:
-        
-        try:
-            
-            bounding_dimensions = HC.SERVER_THUMBNAIL_DIMENSIONS
-            
-            target_resolution = HydrusImageHandling.GetThumbnailResolution( ( width, height ), bounding_dimensions )
-            
-            thumbnail_bytes = HydrusFileHandling.GenerateThumbnailBytes( path, target_resolution, mime, duration, num_frames )
-            
-        except Exception as e:
-            
-            tb = traceback.format_exc()
-            
-            raise HydrusExceptions.BadRequestException( 'Could not generate thumbnail from that file:' + os.linesep + tb )
-            
-        
-        args[ 'thumbnail' ] = thumbnail_bytes
-        
-    
-    return args
-    
 hydrus_favicon = FileResource( os.path.join( HC.STATIC_DIR, 'hydrus.ico' ), defaultType = 'image/x-icon' )
 
 class HydrusDomain( object ):
@@ -339,12 +276,12 @@ class HydrusResource( Resource ):
         self._server_version_string = HC.service_string_lookup[ service_type ] + '/' + str( HC.NETWORK_VERSION )
         
     
-    def _callbackCheckAccountRestrictions( self, request ):
+    def _callbackCheckAccountRestrictions( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _callbackCheckServiceRestrictions( self, request ):
+    def _callbackCheckServiceRestrictions( self, request: HydrusServerRequest.HydrusRequest ):
         
         self._domain.CheckValid( request.getClientIP() )
         
@@ -355,32 +292,250 @@ class HydrusResource( Resource ):
         return request
         
     
-    def _callbackEstablishAccountFromHeader( self, request ):
+    def _callbackDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        def wrap_thread_result( response_context ):
+            
+            request.hydrus_response_context = response_context
+            
+            return request
+            
+        
+        if HG.server_profile_mode:
+            
+            d = deferToThread( self._profileJob, self._threadDoGETJob, request )
+            
+        else:
+            
+            d = deferToThread( self._threadDoGETJob, request )
+            
+        
+        d.addCallback( wrap_thread_result )
+        
+        return d
+        
+    
+    def _callbackDoOPTIONSJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        def wrap_thread_result( response_context ):
+            
+            request.hydrus_response_context = response_context
+            
+            return request
+            
+        
+        if HG.server_profile_mode:
+            
+            d = deferToThread( self._profileJob, self._threadDoOPTIONSJob, request )
+            
+        else:
+            
+            d = deferToThread( self._threadDoOPTIONSJob, request )
+            
+        
+        d.addCallback( wrap_thread_result )
+        
+        return d
+        
+    
+    def _callbackDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        def wrap_thread_result( response_context ):
+            
+            request.hydrus_response_context = response_context
+            
+            return request
+            
+        
+        if HG.server_profile_mode:
+            
+            d = deferToThread( self._profileJob, self._threadDoPOSTJob, request )
+            
+        else:
+            
+            d = deferToThread( self._threadDoPOSTJob, request )
+            
+        
+        d.addCallback( wrap_thread_result )
+        
+        return d
+        
+    
+    def _callbackEstablishAccountFromHeader( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _callbackEstablishAccountFromArgs( self, request ):
+    def _callbackEstablishAccountFromArgs( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _callbackParseGETArgs( self, request ):
+    def _callbackParseGETArgs( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _callbackParsePOSTArgs( self, request ):
+    def _callbackParsePOSTArgs( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _checkService( self, request ):
+    def _callbackRenderResponseContext( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        self._CleanUpTempFile( request )
+        
+        if request.channel is None:
+            
+            # Connection was lost, it seems.
+            # no need for request.finish
+            
+            return
+            
+        
+        if request.requestHeaders.hasHeader( 'Origin' ):
+            
+            if self._service.SupportsCORS():
+                
+                request.setHeader( 'Access-Control-Allow-Origin', '*' )
+                
+            
+        
+        response_context = request.hydrus_response_context
+        
+        if response_context.HasPath():
+            
+            path = response_context.GetPath()
+            
+            filesize = os.path.getsize( path )
+            
+            offset_and_block_size_pairs = self._parseRangeHeader( request, filesize )
+            
+        else:
+            
+            offset_and_block_size_pairs = []
+            
+        
+        status_code = response_context.GetStatusCode()
+        
+        if status_code == 200 and response_context.HasPath() and len( offset_and_block_size_pairs ) > 0:
+            
+            status_code = 206
+            
+        
+        request.setResponseCode( status_code )
+        
+        for ( k, v, kwargs ) in response_context.GetCookies():
+            
+            request.addCookie( k, v, **kwargs )
+            
+        
+        do_finish = True
+        
+        if response_context.HasPath():
+            
+            path = response_context.GetPath()
+            
+            filesize = os.path.getsize( path )
+            
+            mime = response_context.GetMime()
+            
+            content_type = HC.mime_mimetype_string_lookup[ mime ]
+            
+            ( base, filename ) = os.path.split( path )
+            
+            fileObject = open( path, 'rb' )
+            
+            content_disposition = 'inline; filename="' + filename + '"'
+            
+            request.setHeader( 'Content-Disposition', str( content_disposition ) )
+            
+            request.setHeader( 'Expires', time.strftime( '%a, %d %b %Y %H:%M:%S GMT', time.gmtime( time.time() + 86400 * 365 ) ) )
+            request.setHeader( 'Cache-Control', 'max-age={}'.format( 86400 * 365 ) )
+            
+            if len( offset_and_block_size_pairs ) <= 1:
+                
+                request.setHeader( 'Content-Type', str( content_type ) )
+                
+                if len( offset_and_block_size_pairs ) == 0:
+                    
+                    content_length = filesize
+                    
+                    request.setHeader( 'Content-Length', str( content_length ) )
+                    
+                    producer = NoRangeStaticProducer( request, fileObject )
+                    
+                elif len( offset_and_block_size_pairs ) == 1:
+                    
+                    ( range_start, range_end, offset, block_size ) = offset_and_block_size_pairs[0]
+                    
+                    header_range_end = filesize - 1 if range_end is None else range_end
+                    
+                    content_length = block_size
+                    
+                    request.setHeader( 'Accept-Ranges', 'bytes' )
+                    request.setHeader( 'Content-Range', 'bytes {}-{}/{}'.format( offset, header_range_end, filesize ) )
+                    request.setHeader( 'Content-Length', str( content_length ) )
+                    
+                    producer = SingleRangeStaticProducer( request, fileObject, offset, block_size )
+                    
+                
+            else:
+                
+                # hey, what a surprise, an http data transmission standard turned out to be a massive PITA
+                # MultipleRangeStaticProducer is the lad to use, but you have to figure out your own separation bits, which have even more finicky rules. more than I can deal with with the current time I have
+                # if/when you want to do this, check out the FileResource, it does it in its internal gubbins
+                
+                raise HydrusExceptions.RangeNotSatisfiableException( 'Can only support Single Range requests at the moment!' )
+                
+            
+            producer.start()
+            
+            do_finish = False
+            
+        elif response_context.HasBody():
+            
+            mime = response_context.GetMime()
+            
+            body_bytes = response_context.GetBodyBytes()
+            
+            content_type = HC.mime_mimetype_string_lookup[ mime ]
+            
+            content_length = len( body_bytes )
+            
+            content_disposition = 'inline'
+            
+            request.setHeader( 'Content-Type', content_type )
+            request.setHeader( 'Content-Length', str( content_length ) )
+            request.setHeader( 'Content-Disposition', content_disposition )
+            
+            request.write( body_bytes )
+            
+        else:
+            
+            content_length = 0
+            
+            if status_code != 204: # 204 is No Content
+                
+                request.setHeader( 'Content-Length', str( content_length ) )
+                
+            
+        
+        self._reportDataUsed( request, content_length )
+        self._reportRequestUsed( request )
+        
+        if do_finish:
+            
+            request.finish()
+            
+        
+    
+    def _checkService( self, request: HydrusServerRequest.HydrusRequest ):
         
         return request
         
     
-    def _checkUserAgent( self, request ):
+    def _checkUserAgent( self, request: HydrusServerRequest.HydrusRequest ):
         
         request.is_hydrus_user_agent = False
         
@@ -428,184 +583,14 @@ class HydrusResource( Resource ):
             
         
     
-    def _callbackRenderResponseContext( self, request ):
-        
-        self._CleanUpTempFile( request )
-        
-        if request.channel is None:
-            
-            # Connection was lost, it seems.
-            # no need for request.finish
-            
-            return
-            
-        
-        if request.requestHeaders.hasHeader( 'Origin' ):
-            
-            if self._service.SupportsCORS():
-                
-                request.setHeader( 'Access-Control-Allow-Origin', '*' )
-                
-            
-        
-        response_context = request.hydrus_response_context
-        
-        status_code = response_context.GetStatusCode()
-        
-        request.setResponseCode( status_code )
-        
-        for ( k, v, kwargs ) in response_context.GetCookies():
-            
-            request.addCookie( k, v, **kwargs )
-            
-        
-        do_finish = True
-        
-        if response_context.HasPath():
-            
-            path = response_context.GetPath()
-            
-            size = os.path.getsize( path )
-            
-            mime = response_context.GetMime()
-            
-            content_type = HC.mime_mimetype_string_lookup[ mime ]
-            
-            content_length = size
-            
-            ( base, filename ) = os.path.split( path )
-            
-            content_disposition = 'inline; filename="' + filename + '"'
-            
-            request.setHeader( 'Content-Type', str( content_type ) )
-            request.setHeader( 'Content-Length', str( content_length ) )
-            request.setHeader( 'Content-Disposition', str( content_disposition ) )
-            
-            request.setHeader( 'Expires', time.strftime( '%a, %d %b %Y %H:%M:%S GMT', time.gmtime( time.time() + 86400 * 365 ) ) )
-            request.setHeader( 'Cache-Control', 'max-age={}'.format( 86400 * 365 ) )
-            
-            fileObject = open( path, 'rb' )
-            
-            producer = NoRangeStaticProducer( request, fileObject )
-            
-            producer.start()
-            
-            do_finish = False
-            
-        elif response_context.HasBody():
-            
-            mime = response_context.GetMime()
-            
-            body_bytes = response_context.GetBodyBytes()
-            
-            content_type = HC.mime_mimetype_string_lookup[ mime ]
-            
-            content_length = len( body_bytes )
-            
-            content_disposition = 'inline'
-            
-            request.setHeader( 'Content-Type', content_type )
-            request.setHeader( 'Content-Length', str( content_length ) )
-            request.setHeader( 'Content-Disposition', content_disposition )
-            
-            request.write( body_bytes )
-            
-        else:
-            
-            content_length = 0
-            
-            if status_code != 204: # 204 is No Content
-                
-                request.setHeader( 'Content-Length', str( content_length ) )
-                
-            
-        
-        self._reportDataUsed( request, content_length )
-        self._reportRequestUsed( request )
-        
-        if do_finish:
-            
-            request.finish()
-            
-        
-    
-    def _profileJob( self, call, request ):
+    def _profileJob( self, call, request: HydrusServerRequest.HydrusRequest ):
         
         HydrusData.Profile( 'client api {}'.format( request.path ), 'request.result_lmao = call( request )', globals(), locals(), min_duration_ms = 3, show_summary = True )
         
         return request.result_lmao
         
     
-    def _callbackDoGETJob( self, request ):
-        
-        def wrap_thread_result( response_context ):
-            
-            request.hydrus_response_context = response_context
-            
-            return request
-            
-        
-        if HG.server_profile_mode:
-            
-            d = deferToThread( self._profileJob, self._threadDoGETJob, request )
-            
-        else:
-            
-            d = deferToThread( self._threadDoGETJob, request )
-            
-        
-        d.addCallback( wrap_thread_result )
-        
-        return d
-        
-    
-    def _callbackDoOPTIONSJob( self, request ):
-        
-        def wrap_thread_result( response_context ):
-            
-            request.hydrus_response_context = response_context
-            
-            return request
-            
-        
-        if HG.server_profile_mode:
-            
-            d = deferToThread( self._profileJob, self._threadDoOPTIONSJob, request )
-            
-        else:
-            
-            d = deferToThread( self._threadDoOPTIONSJob, request )
-            
-        
-        d.addCallback( wrap_thread_result )
-        
-        return d
-        
-    
-    def _callbackDoPOSTJob( self, request ):
-        
-        def wrap_thread_result( response_context ):
-            
-            request.hydrus_response_context = response_context
-            
-            return request
-            
-        
-        if HG.server_profile_mode:
-            
-            d = deferToThread( self._profileJob, self._threadDoPOSTJob, request )
-            
-        else:
-            
-            d = deferToThread( self._threadDoPOSTJob, request )
-            
-        
-        d.addCallback( wrap_thread_result )
-        
-        return d
-        
-    
-    def _DecompressionBombsOK( self, request ):
+    def _DecompressionBombsOK( self, request: HydrusServerRequest.HydrusRequest ):
         
         return False
         
@@ -615,85 +600,91 @@ class HydrusResource( Resource ):
         request_deferred.cancel()
         
     
-    def _errbackHandleEmergencyError( self, failure, request ):
+    def _errbackHandleProcessingError( self, failure, request: HydrusServerRequest.HydrusRequest ):
         
-        try: self._CleanUpTempFile( request )
-        except: pass
-        
-        try: HydrusData.DebugPrint( failure.getTraceback() )
-        except: pass
-        
-        if request.channel is not None:
+        try:
             
-            try: request.setResponseCode( 500 )
+            try: self._CleanUpTempFile( request )
             except: pass
             
-            try: request.write( failure.getTraceback() )
+            default_mime = HC.TEXT_HTML
+            default_encoding = str
+            
+            if failure.type == HydrusExceptions.BadRequestException:
+                
+                response_context = ResponseContext( 400, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type in ( HydrusExceptions.MissingCredentialsException, HydrusExceptions.DoesNotSupportCORSException ):
+                
+                response_context = ResponseContext( 401, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.InsufficientCredentialsException:
+                
+                response_context = ResponseContext( 403, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type in ( HydrusExceptions.NotFoundException, HydrusExceptions.DataMissing, HydrusExceptions.FileMissingException ):
+                
+                response_context = ResponseContext( 404, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.ConflictException:
+                
+                response_context = ResponseContext( 409, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.RangeNotSatisfiableException:
+                
+                response_context = ResponseContext( 416, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.SessionException:
+                
+                response_context = ResponseContext( 419, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.NetworkVersionException:
+                
+                response_context = ResponseContext( 426, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.ServerBusyException:
+                
+                response_context = ResponseContext( 503, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.BandwidthException:
+                
+                response_context = ResponseContext( 509, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            elif failure.type == HydrusExceptions.ServerException:
+                
+                response_context = ResponseContext( 500, mime = default_mime, body = default_encoding( failure.value ) )
+                
+            else:
+                
+                HydrusData.DebugPrint( failure.getTraceback() )
+                
+                response_context = ResponseContext( 500, mime = default_mime, body = default_encoding( 'The repository encountered an error it could not handle! Here is a dump of what happened, which will also be written to your client.log file. If it persists, please forward it to hydrus.admin@gmail.com:' + os.linesep * 2 + failure.getTraceback() ) )
+                
+            
+            request.hydrus_response_context = response_context
+            
+            self._callbackRenderResponseContext( request )
+            
+        except:
+            
+            try: HydrusData.DebugPrint( failure.getTraceback() )
             except: pass
             
-        
-        if not request.finished:
+            if hasattr( request, 'channel' ) and request.channel is not None:
+                
+                try: request.setResponseCode( 500 )
+                except: pass
+                
+                try: request.write( failure.getTraceback() )
+                except: pass
+                
             
-            try: request.finish()
-            except: pass
+            if not request.finished:
+                
+                try: request.finish()
+                except: pass
+                
             
-        
-    
-    def _errbackHandleProcessingError( self, failure, request ):
-        
-        self._CleanUpTempFile( request )
-        
-        default_mime = HC.TEXT_HTML
-        default_encoding = str
-        
-        if failure.type == HydrusExceptions.BadRequestException:
-            
-            response_context = ResponseContext( 400, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type in ( HydrusExceptions.MissingCredentialsException, HydrusExceptions.DoesNotSupportCORSException ):
-            
-            response_context = ResponseContext( 401, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.InsufficientCredentialsException:
-            
-            response_context = ResponseContext( 403, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type in ( HydrusExceptions.NotFoundException, HydrusExceptions.DataMissing, HydrusExceptions.FileMissingException ):
-            
-            response_context = ResponseContext( 404, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.ConflictException:
-            
-            response_context = ResponseContext( 409, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.SessionException:
-            
-            response_context = ResponseContext( 419, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.NetworkVersionException:
-            
-            response_context = ResponseContext( 426, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.ServerBusyException:
-            
-            response_context = ResponseContext( 503, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.BandwidthException:
-            
-            response_context = ResponseContext( 509, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        elif failure.type == HydrusExceptions.ServerException:
-            
-            response_context = ResponseContext( 500, mime = default_mime, body = default_encoding( failure.value ) )
-            
-        else:
-            
-            HydrusData.DebugPrint( failure.getTraceback() )
-            
-            response_context = ResponseContext( 500, mime = default_mime, body = default_encoding( 'The repository encountered an error it could not handle! Here is a dump of what happened, which will also be written to your client.log file. If it persists, please forward it to hydrus.admin@gmail.com:' + os.linesep * 2 + failure.getTraceback() ) )
-            
-        
-        request.hydrus_response_context = response_context
         
         return request
         
@@ -728,6 +719,104 @@ class HydrusResource( Resource ):
         return access_key
         
     
+    def _parseRangeHeader( self, request, filesize ):
+        
+        offset_and_block_size_pairs = []
+        
+        if request.requestHeaders.hasHeader( 'Range' ):
+            
+            range_headers = request.requestHeaders.getRawHeaders( 'Range' )
+            
+            range_header = range_headers[0]
+            
+            if '=' not in range_header:
+                
+                raise HydrusExceptions.BadRequestException( 'Did not understand range header!' )
+                
+            
+            ( unit_gumpf, range_pairs_string ) = range_header.split( '=', 1 )
+            
+            if unit_gumpf != 'bytes':
+                
+                raise HydrusExceptions.RangeNotSatisfiableException( 'Do not support anything other than bytes in Range header!' )
+                
+            
+            range_pair_strings = range_pairs_string.split( ',' )
+            
+            if True in ( '-' not in range_pair_string for range_pair_string in range_pair_strings ):
+                
+                raise HydrusExceptions.RangeNotSatisfiableException( 'Did not understand the Range header\'s range pair(s)!' )
+                
+            
+            range_pairs = [ range_pair_string.strip().split( '-' ) for range_pair_string in range_pair_strings ]
+            
+            offset_and_block_size_pairs = []
+            
+            for ( range_start, range_end ) in range_pairs:
+                
+                if range_start == '':
+                    
+                    if range_end == '':
+                        
+                        raise HydrusExceptions.RangeNotSatisfiableException( 'Undefined Range header pair given!' )
+                        
+                    
+                    range_start = None
+                    
+                else:
+                    
+                    range_start = abs( int( range_start ) )
+                    
+                
+                if range_end == '':
+                    
+                    range_end = None
+                    
+                else:
+                    
+                    range_end = abs( int( range_end ) )
+                    
+                
+                if range_start is not None and range_end is not None and range_start > range_end:
+                    
+                    raise HydrusExceptions.RangeNotSatisfiableException( 'The Range header had an invalid pair!' )
+                    
+                
+                if range_start is None:
+                    
+                    offset = filesize - range_end
+                    block_size = range_end
+                    
+                elif range_end is None:
+                    
+                    offset = range_start
+                    block_size = filesize - range_start
+                    
+                else:
+                    
+                    if range_start > filesize:
+                        
+                        offset_and_block_size_pairs = []
+                        
+                        break
+                        
+                    
+                    if range_end > filesize:
+                        
+                        range_end = filesize - 1
+                        
+                    
+                    offset = range_start
+                    block_size = ( range_end + 1 ) - range_start
+                    
+                
+                offset_and_block_size_pairs.append( ( range_start, range_end, offset, block_size ) )
+                
+            
+        
+        return offset_and_block_size_pairs
+        
+    
     def _reportDataUsed( self, request, num_bytes ):
         
         self._service.ReportDataUsed( num_bytes )
@@ -735,19 +824,19 @@ class HydrusResource( Resource ):
         HG.controller.ReportDataUsed( num_bytes )
         
     
-    def _reportRequestUsed( self, request ):
+    def _reportRequestUsed( self, request: HydrusServerRequest.HydrusRequest ):
         
         self._service.ReportRequestUsed()
         
         HG.controller.ReportRequestUsed()
         
     
-    def _threadDoGETJob( self, request ):
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
         
         raise HydrusExceptions.NotFoundException( 'This service does not support that request!' )
         
     
-    def _threadDoOPTIONSJob( self, request ):
+    def _threadDoOPTIONSJob( self, request: HydrusServerRequest.HydrusRequest ):
         
         allowed_methods = []
         
@@ -792,12 +881,12 @@ class HydrusResource( Resource ):
         return response_context
         
     
-    def _threadDoPOSTJob( self, request ):
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
         
         raise HydrusExceptions.NotFoundException( 'This service does not support that request!' )
         
     
-    def _CleanUpTempFile( self, request ):
+    def _CleanUpTempFile( self, request: HydrusServerRequest.HydrusRequest ):
         
         if hasattr( request, 'temp_file_info' ):
             
@@ -809,7 +898,7 @@ class HydrusResource( Resource ):
             
         
     
-    def render_GET( self, request ):
+    def render_GET( self, request: HydrusServerRequest.HydrusRequest ):
         
         request.setHeader( 'Server', self._server_version_string )
         
@@ -827,11 +916,9 @@ class HydrusResource( Resource ):
         
         d.addCallback( self._callbackDoGETJob )
         
-        d.addErrback( self._errbackHandleProcessingError, request )
-        
         d.addCallback( self._callbackRenderResponseContext )
         
-        d.addErrback( self._errbackHandleEmergencyError, request )
+        d.addErrback( self._errbackHandleProcessingError, request )
         
         request.notifyFinish().addErrback( self._errbackDisconnected, d )
         
@@ -840,7 +927,7 @@ class HydrusResource( Resource ):
         return NOT_DONE_YET
         
     
-    def render_OPTIONS( self, request ):
+    def render_OPTIONS( self, request: HydrusServerRequest.HydrusRequest ):
         
         request.setHeader( 'Server', self._server_version_string )
         
@@ -850,11 +937,9 @@ class HydrusResource( Resource ):
         
         d.addCallback( self._callbackDoOPTIONSJob )
         
-        d.addErrback( self._errbackHandleProcessingError, request )
-        
         d.addCallback( self._callbackRenderResponseContext )
         
-        d.addErrback( self._errbackHandleEmergencyError, request )
+        d.addErrback( self._errbackHandleProcessingError, request )
         
         request.notifyFinish().addErrback( self._errbackDisconnected, d )
         
@@ -863,7 +948,7 @@ class HydrusResource( Resource ):
         return NOT_DONE_YET
         
     
-    def render_POST( self, request ):
+    def render_POST( self, request: HydrusServerRequest.HydrusRequest ):
         
         request.setHeader( 'Server', self._server_version_string )
         
@@ -881,11 +966,9 @@ class HydrusResource( Resource ):
         
         d.addCallback( self._callbackDoPOSTJob )
         
-        d.addErrback( self._errbackHandleProcessingError, request )
-        
         d.addCallback( self._callbackRenderResponseContext )
         
-        d.addErrback( self._errbackHandleEmergencyError, request )
+        d.addErrback( self._errbackHandleProcessingError, request )
         
         request.notifyFinish().addErrback( self._errbackDisconnected, d )
         
@@ -896,7 +979,7 @@ class HydrusResource( Resource ):
     
 class HydrusResourceRobotsTXT( HydrusResource ):
     
-    def _threadDoGETJob( self, request ):
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
         
         body = '''User-agent: *
 Disallow: /'''
@@ -908,7 +991,7 @@ Disallow: /'''
     
 class HydrusResourceWelcome( HydrusResource ):
     
-    def _threadDoGETJob( self, request ):
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
         
         body = GenerateEris( self._service )
         

@@ -17,6 +17,7 @@ from hydrus.core import HydrusFileHandling
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusPaths
 from hydrus.core import HydrusSerialisable
+from hydrus.core import HydrusTags
 from hydrus.core import HydrusTagArchive
 from hydrus.core import HydrusText
 
@@ -32,7 +33,6 @@ from hydrus.client import ClientSerialisable
 from hydrus.client import ClientThreading
 from hydrus.client.gui import ClientGUIDragDrop
 from hydrus.client.gui import ClientGUIAsync
-from hydrus.client.gui import ClientGUICommon
 from hydrus.client.gui import ClientGUIDialogs
 from hydrus.client.gui import ClientGUIDialogsQuick
 from hydrus.client.gui import ClientGUIFunctions
@@ -45,6 +45,8 @@ from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.lists import ClientGUIListConstants as CGLC
 from hydrus.client.gui.lists import ClientGUIListCtrl
 from hydrus.client.gui.search import ClientGUIACDropdown
+from hydrus.client.gui.widgets import ClientGUICommon
+from hydrus.client.gui.widgets import ClientGUIMenuButton
 from hydrus.client.metadata import ClientTags
 from hydrus.client.networking import ClientNetworkingContexts
 from hydrus.client.networking import ClientNetworkingDomain
@@ -75,7 +77,7 @@ class MigrateDatabasePanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         menu_items.append( ( 'normal', 'open the html migration help', 'Open the help page for database migration in your web browser.', page_func ) )
         
-        help_button = ClientGUICommon.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
+        help_button = ClientGUIMenuButton.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
         
         help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', QG.QColor( 0, 0, 255 ) )
         
@@ -1033,7 +1035,7 @@ class MigrateTagsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         message += os.linesep * 2
         message += 'For instance, if you whitelist the \'series\' namespace, only series: tags from the source will be added to/deleted from the destination.'
         
-        tag_filter = ClientTags.TagFilter()
+        tag_filter = HydrusTags.TagFilter()
         
         self._migration_source_tag_filter = ClientGUITags.TagFilterButton( self._migration_panel, message, tag_filter, label_prefix = 'tags taken: ' )
         
@@ -1041,7 +1043,7 @@ class MigrateTagsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         message += os.linesep * 2
         message += 'For instance, if you whitelist the \'character\' namespace, only pairs from the source with character: tags on the left will be added to/deleted from the destination.'
         
-        tag_filter = ClientTags.TagFilter()
+        tag_filter = HydrusTags.TagFilter()
         
         self._migration_source_left_tag_pair_filter = ClientGUITags.TagFilterButton( self._migration_panel, message, tag_filter, label_prefix = 'left: ' )
         
@@ -1049,7 +1051,7 @@ class MigrateTagsPanel( ClientGUIScrolledPanels.ReviewPanel ):
         message += os.linesep * 2
         message += 'For instance, if you whitelist the \'series\' namespace, only pairs from the source with series: tags on the right will be added to/deleted from the destination.'
         
-        tag_filter = ClientTags.TagFilter()
+        tag_filter = HydrusTags.TagFilter()
         
         self._migration_source_right_tag_pair_filter = ClientGUITags.TagFilterButton( self._migration_panel, message, tag_filter, label_prefix = 'right: ' )
         
@@ -1739,7 +1741,7 @@ class ReviewDownloaderImport( ClientGUIScrolledPanels.ReviewPanel ):
         
         menu_items.append( ( 'normal', 'open the easy downloader import help', 'Open the help page for easily importing downloaders in your web browser.', page_func ) )
         
-        help_button = ClientGUICommon.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
+        help_button = ClientGUIMenuButton.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
         
         help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help -->', QG.QColor( 0, 0, 255 ) )
         
@@ -2706,7 +2708,7 @@ class ReviewLocalFileImports( ClientGUIScrolledPanels.ReviewPanel ):
         
         menu_items.append( ( 'check', 'sort paths as they are added', 'If checked, paths will be sorted in a numerically human-friendly (e.g. "page 9.jpg" comes before "page 10.jpg") way.', check_manager ) )
         
-        self._cog_button = ClientGUICommon.MenuBitmapButton( self, CC.global_pixmaps().cog, menu_items )
+        self._cog_button = ClientGUIMenuButton.MenuBitmapButton( self, CC.global_pixmaps().cog, menu_items )
         
         self._delete_after_success_st = ClientGUICommon.BetterStaticText( self )
         self._delete_after_success_st.setAlignment( QC.Qt.AlignRight | QC.Qt.AlignVCenter )

@@ -5,8 +5,8 @@ import unittest
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusNetwork
 from hydrus.core import HydrusSerialisable
+from hydrus.core.networking import HydrusNetwork
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientDefaults
@@ -1211,7 +1211,7 @@ class TestClientDB( unittest.TestCase ):
         
         result = self._read( 'serialisable_simple', 'pixiv_account' )
         
-        self.assertTrue( result, ( pixiv_id, password ) )
+        self.assertEqual( result, [ pixiv_id, password ] )
         
     
     def test_services( self ):

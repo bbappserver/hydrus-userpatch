@@ -2624,10 +2624,6 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
                 return False
                 
             
-        elif sort_metatype == 'namespaces':
-            
-            return False
-            
         
         return True
         
@@ -2943,9 +2939,13 @@ class MediaSort( HydrusSerialisable.SerialisableBase ):
             
             return sort_string_lookup[ sort_data ]
             
+        elif sort_metatype == 'namespaces':
+            
+            return ( 'a-z', 'z-a', CC.SORT_ASC )
+            
         else:
             
-            return ( 'ascending', 'descending', CC.SORT_BY_INCIDENCE_DESC )
+            return ( 'ascending', 'descending', CC.SORT_DESC )
             
         
     

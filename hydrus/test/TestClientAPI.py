@@ -20,14 +20,14 @@ from hydrus.core import HydrusText
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientAPI
-from hydrus.client import ClientLocalServer
-from hydrus.client import ClientLocalServerResources
 from hydrus.client import ClientManagers
 from hydrus.client import ClientSearch
 from hydrus.client import ClientServices
 from hydrus.client.media import ClientMediaManagers
 from hydrus.client.media import ClientMediaResult
 from hydrus.client.metadata import ClientTags
+from hydrus.client.networking import ClientLocalServer
+from hydrus.client.networking import ClientLocalServerResources
 
 class TestClientAPI( unittest.TestCase ):
     
@@ -179,11 +179,11 @@ class TestClientAPI( unittest.TestCase ):
             
             if 'green' in name:
                 
-                search_tag_filter = ClientTags.TagFilter()
+                search_tag_filter = HydrusTags.TagFilter()
                 
-                search_tag_filter.SetRule( '', CC.FILTER_BLACKLIST )
-                search_tag_filter.SetRule( ':', CC.FILTER_BLACKLIST )
-                search_tag_filter.SetRule( 'green', CC.FILTER_WHITELIST )
+                search_tag_filter.SetRule( '', HC.FILTER_BLACKLIST )
+                search_tag_filter.SetRule( ':', HC.FILTER_BLACKLIST )
+                search_tag_filter.SetRule( 'green', HC.FILTER_WHITELIST )
                 
                 api_permissions.SetSearchTagFilter( search_tag_filter )
                 
@@ -2105,6 +2105,106 @@ class TestClientAPI( unittest.TestCase ):
         self.assertEqual( response.status, 200 )
         
         self.assertEqual( hashlib.sha256( data ).digest(), hash )
+        
+        # range request
+        
+        path = '/get_files/file?file_id={}'.format( 1 )
+        
+        partial_headers = dict( headers )
+        partial_headers[ 'Range' ] = 'bytes=100-199'
+        
+        connection.request( 'GET', path, headers = partial_headers )
+        
+        response = connection.getresponse()
+        
+        data = response.read()
+        
+        self.assertEqual( response.status, 206 )
+        
+        with open( file_path, 'rb' ) as f:
+            
+            f.seek( 100 )
+            
+            actual_data = f.read( 100 )
+            
+        
+        self.assertEqual( data, actual_data )
+        
+        # n onwards range request
+        
+        path = '/get_files/file?file_id={}'.format( 1 )
+        
+        partial_headers = dict( headers )
+        partial_headers[ 'Range' ] = 'bytes=100-'
+        
+        connection.request( 'GET', path, headers = partial_headers )
+        
+        response = connection.getresponse()
+        
+        data = response.read()
+        
+        self.assertEqual( response.status, 206 )
+        
+        with open( file_path, 'rb' ) as f:
+            
+            f.seek( 100 )
+            
+            actual_data = f.read()
+            
+        
+        self.assertEqual( data, actual_data )
+        
+        # last n onwards range request
+        
+        path = '/get_files/file?file_id={}'.format( 1 )
+        
+        partial_headers = dict( headers )
+        partial_headers[ 'Range' ] = 'bytes=-100'
+        
+        connection.request( 'GET', path, headers = partial_headers )
+        
+        response = connection.getresponse()
+        
+        data = response.read()
+        
+        self.assertEqual( response.status, 206 )
+        
+        with open( file_path, 'rb' ) as f:
+            
+            actual_data = f.read()[-100:]
+            
+        
+        self.assertEqual( data, actual_data )
+        
+        # invalid range request
+        
+        path = '/get_files/file?file_id={}'.format( 1 )
+        
+        partial_headers = dict( headers )
+        partial_headers[ 'Range' ] = 'bytes=200-199'
+        
+        connection.request( 'GET', path, headers = partial_headers )
+        
+        response = connection.getresponse()
+        
+        data = response.read()
+        
+        self.assertEqual( response.status, 416 )
+        
+        # multi range request, not currently supported
+        
+        path = '/get_files/file?file_id={}'.format( 1 )
+        
+        partial_headers = dict( headers )
+        partial_headers[ 'Range' ] = 'bytes=100-199,300-399'
+        
+        connection.request( 'GET', path, headers = partial_headers )
+        
+        response = connection.getresponse()
+        
+        data = response.read()
+        
+        self.assertEqual( response.status, 416 )
         
         #
         

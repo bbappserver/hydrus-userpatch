@@ -50,11 +50,20 @@ DEFAULT_DB_DIR = os.path.join( BASE_DIR, 'db' )
 
 if PLATFORM_MACOS:
     
-    USERPATH_DB_DIR = os.path.join( os.path.expanduser( '~' ), 'Library', 'Hydrus' )
+    desired_userpath_db_dir = os.path.join( '~', 'Library', 'Hydrus' )
     
 else:
     
-    USERPATH_DB_DIR = os.path.join( os.path.expanduser( '~' ), 'Hydrus' )
+    desired_userpath_db_dir = os.path.join( '~', 'Hydrus' )
+    
+
+USERPATH_DB_DIR = os.path.expanduser( desired_userpath_db_dir )
+
+if USERPATH_DB_DIR == desired_userpath_db_dir:
+    
+    # could not figure it out, probably a crazy user situation atm
+    
+    USERPATH_DB_DIR = None
     
 
 LICENSE_PATH = os.path.join( BASE_DIR, 'license.txt' )
@@ -69,15 +78,14 @@ options = {}
 
 # Misc
 
-NETWORK_VERSION = 19
-SOFTWARE_VERSION = 431
-CLIENT_API_VERSION = 15
+NETWORK_VERSION = 20
+SOFTWARE_VERSION = 435
+CLIENT_API_VERSION = 16
 
 SERVER_THUMBNAIL_DIMENSIONS = ( 200, 200 )
 
 HYDRUS_KEY_LENGTH = 32
 
-UPDATE_DURATION = 100000
 READ_BLOCK_SIZE = 256 * 1024
 
 lifetimes = [ ( 'one month', 31 * 86400 ), ( 'three months', 3 * 31 * 86400 ), ( 'six months', 6 * 31 * 86400 ), ( 'one year', 12 * 31 * 86400 ), ( 'two years', 24 * 31 * 86400 ), ( 'five years', 60 * 31 * 86400 ), ( 'does not expire', None ) ]
@@ -139,6 +147,7 @@ CONTENT_TYPE_TIMESTAMP = 16
 CONTENT_TYPE_TITLE = 17
 CONTENT_TYPE_NOTES = 18
 CONTENT_TYPE_FILE_VIEWING_STATS = 19
+CONTENT_TYPE_TAG = 20
 
 content_type_string_lookup = {}
 
@@ -251,6 +260,9 @@ IMPORT_FOLDER_TYPE_SYNCHRONISE = 1
 EXPORT_FOLDER_TYPE_REGULAR = 0
 EXPORT_FOLDER_TYPE_SYNCHRONISE = 1
 
+FILTER_WHITELIST = 0
+FILTER_BLACKLIST = 1
+
 HAMMING_EXACT_MATCH = 0
 HAMMING_VERY_SIMILAR = 2
 HAMMING_SIMILAR = 4
@@ -309,6 +321,9 @@ permission_pair_string_lookup[ ( CONTENT_TYPE_ACCOUNTS, PERMISSION_ACTION_MODERA
 
 permission_pair_string_lookup[ ( CONTENT_TYPE_ACCOUNT_TYPES, None ) ] = 'cannot change account types'
 permission_pair_string_lookup[ ( CONTENT_TYPE_ACCOUNT_TYPES, PERMISSION_ACTION_MODERATE ) ] = 'can manage account types completely'
+
+permission_pair_string_lookup[ ( CONTENT_TYPE_OPTIONS, None ) ] = 'cannot change service options'
+permission_pair_string_lookup[ ( CONTENT_TYPE_OPTIONS, PERMISSION_ACTION_MODERATE ) ] = 'can manage service options completely'
 
 permission_pair_string_lookup[ ( CONTENT_TYPE_SERVICES, None ) ] = 'cannot change services'
 permission_pair_string_lookup[ ( CONTENT_TYPE_SERVICES, PERMISSION_ACTION_MODERATE ) ] = 'can manage services completely'
@@ -400,9 +415,6 @@ DELETE_TAG_PETITION = 1
 
 BAN = 0
 SUPERBAN = 1
-CHANGE_ACCOUNT_TYPE = 2
-ADD_TO_EXPIRES = 3
-SET_EXPIRES = 4
 
 SCORE_PETITION = 0
 

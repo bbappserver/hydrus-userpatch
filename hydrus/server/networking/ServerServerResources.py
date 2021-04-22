@@ -1,0 +1,1173 @@
+import http.cookies
+import threading
+
+from hydrus.core import HydrusConstants as HC
+from hydrus.core import HydrusData
+from hydrus.core import HydrusExceptions
+from hydrus.core import HydrusGlobals as HG
+from hydrus.core import HydrusPaths
+from hydrus.core import HydrusSerialisable
+from hydrus.core.networking import HydrusNetwork
+from hydrus.core.networking import HydrusNetworkVariableHandling
+from hydrus.core.networking import HydrusNetworking
+from hydrus.core.networking import HydrusServerRequest
+from hydrus.core.networking import HydrusServerResources
+
+from hydrus.server import ServerFiles
+
+class HydrusResourceBusyCheck( HydrusServerResources.Resource ):
+    
+    def __init__( self ):
+        
+        HydrusServerResources.Resource.__init__( self )
+        
+        self._server_version_string = HC.service_string_lookup[ HC.SERVER_ADMIN ] + '/' + str( HC.NETWORK_VERSION )
+        
+    
+    def render_GET( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.setResponseCode( 200 )
+        
+        request.setHeader( 'Server', self._server_version_string )
+        
+        if HG.server_busy.locked():
+            
+            return b'1'
+            
+        else:
+            
+            return b'0'
+            
+        
+    
+class HydrusResourceHydrusNetwork( HydrusServerResources.HydrusResource ):
+    
+    BLOCKED_WHEN_BUSY = True
+    
+    def _callbackParseGETArgs( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        parsed_request_args = HydrusNetworkVariableHandling.ParseHydrusNetworkGETArgs( request.args )
+        
+        request.parsed_request_args = parsed_request_args
+        
+        return request
+        
+    
+    def _callbackParsePOSTArgs( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.content.seek( 0 )
+        
+        if not request.requestHeaders.hasHeader( 'Content-Type' ):
+            
+            parsed_request_args = HydrusNetworkVariableHandling.ParsedRequestArguments()
+            
+        else:
+            
+            content_types = request.requestHeaders.getRawHeaders( 'Content-Type' )
+            
+            content_type = content_types[0]
+            
+            try:
+                
+                mime = HC.mime_enum_lookup[ content_type ]
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'Did not recognise Content-Type header!' )
+                
+            
+            total_bytes_read = 0
+            
+            if mime == HC.APPLICATION_JSON:
+                
+                json_string = request.content.read()
+                
+                total_bytes_read += len( json_string )
+                
+                parsed_request_args = HydrusNetworkVariableHandling.ParseNetworkBytesToParsedHydrusArgs( json_string )
+                
+            else:
+                
+                ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
+                
+                request.temp_file_info = ( os_file_handle, temp_path )
+                
+                with open( temp_path, 'wb' ) as f:
+                    
+                    for block in HydrusPaths.ReadFileLikeAsBlocks( request.content ): 
+                        
+                        f.write( block )
+                        
+                        total_bytes_read += len( block )
+                        
+                    
+                
+                decompression_bombs_ok = self._DecompressionBombsOK( request )
+                
+                parsed_request_args = HydrusNetworkVariableHandling.ParseFileArguments( temp_path, decompression_bombs_ok )
+                
+            
+            self._reportDataUsed( request, total_bytes_read )
+            
+        
+        request.parsed_request_args = parsed_request_args
+        
+        return request
+        
+    
+    def _checkService( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if self.BLOCKED_WHEN_BUSY and HG.server_busy.locked():
+            
+            raise HydrusExceptions.ServerBusyException( 'This server is busy, please try again later.' )
+            
+        
+        return request
+        
+    
+class HydrusResourceAccessKey( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        registration_key = request.parsed_request_args[ 'registration_key' ]
+        
+        access_key = HG.server_controller.Read( 'access_key', self._service_key, registration_key )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'access_key' : access_key } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceAccessKeyVerification( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        access_key = self._parseHydrusNetworkAccessKey( request )
+        
+        verified = HG.server_controller.Read( 'verify_access_key', self._service_key, access_key )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'verified' : verified } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceAutoCreateAccountTypes( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        account_types = HG.server_controller.Read( 'auto_create_account_types', self._service_key )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'account_types' : account_types } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAutoCreateRegistrationKey( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        account_type_key = request.parsed_request_args[ 'account_type_key' ]
+        
+        registration_key = HG.server_controller.Read( 'auto_create_registration_key', self._service_key, account_type_key )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'registration_key' : registration_key } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceShutdown( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        HG.server_controller.ShutdownFromServer()
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceSessionKey( HydrusResourceHydrusNetwork ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        access_key = self._parseHydrusNetworkAccessKey( request )
+        
+        ( session_key, expires ) = HG.server_controller.server_session_manager.AddSession( self._service_key, access_key )
+        
+        now = HydrusData.GetNow()
+        
+        max_age = expires - now
+        
+        cookies = [ ( 'session_key', session_key.hex(), { 'max_age' : str( max_age ), 'path' : '/' } ) ]
+        
+        response_context = HydrusServerResources.ResponseContext( 200, cookies = cookies )
+        
+        return response_context
+        
+    
+class HydrusResourceRestricted( HydrusResourceHydrusNetwork ):
+    
+    def _callbackCheckAccountRestrictions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        HydrusResourceHydrusNetwork._callbackCheckAccountRestrictions( self, request )
+        
+        self._checkAccount( request )
+        
+        self._checkAccountPermissions( request )
+        
+        return request
+        
+    
+    def _callbackEstablishAccountFromHeader( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        session_key = None
+        
+        if request.requestHeaders.hasHeader( 'Cookie' ):
+            
+            cookie_texts = request.requestHeaders.getRawHeaders( 'Cookie' )
+            
+            cookie_text = cookie_texts[0]
+            
+            try:
+                
+                cookies = http.cookies.SimpleCookie( cookie_text )
+                
+                if 'session_key' in cookies:
+                    
+                    # Morsel, for real, ha ha ha
+                    morsel = cookies[ 'session_key' ]
+                    
+                    session_key_hex = morsel.value
+                    
+                    session_key = bytes.fromhex( session_key_hex )
+                    
+                
+            except:
+                
+                raise HydrusExceptions.BadRequestException( 'Problem parsing cookies for Session Cookie!' )
+                
+            
+        
+        if session_key is None:
+            
+            access_key = self._parseHydrusNetworkAccessKey( request, key_required = False )
+            
+            if access_key is None:
+                
+                raise HydrusExceptions.MissingCredentialsException( 'No credentials found in request!' )
+                
+            else:
+                
+                account = HG.server_controller.server_session_manager.GetAccountFromAccessKey( self._service_key, access_key )
+                
+            
+        else:
+            
+            account = HG.server_controller.server_session_manager.GetAccount( self._service_key, session_key )
+            
+        
+        request.hydrus_account = account
+        
+        return request
+        
+    
+    def _checkAccount( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckFunctional()
+        
+        return request
+        
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        raise NotImplementedError()
+        
+    
+    def _checkBandwidth( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if not self._service.BandwidthOK():
+            
+            raise HydrusExceptions.BandwidthException( 'This service has run out of bandwidth. Please try again later.' )
+            
+        
+        if not HG.server_controller.ServerBandwidthOK():
+            
+            raise HydrusExceptions.BandwidthException( 'This server has run out of bandwidth. Please try again later.' )
+            
+        
+    
+    def _reportDataUsed( self, request, num_bytes ):
+        
+        HydrusResourceHydrusNetwork._reportDataUsed( self, request, num_bytes )
+        
+        account = request.hydrus_account
+        
+        if account is not None:
+            
+            account.ReportDataUsed( num_bytes )
+            
+        
+    
+    def _reportRequestUsed( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        HydrusResourceHydrusNetwork._reportRequestUsed( self, request )
+        
+        account = request.hydrus_account
+        
+        if account is not None:
+            
+            account.ReportRequestUsed()
+            
+        
+    
+class HydrusResourceRestrictedAccount( HydrusResourceRestricted ):
+    
+    def _checkAccount( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # you can always fetch your account (e.g. to be notified that you are banned!)
+        
+        return request
+        
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # you can always fetch your account
+        
+        pass
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        account = request.hydrus_account
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'account' : account } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedOptions( HydrusResourceRestricted ):
+    
+    def _checkAccount( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # you can always fetch the options
+        
+        return request
+        
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # you can always fetch the options
+        
+        pass
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        service_options = self._service.GetServiceOptions()
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'service_options' : service_options } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedOptionsModify( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_OPTIONS, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+class HydrusResourceRestrictedOptionsModifyUpdatePeriod( HydrusResourceRestrictedOptionsModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        update_period = request.parsed_request_args[ 'update_period' ]
+        
+        if update_period < HydrusNetwork.MIN_UPDATE_PERIOD:
+            
+            raise HydrusExceptions.BadRequestException( 'The update period was too low. It needs to be at least {}.'.format( HydrusData.TimeDeltaToPrettyTimeDelta( HydrusNetwork.MIN_UPDATE_PERIOD ) ) )
+            
+        
+        if update_period > HydrusNetwork.MAX_UPDATE_PERIOD:
+            
+            raise HydrusExceptions.BadRequestException( 'The update period was too high. It needs to be lower than {}.'.format( HydrusData.TimeDeltaToPrettyTimeDelta( HydrusNetwork.MAX_UPDATE_PERIOD ) ) )
+            
+        
+        self._service.SetUpdatePeriod( update_period )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModify( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_ACCOUNTS, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+class HydrusResourceRestrictedAccountInfo( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        subject_account = HG.server_controller.Read( 'account', self._service_key, subject_account_key )
+        
+        account_info = HG.server_controller.Read( 'account_info', self._service_key, request.hydrus_account, subject_account )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'account_info' : account_info } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModifyAccountType( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        if 'account_type_key' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account type key, but did not get one!' )
+            
+        
+        account_type_key = request.parsed_request_args[ 'account_type_key' ]
+        
+        HG.server_controller.WriteSynchronous( 'modify_account_account_type', self._service_key, request.hydrus_account, subject_account_key, account_type_key )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModifyBan( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        if 'reason' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting a reason for the ban, but did not get one!' )
+            
+        
+        if 'expires' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting a new expiration timestamp, but did not get one!' )
+            
+        
+        reason = request.parsed_request_args[ 'reason' ]
+        
+        if not isinstance( reason, str ):
+            
+            raise HydrusExceptions.BadRequestException( 'The given ban reason was not a string!' )
+            
+        
+        expires = request.parsed_request_args[ 'expires' ]
+        
+        expires_is_none = expires is None
+        expires_is_positive_integer = isinstance( expires, int ) and expires > 0
+        
+        expires_is_valid = expires_is_none or expires_is_positive_integer
+        
+        if not expires_is_valid:
+            
+            raise HydrusExceptions.BadRequestException( 'The given expiration timestamp was not null or an integer!' )
+            
+        
+        HG.server_controller.WriteSynchronous( 'modify_account_ban', self._service_key, request.hydrus_account, subject_account_key, reason, expires )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModifyExpires( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        if 'expires' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting a new expiration timestamp, but did not get one!' )
+            
+        
+        expires = request.parsed_request_args[ 'expires' ]
+        
+        expires_is_none = expires is None
+        expires_is_positive_integer = isinstance( expires, int ) and expires > 0
+        
+        expires_is_valid = expires_is_none or expires_is_positive_integer
+        
+        if not expires_is_valid:
+            
+            raise HydrusExceptions.BadRequestException( 'The given expiration timestamp was not None or an integer!' )
+            
+        
+        HG.server_controller.WriteSynchronous( 'modify_account_expires', self._service_key, request.hydrus_account, subject_account_key, expires )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModifySetMessage( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        if 'message' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting a new message, but did not get one!' )
+            
+        
+        message = request.parsed_request_args[ 'message' ]
+        
+        if not isinstance( message, str ):
+            
+            raise HydrusExceptions.BadRequestException( 'The given message was not a string!' )
+            
+        
+        HG.server_controller.WriteSynchronous( 'modify_account_set_message', self._service_key, request.hydrus_account, subject_account_key, message )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountModifyUnban( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account key, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key!' )
+            
+        
+        HG.server_controller.WriteSynchronous( 'modify_account_unban', self._service_key, request.hydrus_account, subject_account_key )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountOtherAccount( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if 'subject_identifier' not in request.parsed_request_args:
+            
+            raise HydrusExceptions.BadRequestException( 'I was expecting an account identifier for the subject, but did not get one!' )
+            
+        
+        subject_identifier = request.parsed_request_args[ 'subject_identifier' ]
+        
+        if subject_identifier.HasAccountKey():
+            
+            subject_account_key = subject_identifier.GetAccountKey()
+            
+            try:
+                
+                subject_account = HG.server_controller.Read( 'account', self._service_key, subject_account_key )
+                
+            except HydrusExceptions.InsufficientCredentialsException as e:
+                
+                raise HydrusExceptions.NotFoundException( e )
+                
+            
+        elif subject_identifier.HasContent():
+            
+            subject_content = subject_identifier.GetContent()
+            
+            subject_account = HG.server_controller.Read( 'account_from_content', self._service_key, subject_content )
+            
+        else:
+            
+            raise HydrusExceptions.BadRequestException( 'The subject\'s account identifier did not include an account key or content!' )
+            
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'account' : subject_account } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedIP( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        hash = request.parsed_request_args[ 'hash' ]
+        
+        ( ip, timestamp ) = HG.server_controller.Read( 'ip', self._service_key, request.hydrus_account, hash )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'ip' : ip, 'timestamp' : timestamp } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAllAccounts( HydrusResourceRestrictedAccountModify ):
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        accounts = HG.server_controller.Read( 'all_accounts', self._service_key, request.hydrus_account )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'accounts' : accounts } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedAccountTypes( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if request.IsGET():
+            
+            request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_ACCOUNTS, HC.PERMISSION_ACTION_CREATE )
+            
+        elif request.IsPOST():
+            
+            request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_ACCOUNT_TYPES, HC.PERMISSION_ACTION_MODERATE )
+            
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        account_types = HG.server_controller.Read( 'account_types', self._service_key, request.hydrus_account )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'account_types' : account_types } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        account_types = request.parsed_request_args[ 'account_types' ]
+        deletee_account_type_keys_to_new_account_type_keys = request.parsed_request_args[ 'deletee_account_type_keys_to_new_account_type_keys' ]
+        
+        HG.server_controller.WriteSynchronous( 'account_types', self._service_key, request.hydrus_account, account_types, deletee_account_type_keys_to_new_account_type_keys )
+        
+        HG.server_controller.server_session_manager.RefreshAccounts( self._service_key )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedBackup( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_SERVICES, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        HG.server_controller.Write( 'backup' )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedLockOn( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_SERVICES, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        locked = HG.server_busy.acquire( False ) # pylint: disable=E1111
+        
+        if not locked:
+            
+            raise HydrusExceptions.BadRequestException( 'The server was already locked!' )
+            
+        
+        HG.server_controller.db.PauseAndDisconnect( True )
+        
+        # shut down db, wait until it is done?
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedLockOff( HydrusResourceRestricted ):
+    
+    BLOCKED_WHEN_BUSY = False
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_SERVICES, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        try:
+            
+            HG.server_busy.release()
+            
+        except threading.ThreadError:
+            
+            raise HydrusExceptions.BadRequestException( 'The server is not busy!' )
+            
+        
+        HG.server_controller.db.PauseAndDisconnect( False )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedNumPetitions( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # further permissions checked in the db
+        
+        request.hydrus_account.CheckAtLeastOnePermission( [ ( content_type, HC.PERMISSION_ACTION_MODERATE ) for content_type in HC.REPOSITORY_CONTENT_TYPES ] )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # cache this
+        petition_count_info = HG.server_controller.Read( 'num_petitions', self._service_key, request.hydrus_account )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'num_petitions' : petition_count_info } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedPetitionSummaryList( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        content_type = request.parsed_request_args[ 'content_type' ]
+        
+        request.hydrus_account.CheckPermission( content_type, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # fetch cached summary list
+        # ( account_key, reason, size of petition )
+        petition_summary_list = []
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'petition_summary_list' : petition_summary_list } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedPetition( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        content_type = request.parsed_request_args[ 'content_type' ]
+        
+        request.hydrus_account.CheckPermission( content_type, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # rewangle this to take an id from the summary list. probably ( account_key, reason_id )
+        # and combine petitioned and pending into the same petition
+        content_type = request.parsed_request_args[ 'content_type' ]
+        status = request.parsed_request_args[ 'status' ]
+        
+        petition = HG.server_controller.Read( 'petition', self._service_key, request.hydrus_account, content_type, status )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'petition' : petition } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedRegistrationKeys( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_ACCOUNTS, HC.PERMISSION_ACTION_CREATE )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        num = request.parsed_request_args[ 'num' ]
+        account_type_key = request.parsed_request_args[ 'account_type_key' ]
+        
+        if 'expires' in request.parsed_request_args:
+            
+            expires = request.parsed_request_args[ 'expires' ]
+            
+        else:
+            
+            expires = None
+            
+        
+        registration_keys = HG.server_controller.Read( 'registration_keys', self._service_key, request.hydrus_account, num, account_type_key, expires )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'registration_keys' : registration_keys } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedRepositoryFile( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # everyone with a functional account can read files
+        
+        if request.IsPOST():
+            
+            request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_FILES, HC.PERMISSION_ACTION_CREATE )
+            
+        
+    
+    def _DecompressionBombsOK( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        if request.hydrus_account is None:
+            
+            return False
+            
+        else:
+            
+            return request.hydrus_account.HasPermission( HC.CONTENT_TYPE_ACCOUNTS, HC.PERMISSION_ACTION_CREATE )
+            
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        self._checkBandwidth( request )
+        
+        # no permission check as any functional account can get files
+        
+        hash = request.parsed_request_args[ 'hash' ]
+        
+        ( valid, mime ) = HG.server_controller.Read( 'service_has_file', self._service_key, hash )
+        
+        if not valid:
+            
+            raise HydrusExceptions.NotFoundException( 'File not found on this service!' )
+            
+        
+        path = ServerFiles.GetFilePath( hash )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, mime = mime, path = path )
+        
+        return response_context
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        file_dict = request.parsed_request_args
+        
+        if self._service.LogUploaderIPs():
+            
+            file_dict[ 'ip' ] = request.getClientIP()
+            
+        
+        timestamp = self._service.GetMetadata().GetNextUpdateBegin() + 1
+        
+        HG.server_controller.WriteSynchronous( 'file', self._service, request.hydrus_account, file_dict, timestamp )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedRepositoryThumbnail( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # everyone with a functional account can read thumbs
+        
+        pass
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        self._checkBandwidth( request )
+        
+        # no permission check as any functional account can get thumbnails
+        
+        hash = request.parsed_request_args[ 'hash' ]
+        
+        ( valid, mime ) = HG.server_controller.Read( 'service_has_file', self._service_key, hash )
+        
+        if not valid:
+            
+            raise HydrusExceptions.NotFoundException( 'Thumbnail not found on this service!' )
+            
+        
+        if mime not in HC.MIMES_WITH_THUMBNAILS:
+            
+            raise HydrusExceptions.NotFoundException( 'That mime should not have a thumbnail!' )
+            
+        
+        path = ServerFiles.GetThumbnailPath( hash )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, mime = HC.APPLICATION_OCTET_STREAM, path = path )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedServices( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_SERVICES, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        services = HG.server_controller.Read( 'services_from_account', request.hydrus_account )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'services' : services } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        services = request.parsed_request_args[ 'services' ]
+        
+        unique_ports = { service.GetPort() for service in services }
+        
+        if len( unique_ports ) < len( services ):
+            
+            raise HydrusExceptions.BadRequestException( 'It looks like some of those services share ports! Please give them unique ports!' )
+            
+        
+        with HG.dirty_object_lock:
+            
+            HG.server_controller.SetServices( services )
+            
+            service_keys_to_access_keys = HG.server_controller.WriteSynchronous( 'services', request.hydrus_account, services )
+            
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'service_keys_to_access_keys' : service_keys_to_access_keys } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedUpdate( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        # everyone with a functional account can read updates
+        
+        if request.IsPOST():
+            
+            # further permissions checked in the db
+            
+            request.hydrus_account.CheckAtLeastOnePermission( [ ( content_type, HC.PERMISSION_ACTION_PETITION ) for content_type in HC.REPOSITORY_CONTENT_TYPES ] )
+            
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        self._checkBandwidth( request )
+        
+        # no permissions check as any functional account can get updates
+        
+        update_hash = request.parsed_request_args[ 'update_hash' ]
+        
+        if not self._service.HasUpdateHash( update_hash ):
+            
+            raise HydrusExceptions.NotFoundException( 'This update hash does not exist on this service!' )
+            
+        
+        path = ServerFiles.GetFilePath( update_hash )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, mime = HC.APPLICATION_OCTET_STREAM, path = path )
+        
+        return response_context
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        client_to_server_update = request.parsed_request_args[ 'client_to_server_update' ]
+        
+        timestamp = self._service.GetMetadata().GetNextUpdateBegin() + 1
+        
+        HG.server_controller.WriteSynchronous( 'update', self._service_key, request.hydrus_account, client_to_server_update, timestamp )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedImmediateUpdate( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckAtLeastOnePermission( [ ( content_type, HC.PERMISSION_ACTION_MODERATE ) for content_type in HC.REPOSITORY_CONTENT_TYPES ] )
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        updates = HG.server_controller.Read( 'immediate_update', self._service_key, request.hydrus_account )
+        
+        updates = HydrusSerialisable.SerialisableList( updates )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'updates' : updates } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedMetadataUpdate( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        pass # everyone with a functional account can get metadata slices
+        
+    
+    def _threadDoGETJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        since = request.parsed_request_args[ 'since' ]
+        
+        metadata_slice = self._service.GetMetadataSlice( since )
+        
+        body = HydrusNetworkVariableHandling.DumpHydrusArgsToNetworkBytes( { 'metadata_slice' : metadata_slice } )
+        
+        response_context = HydrusServerResources.ResponseContext( 200, body = body )
+        
+        return response_context
+        
+    
+class HydrusResourceRestrictedVacuum( HydrusResourceRestricted ):
+    
+    def _checkAccountPermissions( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        request.hydrus_account.CheckPermission( HC.CONTENT_TYPE_SERVICES, HC.PERMISSION_ACTION_MODERATE )
+        
+    
+    def _threadDoPOSTJob( self, request: HydrusServerRequest.HydrusRequest ):
+        
+        HG.server_controller.Write( 'vacuum' )
+        
+        response_context = HydrusServerResources.ResponseContext( 200 )
+        
+        return response_context
+        
+    

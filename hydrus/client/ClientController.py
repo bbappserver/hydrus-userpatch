@@ -17,11 +17,12 @@ from hydrus.core import HydrusController
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusNetworking
 from hydrus.core import HydrusPaths
 from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusThreading
 from hydrus.core import HydrusVideoHandling
+from hydrus.core.networking import HydrusNetwork
+from hydrus.core.networking import HydrusNetworking
 
 from hydrus.client import ClientAPI
 from hydrus.client import ClientCaches
@@ -1195,9 +1196,10 @@ class Controller( HydrusController.HydrusController ):
         job = self.CallRepeating( 5.0, 3600.0, self.SynchroniseAccounts )
         job.ShouldDelayOnWakeup( True )
         job.WakeOnPubSub( 'notify_unknown_accounts' )
+        job.WakeOnPubSub( 'notify_new_permissions' )
         self._daemon_jobs[ 'synchronise_accounts' ] = job
         
-        job = self.CallRepeating( 5.0, 3600.0 * 4, self.SynchroniseRepositories )
+        job = self.CallRepeating( 5.0, HydrusNetwork.UPDATE_CHECKING_PERIOD, self.SynchroniseRepositories )
         job.ShouldDelayOnWakeup( True )
         job.WakeOnPubSub( 'notify_restart_repo_sync' )
         job.WakeOnPubSub( 'notify_new_permissions' )
@@ -1407,7 +1409,7 @@ class Controller( HydrusController.HydrusController ):
         
         services = [ service for service in services if service.GetPort() is not None ]
         
-        self.CallToThread( self.SetRunningTwistedServices, services )
+        self.CallToThreadLongRunning( self.SetRunningTwistedServices, services )
         
     
     def RestoreDatabase( self ):
@@ -1647,7 +1649,7 @@ class Controller( HydrusController.HydrusController ):
                             context_factory = twisted.internet.ssl.DefaultOpenSSLContextFactory( ssl_key_path, ssl_cert_path, sslmethod )
                             
                         
-                        from hydrus.client import ClientLocalServer
+                        from hydrus.client.networking import ClientLocalServer
                         
                         if service_type == HC.LOCAL_BOORU:
                             
@@ -1701,7 +1703,11 @@ class Controller( HydrusController.HydrusController ):
                         
                         self._service_keys_to_connected_ports[ service_key ] = ( ipv4_port, ipv6_port )
                         
-                        if not HydrusNetworking.LocalPortInUse( port ):
+                        if HydrusNetworking.LocalPortInUse( port ):
+                            
+                            HydrusData.Print( 'Running "{}" on port {}.'.format( name, port ) )
+                            
+                        else:
                             
                             HydrusData.ShowText( 'Tried to bind port {} for "{}" but it failed.'.format( port, name ) )
                             
@@ -1776,7 +1782,7 @@ class Controller( HydrusController.HydrusController ):
             
             upnp_services = [ service for service in services if service.GetServiceType() in ( HC.LOCAL_BOORU, HC.CLIENT_API_SERVICE ) ]
             
-            self.CallToThread( self.services_upnp_manager.SetServices, upnp_services )
+            self.CallToThreadLongRunning( self.services_upnp_manager.SetServices, upnp_services )
             
             self.WriteSynchronous( 'update_services', services )
             
@@ -2103,7 +2109,7 @@ class Controller( HydrusController.HydrusController ):
                 QP.CallAfter( CopyToClipboard )
                 
             
-            self.CallToThread( THREADWait )
+            self.CallToThreadLongRunning( THREADWait )
             
         
     

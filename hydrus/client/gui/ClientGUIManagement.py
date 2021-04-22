@@ -13,6 +13,7 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusTags
 from hydrus.core import HydrusThreading
+from hydrus.core.networking import HydrusNetwork
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
@@ -24,8 +25,6 @@ from hydrus.client import ClientSearch
 from hydrus.client import ClientThreading
 from hydrus.client.gui import ClientGUICanvas
 from hydrus.client.gui import ClientGUICanvasFrame
-from hydrus.client.gui import ClientGUICommon
-from hydrus.client.gui import ClientGUIControls
 from hydrus.client.gui import ClientGUICore as CGC
 from hydrus.client.gui import ClientGUIDialogs
 from hydrus.client.gui import ClientGUIDialogsQuick
@@ -44,8 +43,13 @@ from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.lists import ClientGUIListBoxes
 from hydrus.client.gui.lists import ClientGUIListConstants as CGLC
 from hydrus.client.gui.lists import ClientGUIListCtrl
+from hydrus.client.gui.networking import ClientGUIHydrusNetwork
+from hydrus.client.gui.networking import ClientGUINetworkJobControl
 from hydrus.client.gui.search import ClientGUIACDropdown
 from hydrus.client.gui.search import ClientGUISearch
+from hydrus.client.gui.widgets import ClientGUICommon
+from hydrus.client.gui.widgets import ClientGUIControls
+from hydrus.client.gui.widgets import ClientGUIMenuButton
 from hydrus.client.importing import ClientImporting
 from hydrus.client.importing import ClientImportGallery
 from hydrus.client.importing import ClientImportLocal
@@ -961,7 +965,7 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         menu_items.append( ( 'check', 'search for duplicate pairs at the current distance during normal db maintenance', 'Tell the client to find duplicate pairs in its normal db maintenance cycles, whether you have that set to idle or shutdown time.', check_manager ) )
         
-        self._cog_button = ClientGUICommon.MenuBitmapButton( self._main_left_panel, CC.global_pixmaps().cog, menu_items )
+        self._cog_button = ClientGUIMenuButton.MenuBitmapButton( self._main_left_panel, CC.global_pixmaps().cog, menu_items )
         
         menu_items = []
         
@@ -969,7 +973,7 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         
         menu_items.append( ( 'normal', 'open the html duplicates help', 'Open the help page for duplicates processing in your web browser.', page_func ) )
         
-        self._help_button = ClientGUICommon.MenuBitmapButton( self._main_left_panel, CC.global_pixmaps().help, menu_items )
+        self._help_button = ClientGUIMenuButton.MenuBitmapButton( self._main_left_panel, CC.global_pixmaps().help, menu_items )
         
         #
         
@@ -984,7 +988,7 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
         menu_items.append( ( 'normal', 'similar', 'Search for similar files.', HydrusData.Call( self._SetSearchDistance, HC.HAMMING_SIMILAR ) ) )
         menu_items.append( ( 'normal', 'speculative', 'Search for files that are probably similar.', HydrusData.Call( self._SetSearchDistance, HC.HAMMING_SPECULATIVE ) ) )
         
-        self._search_distance_button = ClientGUICommon.MenuButton( self._searching_panel, 'similarity', menu_items )
+        self._search_distance_button = ClientGUIMenuButton.MenuButton( self._searching_panel, 'similarity', menu_items )
         
         self._search_distance_spinctrl = QP.MakeQSpinBox( self._searching_panel, min=0, max=64, width = 50 )
         
@@ -1004,7 +1008,7 @@ class ManagementPanelDuplicateFilter( ManagementPanel ):
             menu_items.append( ( 'normal', 'edit duplicate metadata merge options for \'alternates\' (advanced!)', 'edit what content is merged when you filter files', HydrusData.Call( self._EditMergeOptions, HC.DUPLICATE_ALTERNATE ) ) )
             
         
-        self._edit_merge_options = ClientGUICommon.MenuButton( self._main_right_panel, 'edit default duplicate metadata merge options', menu_items )
+        self._edit_merge_options = ClientGUIMenuButton.MenuButton( self._main_right_panel, 'edit default duplicate metadata merge options', menu_items )
         
         #
         
@@ -3225,7 +3229,7 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         self._current_action = ClientGUICommon.BetterStaticText( self._import_queue_panel, ellipsize_end = True )
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self._import_queue_panel, self._controller, self._page_key )
-        self._file_download_control = ClientGUIControls.NetworkJobControl( self._import_queue_panel )
+        self._file_download_control = ClientGUINetworkJobControl.NetworkJobControl( self._import_queue_panel )
         
         #
         
@@ -3240,7 +3244,7 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         self._gallery_seed_log_control = ClientGUIGallerySeedLog.GallerySeedLogStatusControl( self._simple_parsing_jobs_panel, self._controller, True, False, self._page_key )
         
-        self._page_download_control = ClientGUIControls.NetworkJobControl( self._simple_parsing_jobs_panel )
+        self._page_download_control = ClientGUINetworkJobControl.NetworkJobControl( self._simple_parsing_jobs_panel )
         
         self._pending_jobs_listbox = ClientGUIListBoxes.BetterQListWidget( self._simple_parsing_jobs_panel )
         
@@ -3269,7 +3273,7 @@ class ManagementPanelImporterSimpleDownloader( ManagementPanelImporter ):
         
         menu_items.append( ( 'normal', 'edit formulae', 'Edit these parsing formulae.', self._EditFormulae ) )
         
-        self._formula_cog = ClientGUICommon.MenuBitmapButton( self._simple_parsing_jobs_panel, CC.global_pixmaps().cog, menu_items )
+        self._formula_cog = ClientGUIMenuButton.MenuBitmapButton( self._simple_parsing_jobs_panel, CC.global_pixmaps().cog, menu_items )
         
         self._RefreshFormulae()
         
@@ -3672,13 +3676,13 @@ class ManagementPanelImporterURLs( ManagementPanelImporter ):
         self._pause_button = ClientGUICommon.BetterBitmapButton( self._url_panel, CC.global_pixmaps().file_pause, self.Pause )
         self._pause_button.setToolTip( 'pause/play files' )
         
-        self._file_download_control = ClientGUIControls.NetworkJobControl( self._url_panel )
+        self._file_download_control = ClientGUINetworkJobControl.NetworkJobControl( self._url_panel )
         
         self._urls_import = self._management_controller.GetVariable( 'urls_import' )
         
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self._url_panel, self._controller, page_key = self._page_key )
         
-        self._gallery_download_control = ClientGUIControls.NetworkJobControl( self._url_panel )
+        self._gallery_download_control = ClientGUINetworkJobControl.NetworkJobControl( self._url_panel )
         
         self._gallery_seed_log_control = ClientGUIGallerySeedLog.GallerySeedLogStatusControl( self._url_panel, self._controller, False, False, page_key = self._page_key )
         
@@ -3909,7 +3913,8 @@ class ManagementPanelPetitions( ManagementPanel ):
         self._process = QW.QPushButton( 'process', self._petition_panel )
         self._process.clicked.connect( self.EventProcess )
         self._process.setObjectName( 'HydrusAccept' )
-        self._process.setEnabled( False )
+        
+        self._copy_account_key_button = ClientGUICommon.BetterButton( self._petition_panel, 'copy petitioner account key', self._CopyAccountKey )
         
         self._modify_petitioner = QW.QPushButton( 'modify petitioner', self._petition_panel )
         self._modify_petitioner.clicked.connect( self.EventModifyPetitioner )
@@ -3944,6 +3949,7 @@ class ManagementPanelPetitions( ManagementPanel ):
         self._petition_panel.Add( sort_hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         self._petition_panel.Add( self._contents, CC.FLAGS_EXPAND_BOTH_WAYS )
         self._petition_panel.Add( self._process, CC.FLAGS_EXPAND_PERPENDICULAR )
+        self._petition_panel.Add( self._copy_account_key_button, CC.FLAGS_EXPAND_PERPENDICULAR )
         self._petition_panel.Add( self._modify_petitioner, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         vbox = QP.VBoxLayout()
@@ -3959,6 +3965,8 @@ class ManagementPanelPetitions( ManagementPanel ):
         self.widget().setLayout( vbox )
         
         self._contents.rightClicked.connect( self.EventRowRightClick )
+        
+        self._DrawCurrentPetition()
         
     
     def _CheckAll( self ):
@@ -3977,6 +3985,18 @@ class ManagementPanelPetitions( ManagementPanel ):
             
         
     
+    def _CopyAccountKey( self ):
+        
+        if self._current_petition is None:
+            
+            return
+            
+        
+        account_key = self._current_petition.GetPetitionerAccount().GetAccountKey()
+        
+        HG.client_controller.pub( 'clipboard', 'text', account_key.hex() )
+        
+    
     def _DrawCurrentPetition( self ):
         
         if self._current_petition is None:
@@ -3989,6 +4009,7 @@ class ManagementPanelPetitions( ManagementPanel ):
             
             self._contents.clear()
             self._process.setEnabled( False )
+            self._copy_account_key_button.setEnabled( False )
             
             self._sort_by_left.setEnabled( False )
             self._sort_by_right.setEnabled( False )
@@ -4037,6 +4058,7 @@ class ManagementPanelPetitions( ManagementPanel ):
             self._SetContentsAndChecks( contents_and_checks, 'right' )
             
             self._process.setEnabled( True )
+            self._copy_account_key_button.setEnabled( True )
             
             if self._can_ban:
                 
@@ -4046,8 +4068,6 @@ class ManagementPanelPetitions( ManagementPanel ):
         
         self._action_text.style().polish( self._action_text )
         self._reason_text.style().polish( self._reason_text )
-        
-        self._ShowHashes( [] )
         
     
     def _DrawNumPetitions( self ):
@@ -4175,6 +4195,8 @@ class ManagementPanelPetitions( ManagementPanel ):
             
             self._DrawCurrentPetition()
             
+            self._ShowHashes( [ ])
+            
         
         def qt_done():
             
@@ -4206,6 +4228,8 @@ class ManagementPanelPetitions( ManagementPanel ):
             self._current_petition = None
             
             self._DrawCurrentPetition()
+            
+            self._ShowHashes( [] )
             
         
         button.setEnabled( False )
@@ -4495,17 +4519,20 @@ class ManagementPanelPetitions( ManagementPanel ):
         
         self._DrawCurrentPetition()
         
+        self._ShowHashes( [] )
+        
     
     def EventModifyPetitioner( self ):
         
-        QW.QMessageBox.critical( self, 'Error', 'this does not work yet!' )
+        subject_account_key = self._current_petition.GetPetitionerAccount().GetAccountKey()
         
-        return
+        subject_account_identifiers = [ HydrusNetwork.AccountIdentifier( account_key = subject_account_key ) ]
         
-        #with ClientGUIDialogs.DialogModifyAccounts( self, self._petition_service_key, ( self._current_petition.GetPetitionerAccount(), ) ) as dlg:
-        #    
-        #    dlg.exec()
-        #    
+        frame = ClientGUITopLevelWindowsPanels.FrameThatTakesScrollablePanel( self, 'manage accounts' )
+        
+        panel = ClientGUIHydrusNetwork.ModifyAccountsPanel( frame, self._petition_service_key, subject_account_identifiers )
+        
+        frame.SetPanel( panel )
         
     
     def EventRowRightClick( self ):

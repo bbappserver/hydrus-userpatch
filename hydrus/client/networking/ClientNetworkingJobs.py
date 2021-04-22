@@ -11,9 +11,9 @@ from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusNetworking
 from hydrus.core import HydrusThreading
 from hydrus.core import HydrusText
+from hydrus.core.networking import HydrusNetworking
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
@@ -76,6 +76,10 @@ def ConvertStatusCodeAndDataIntoExceptionInfo( status_code, data, is_hydrus_serv
     elif status_code == 409:
         
         eclass = HydrusExceptions.ConflictException
+        
+    elif status_code == 416:
+        
+        eclass = HydrusExceptions.RangeNotSatisfiableException
         
     elif status_code == 419:
         

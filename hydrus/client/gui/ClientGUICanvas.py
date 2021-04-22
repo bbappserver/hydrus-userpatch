@@ -19,7 +19,6 @@ from hydrus.client import ClientData
 from hydrus.client import ClientDuplicates
 from hydrus.client import ClientPaths
 from hydrus.client.gui import ClientGUICanvasMedia
-from hydrus.client.gui import ClientGUICommon
 from hydrus.client.gui import ClientGUICore as CGC
 from hydrus.client.gui import ClientGUIDialogs
 from hydrus.client.gui import ClientGUIDialogsManage
@@ -41,6 +40,7 @@ from hydrus.client.media import ClientMedia
 from hydrus.client.metadata import ClientRatings
 from hydrus.client.metadata import ClientTags
 from hydrus.client.metadata import ClientTagSorting
+from hydrus.client.gui.widgets import ClientGUICommon
 
 ZOOM_CENTERPOINT_MEDIA_CENTER = 0
 ZOOM_CENTERPOINT_VIEWER_CENTER = 1
@@ -1118,6 +1118,11 @@ class Canvas( QW.QWidget ):
     
     def _Undelete( self ):
         
+        if self._current_media is None:
+            
+            return
+            
+        
         locations_manager = self._current_media.GetLocationsManager()
         
         if CC.TRASH_SERVICE_KEY in locations_manager.GetCurrent():
@@ -2001,7 +2006,9 @@ class CanvasWithDetails( Canvas ):
             
             tags_i_want_to_display = list( tags_i_want_to_display )
             
-            ClientTagSorting.SortTags( HC.options[ 'default_tag_sort' ], tags_i_want_to_display )
+            tag_sort = HG.client_controller.new_options.GetDefaultTagSort()
+            
+            ClientTagSorting.SortTags( tag_sort, tags_i_want_to_display )
             
             current_y = 3
             
@@ -2176,14 +2183,18 @@ class CanvasWithDetails( Canvas ):
             
             # bottom-right index
             
+            bottom_right_string = ClientData.ConvertZoomToPercentage( self._current_zoom )
+            
             index_string = self._GetIndexString()
             
             if len( index_string ) > 0:
                 
-                ( text_size, index_string ) = ClientGUIFunctions.GetTextSizeFromPainter( painter, index_string )
+                bottom_right_string = '{} - {}'.format( bottom_right_string, index_string )
                 
-                ClientGUIFunctions.DrawText( painter, my_width - text_size.width() - 3, my_height - text_size.height() - 3, index_string )
-                
+            
+            ( text_size, bottom_right_string ) = ClientGUIFunctions.GetTextSizeFromPainter( painter, bottom_right_string )
+            
+            ClientGUIFunctions.DrawText( painter, my_width - text_size.width() - 3, my_height - text_size.height() - 3, bottom_right_string )
             
         
     
@@ -4151,7 +4162,7 @@ class CanvasMediaListBrowser( CanvasMediaListNavigable ):
             new_options = HG.client_controller.new_options
             
             advanced_mode = new_options.GetBoolean( 'advanced_mode' )
-        
+            
             services = HG.client_controller.services_manager.GetServices()
             
             local_ratings_services = [ service for service in services if service.GetServiceType() in ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ) ]

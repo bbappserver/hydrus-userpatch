@@ -2,6 +2,7 @@ import os
 import sqlite3
 import typing
 
+from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusDB
 from hydrus.core import HydrusDBModule
@@ -282,9 +283,26 @@ class ClientDBMasterHashes( HydrusDBModule.HydrusDBModule ):
         return hash_ids_to_hashes
         
     
+    def GetTablesAndColumnsThatUseDefinitions( self, content_type: int ) -> typing.List[ typing.Tuple[ str, str ] ]:
+        
+        if HC.CONTENT_TYPE_HASH:
+            
+            return [ ( 'local_hashes', 'hash_id' ) ]
+            
+        
+        return []
+        
+    
     def HasExtraHashes( self, hash_id ):
         
         result = self._c.execute( 'SELECT 1 FROM local_hashes WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
+        
+        return result is not None
+        
+    
+    def HasHashId( self, hash_id: int ):
+        
+        result = self._c.execute( 'SELECT 1 FROM hashes WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
         
         return result is not None
         
@@ -316,13 +334,16 @@ class ClientDBMasterTexts( HydrusDBModule.HydrusDBModule ):
         
         self._c.execute( 'CREATE TABLE IF NOT EXISTS external_master.texts ( text_id INTEGER PRIMARY KEY, text TEXT UNIQUE );' )
         
+        self._c.execute( 'CREATE VIRTUAL TABLE IF NOT EXISTS external_caches.notes_fts4 USING fts4( note );' )
+        
     
     def GetExpectedTableNames( self ) -> typing.Collection[ str ]:
         
         expected_table_names = [
             'external_master.labels',
             'external_master.notes',
-            'external_master.texts'
+            'external_master.texts',
+            'external_caches.notes_fts4'
         ]
         
         return expected_table_names
@@ -344,6 +365,31 @@ class ClientDBMasterTexts( HydrusDBModule.HydrusDBModule ):
             
         
         return label_id
+        
+    
+    def GetNoteId( self, note: str ) -> int:
+        
+        result = self._c.execute( 'SELECT note_id FROM notes WHERE note = ?;', ( note, ) ).fetchone()
+        
+        if result is None:
+            
+            self._c.execute( 'INSERT INTO notes ( note ) VALUES ( ? );', ( note, ) )
+            
+            note_id = self._c.lastrowid
+            
+            self._c.execute( 'REPLACE INTO notes_fts4 ( docid, note ) VALUES ( ?, ? );', ( note_id, note ) )
+            
+        else:
+            
+            ( note_id, ) = result
+            
+        
+        return note_id
+        
+    
+    def GetTablesAndColumnsThatUseDefinitions( self, content_type: int ) -> typing.List[ typing.Tuple[ str, str ] ]:
+        
+        return []
         
     
     def GetText( self, text_id ):
@@ -522,6 +568,13 @@ class ClientDBMasterTags( HydrusDBModule.HydrusDBModule ):
         return subtag_id
         
     
+    def GetTablesAndColumnsThatUseDefinitions( self, content_type: int ) -> typing.List[ typing.Tuple[ str, str ] ]:
+        
+        # maybe content type subtag/namespace, which would useful for bad subtags, although that's tricky because then the knock-on is killing tag definition rows
+        
+        return []
+        
+    
     def GetTag( self, tag_id ) -> str:
         
         self._PopulateTagIdsToTagsCache( ( tag_id, ) )
@@ -538,6 +591,8 @@ class ClientDBMasterTags( HydrusDBModule.HydrusDBModule ):
             HydrusTags.CheckTagNotEmpty( clean_tag )
             
         except HydrusExceptions.TagSizeException:
+            
+            # update this to instead go 'hey, does the dirty tag exist?' if it does, run the fix invalid tags routine
             
             raise HydrusExceptions.TagSizeException( '"{}" tag seems not valid--when cleaned, it ends up with zero size!'.format( tag ) )
             
@@ -714,6 +769,13 @@ class ClientDBMasterURLs( HydrusDBModule.HydrusDBModule ):
         ]
         
         return expected_table_names
+        
+    
+    def GetTablesAndColumnsThatUseDefinitions( self, content_type: int ) -> typing.List[ typing.Tuple[ str, str ] ]:
+        
+        # if content type is a domain, then give urls? bleh
+        
+        return []
         
     
     def GetURLDomainId( self, domain ):

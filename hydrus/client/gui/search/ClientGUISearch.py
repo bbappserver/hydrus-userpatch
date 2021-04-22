@@ -10,7 +10,6 @@ from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientSearch
-from hydrus.client.gui import ClientGUICommon
 from hydrus.client.gui import ClientGUICore as CGC
 from hydrus.client.gui import ClientGUIMenus
 from hydrus.client.gui import ClientGUIScrolledPanels
@@ -19,6 +18,7 @@ from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.search import ClientGUIPredicatesMultiple
 from hydrus.client.gui.search import ClientGUIPredicatesSingle
 from hydrus.client.gui.search import ClientGUIPredicatesOR
+from hydrus.client.gui.widgets import ClientGUICommon
 
 EDIT_PRED_TYPES = {
     ClientSearch.PREDICATE_TYPE_SYSTEM_AGE,
@@ -373,7 +373,16 @@ class EditPredicatesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         for panel in self._editable_pred_panels:
             
-            QP.AddToLayout( vbox, panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+            if isinstance( panel, ClientGUIPredicatesOR.ORPredicateControl ):
+                
+                flags = CC.FLAGS_EXPAND_BOTH_WAYS
+                
+            else:
+                
+                flags = CC.FLAGS_EXPAND_PERPENDICULAR
+                
+            
+            QP.AddToLayout( vbox, panel, flags )
             
         
         self.widget().setLayout( vbox )
