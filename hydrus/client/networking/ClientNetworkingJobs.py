@@ -1715,7 +1715,7 @@ class NetworkJobHydrus( NetworkJob ):
         
         response = NetworkJob._SendRequestAndGetResponse( self )
         
-        if service_type in HC.RESTRICTED_SERVICES:
+        if response.ok and service_type in HC.RESTRICTED_SERVICES:
             
             self._CheckHydrusVersion( service_type, response )
             

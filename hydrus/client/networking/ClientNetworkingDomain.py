@@ -2547,6 +2547,30 @@ class GalleryURLGenerator( HydrusSerialisable.SerialisableBaseNamed ):
         self._gallery_url_generator_key = bytes.fromhex( serialisable_gallery_url_generator_key )
         
     
+    def CheckFunctional( self ):
+        
+        try:
+            
+            example_url = self.GetExampleURL()
+            
+            ( url_type, match_name, can_parse ) = HG.client_controller.network_engine.domain_manager.GetURLParseCapability( example_url )
+            
+        except Exception as e:
+            
+            raise HydrusExceptions.ParseException( 'Unusual error: {}'.format( e ) )
+            
+        
+        if url_type == HC.URL_TYPE_UNKNOWN:
+            
+            raise HydrusExceptions.ParseException( 'No URL Class for example URL!' )
+            
+        
+        if not can_parse:
+            
+            raise HydrusExceptions.ParseException( 'No Parser for the URL Class {}!'.format( match_name ) )
+            
+        
+    
     def GenerateGalleryURL( self, query_text ):
         
         if self._replacement_phrase == '':
@@ -2649,6 +2673,20 @@ class GalleryURLGenerator( HydrusSerialisable.SerialisableBaseNamed ):
         return ( self._url_template, self._replacement_phrase, self._search_terms_separator, self._example_search_text )
         
     
+    def IsFunctional( self ):
+        
+        try:
+            
+            self.CheckFunctional()
+            
+            return True
+            
+        except HydrusExceptions.ParseException:
+            
+            return False
+            
+        
+    
     def SetGUGKey( self, gug_key: bytes ):
         
         self._gallery_url_generator_key = gug_key
@@ -2660,22 +2698,6 @@ class GalleryURLGenerator( HydrusSerialisable.SerialisableBaseNamed ):
         
         self._gallery_url_generator_key = gug_key
         self._name = name
-        
-    
-    def IsFunctional( self ):
-        
-        try:
-            
-            example_url = self.GetExampleURL()
-            
-            ( url_type, match_name, can_parse ) = HG.client_controller.network_engine.domain_manager.GetURLParseCapability( example_url )
-            
-        except:
-            
-            return False
-            
-        
-        return can_parse
         
     
     def RegenerateGUGKey( self ):
@@ -2729,6 +2751,19 @@ class NestedGalleryURLGenerator( HydrusSerialisable.SerialisableBaseNamed ):
         
         self._gallery_url_generator_key = bytes.fromhex( serialisable_gug_key )
         self._gug_keys_and_names = [ ( bytes.fromhex( gug_key ), gug_name ) for ( gug_key, gug_name ) in serialisable_gug_keys_and_names ]
+        
+    
+    def CheckFunctional( self ):
+        
+        for gug_key_and_name in self._gug_keys_and_names:
+            
+            gug = HG.client_controller.network_engine.domain_manager.GetGUG( gug_key_and_name )
+            
+            if gug is not None:
+                
+                gug.CheckFunctional()
+                
+            
         
     
     def GenerateGalleryURLs( self, query_text ):
@@ -2802,20 +2837,16 @@ class NestedGalleryURLGenerator( HydrusSerialisable.SerialisableBaseNamed ):
     
     def IsFunctional( self ):
         
-        for gug_key_and_name in self._gug_keys_and_names:
+        try:
             
-            gug = HG.client_controller.network_engine.domain_manager.GetGUG( gug_key_and_name )
+            self.CheckFunctional()
             
-            if gug is not None:
-                
-                if gug.IsFunctional():
-                    
-                    return True
-                    
-                
+            return True
             
-        
-        return False
+        except HydrusExceptions.ParseException:
+            
+            return False
+            
         
     
     def RegenerateGUGKey( self ):
