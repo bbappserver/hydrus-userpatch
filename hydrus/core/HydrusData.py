@@ -164,12 +164,12 @@ def ConvertIntToPrettyOrdinalString( num: int ):
     
     return s
     
-def ConvertIntToUnit( unit ):
+def ConvertIntToUnit( byte_count ):
     
-    if unit == 1: return 'B'
-    elif unit == 1024: return 'KB'
-    elif unit == 1048576: return 'MB'
-    elif unit == 1073741824: return 'GB'
+    if byte_count == 1: return 'B'
+    elif byte_count == 1024: return 'KiB'
+    elif byte_count == 1048576: return 'MiB'
+    elif byte_count == 1073741824: return 'GiB'
     
 def ConvertMillisecondsToPrettyTime( ms ):
     
@@ -529,6 +529,9 @@ def ConvertUnitToInt( unit ):
     elif unit == 'KB': return 1024
     elif unit == 'MB': return 1048576
     elif unit == 'GB': return 1073741824
+    elif unit == 'KiB': return 1024
+    elif unit == 'MiB': return 1048576
+    elif unit == 'GiB': return 1073741824
     
 def ConvertValueRangeToBytes( value, range ):
     
