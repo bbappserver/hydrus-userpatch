@@ -49,3 +49,9 @@ db/*.conf
 db/client_files/
 db/server_files/
 db/missing_and_invalid_files/
+
+# docs builds
+site/
+help/
+db/client_files_tmp
+updatefiles
