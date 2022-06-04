@@ -1,4 +1,5 @@
 import os
+import numpy
 import threading
 import time
 
@@ -6,26 +7,11 @@ from qtpy import QtCore as QC
 from qtpy import QtWidgets as QW
 from qtpy import QtGui as QG
 
-LZ4_OK = False
-
-try:
-    
-    import lz4
-    import lz4.block
-    
-    LZ4_OK = True
-    
-except Exception as e: # ImportError wasn't enough here as Linux went up the shoot with a __version__ doesn't exist bs
-    
-    pass
-    
-
+from hydrus.core import HydrusCompression
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
-from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusImageHandling
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusThreading
 from hydrus.core import HydrusVideoHandling
 
 from hydrus.client import ClientFiles
@@ -68,7 +54,7 @@ def GenerateHydrusBitmapFromNumPyImage( numpy_image, compressed = True ):
     
 def GenerateHydrusBitmapFromPILImage( pil_image, compressed = True ):
     
-    pil_image = HydrusImageHandling.Dequantize( pil_image )
+    depth = 3
     
     if pil_image.mode == 'RGBA':
         
@@ -83,7 +69,7 @@ def GenerateHydrusBitmapFromPILImage( pil_image, compressed = True ):
     
 class ImageRenderer( object ):
     
-    def __init__( self, media ):
+    def __init__( self, media, this_is_for_metadata_alone = False ):
         
         self._numpy_image = None
         
@@ -93,23 +79,136 @@ class ImageRenderer( object ):
         self._num_frames = media.GetNumFrames()
         self._resolution = media.GetResolution()
         
+        self._icc_profile_bytes = None
+        self._qt_colourspace = None
+        
         self._path = None
+        
+        self._this_is_for_metadata_alone = this_is_for_metadata_alone
         
         HG.client_controller.CallToThread( self._Initialise )
         
     
-    def _GetNumPyImage( self, target_resolution = None ):
+    def _GetNumPyImage( self, clip_rect: QC.QRect, target_resolution: QC.QSize ):
         
-        if target_resolution is None:
+        if self._numpy_image is None:
             
-            numpy_image = self._numpy_image
+            return numpy.zeros( ( target_resolution.height(), target_resolution.width() ), dtype = 'uint8' )
+            
+        
+        clip_size = clip_rect.size()
+        clip_width = clip_size.width()
+        clip_height = clip_size.height()
+        
+        ( my_width, my_height ) = self._resolution
+        
+        my_full_rect = QC.QRect( 0, 0, my_width, my_height )
+        
+        ZERO_MARGIN = QC.QMargins( 0, 0, 0, 0 )
+        
+        clip_padding = ZERO_MARGIN
+        target_padding = ZERO_MARGIN
+        
+        if clip_rect == my_full_rect:
+            
+            # full image
+            
+            source = self._numpy_image
             
         else:
             
-            numpy_image = ClientImageHandling.ResizeNumPyImageForMediaViewer( self._mime, self._numpy_image, ( target_resolution.width(), target_resolution.height() ) )
+            if target_resolution.width() > clip_width:
+                
+                # this is a tile that is being scaled up!
+                # to reduce tiling artifacts (disagreement at otherwise good borders), we want to oversample the clip for our tile so lanczos and friends can get good neighbour data and then crop it
+                # therefore, we'll figure out some padding for the clip, and then calculate what that means in the target end, and do a crop at the end
+                
+                # we want to pad. that means getting a larger resolution and keeping a record of the padding
+                # can't pad if we are at 0 for x or y, or up against width/height max, but no problem in that case obviously
+                
+                # there is the float-int precision calculation problem again. we can't pick a padding of 3 in the clip if we are zooming by 150%--what do we clip off in the target: 4 or 5 pixels? whatever, we get warping
+                # first let's figure a decent zoom estimate:
+                
+                zoom_estimate = target_resolution.width() / clip_width if target_resolution.width() > target_resolution.height() else target_resolution.height() / clip_height
+                
+                # now, if zoom is 150% (as a fraction, 3/2), we want a padding at the target of something that divides by 3 cleanly, or, since we are choosing at the clip in this case and will be multiplying, something that divides cleanly to 67%
+                
+                zoom_estimate_for_clip_padding_multiplier = 1 / zoom_estimate
+                
+                # and we want a nice padding size limit, big enough to make clean numbers but not so big that we are rendering the 8 tiles in a square around the one we want
+                no_bigger_than = max( 4, ( clip_width + clip_height ) // 4 )
+                
+                nice_number = HydrusData.GetNicelyDivisibleNumberForZoom( zoom_estimate_for_clip_padding_multiplier, no_bigger_than )
+                
+                if nice_number != -1:
+                    
+                    # lanczos, I think, uses 4x4 neighbour grid to render. we'll say padding of 4 pixels to be safe for now, although 2 or 3 is probably correct???
+                    # however it works, numbers these small are not a big deal
+                    
+                    while nice_number < 4:
+                        
+                        nice_number *= 2
+                        
+                    
+                    PADDING_AMOUNT = nice_number
+                    
+                    # LIMITATION: There is still a problem here for the bottom and rightmost edges. These tiles are not squares, so the shorter/thinner dimension my be an unpleasant number and be warped _anyway_, regardless of nice padding
+                    # perhaps there is a way to boost left or top padding so we are rendering a full square tile but still cropping our target at the end, but with a little less warping
+                    # I played around with this idea but did not have much success
+                    
+                    LEFT_PADDING_AMOUNT = PADDING_AMOUNT
+                    TOP_PADDING_AMOUNT = PADDING_AMOUNT
+                    
+                    left_padding = min( LEFT_PADDING_AMOUNT, clip_rect.x() )
+                    top_padding = min( TOP_PADDING_AMOUNT, clip_rect.y() )
+                    right_padding = min( PADDING_AMOUNT, ( my_width - 1 ) - clip_rect.bottomRight().x() )
+                    bottom_padding = min( PADDING_AMOUNT, ( my_height - 1 ) - clip_rect.bottomRight().y() )
+                    
+                    clip_padding = QC.QMargins( left_padding, top_padding, right_padding, bottom_padding )
+                    
+                    target_padding = clip_padding * zoom_estimate
+                    
+                
+            
+            clip_rect_with_padding = clip_rect + clip_padding
+            
+            ( x, y, clip_width, clip_height ) = ( clip_rect_with_padding.x(), clip_rect_with_padding.y(), clip_rect_with_padding.width(), clip_rect_with_padding.height() )
+            
+            source = self._numpy_image[ y : y + clip_height, x : x + clip_width ]
             
         
-        return numpy_image
+        if target_resolution == clip_size:
+            
+            # 100% zoom
+            
+            result = source
+            
+        else:
+            
+            if clip_padding == ZERO_MARGIN:
+                
+                result = ClientImageHandling.ResizeNumPyImageForMediaViewer( self._mime, source, ( target_resolution.width(), target_resolution.height() ) )
+                
+            else:
+                
+                target_width_with_padding = target_resolution.width() + target_padding.left() + target_padding.right()
+                target_height_with_padding = target_resolution.height() + target_padding.top() + target_padding.bottom()
+                
+                result = ClientImageHandling.ResizeNumPyImageForMediaViewer( self._mime, source, ( target_width_with_padding, target_height_with_padding ) )
+                
+                y = target_padding.top()
+                x = target_padding.left()
+                
+                result = result[ y : y + target_resolution.height(), x : x + target_resolution.width() ]
+                
+            
+        
+        if not result.data.c_contiguous:
+            
+            result = result.copy()
+            
+        
+        return result
         
     
     def _Initialise( self ):
@@ -119,14 +218,62 @@ class ImageRenderer( object ):
         
         self._path = client_files_manager.GetFilePath( self._hash, self._mime )
         
-        self._numpy_image = ClientImageHandling.GenerateNumPyImage( self._path, self._mime )
+        try:
+            
+            self._numpy_image = ClientImageHandling.GenerateNumPyImage( self._path, self._mime )
+            
+        except Exception as e:
+            
+            HydrusData.ShowText( 'Problem rendering image at "{}"! Error follows:'.format( self._path ) )
+            
+            HydrusData.ShowException( e )
+            
+        
+        if not self._this_is_for_metadata_alone:
+            
+            if self._numpy_image is None:
+                
+                m = 'There was a problem rendering the image with hash {}! It may be damaged.'.format(
+                    self._hash.hex()
+                )
+                
+                m += os.linesep * 2
+                m += 'Jobs to check its integrity and metadata have been scheduled. If it is damaged, it may be redownloaded or removed from the client completely. If it is not damaged, it may be fixed automatically or further action may be required.'
+                
+                HydrusData.ShowText( m )
+                
+                HG.client_controller.Write( 'file_maintenance_add_jobs_hashes', { self._hash }, ClientFiles.REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD )
+                HG.client_controller.Write( 'file_maintenance_add_jobs_hashes', { self._hash }, ClientFiles.REGENERATE_FILE_DATA_JOB_FILE_METADATA )
+                
+            else:
+                
+                my_resolution_size = QC.QSize( self._resolution[0], self._resolution[1] )
+                my_numpy_size = QC.QSize( self._numpy_image.shape[1], self._numpy_image.shape[0] )
+                
+                if my_resolution_size != my_numpy_size:
+                    
+                    m = 'There was a problem rendering the image with hash {}! Hydrus thinks its resolution is {}, but it was actually {}.'.format(
+                        self._hash.hex(),
+                        my_resolution_size,
+                        my_numpy_size
+                    )
+                    
+                    m += os.linesep * 2
+                    m += 'You may see some black squares in the image. A metadata regeneration has been scheduled, so with luck the image will fix itself soon.'
+                    
+                    HydrusData.ShowText( m )
+                    
+                    HG.client_controller.Write( 'file_maintenance_add_jobs_hashes', { self._hash }, ClientFiles.REGENERATE_FILE_DATA_JOB_FILE_METADATA )
+                    
+                
+            
         
     
     def GetEstimatedMemoryFootprint( self ):
         
         if self._numpy_image is None:
             
-            ( width, height ) = self.GetResolution()
+            ( width, height ) = self._resolution
             
             return width * height * 3
             
@@ -142,35 +289,128 @@ class ImageRenderer( object ):
     
     def GetResolution( self ): return self._resolution
     
-    def GetQtImage( self, target_resolution = None ):
+    def GetQtImage( self, clip_rect = None, target_resolution = None ):
         
-        # add region param to this to allow clipping before resize
+        if clip_rect is None:
+            
+            ( width, height ) = self._resolution
+            
+            clip_rect = QC.QRect( QC.QPoint( 0, 0 ), QC.QSize( width, height ) )
+            
         
-        numpy_image = self._GetNumPyImage( target_resolution = target_resolution )
+        if target_resolution is None:
+            
+            target_resolution = clip_rect.size()
+            
+        
+        numpy_image = self._GetNumPyImage( clip_rect, target_resolution )
         
         ( height, width, depth ) = numpy_image.shape
         
         data = numpy_image.data
         
-        return HG.client_controller.bitmap_manager.GetQtImageFromBuffer( width, height, depth * 8, data )
+        qt_image = HG.client_controller.bitmap_manager.GetQtImageFromBuffer( width, height, depth * 8, data )
+        
+        # ok this stuff was originally for image ICC, as loaded using PIL's image.info dict
+        # ultimately I figured out how to do the conversion with PIL itself, which was more universal
+        # however if we end up pulling display ICC or taking user-set ICC, we may want this qt code somewhere
+        
+        if self._icc_profile_bytes is not None:
+            
+            try:
+                
+                if self._qt_colourspace is None:
+                    
+                    self._qt_colourspace = QG.QColorSpace.fromIccProfile( self._icc_profile_bytes )
+                    
+                
+                # originally this was converting image ICC to sRGB, but I think in the 'display' sense, we'd be setting sRGB and then converting to the user-set ICC
+                # 'hey, Qt, this QImage is in sRGB (I already normalised it), now convert it to xxx, thanks!'
+                
+                qt_image.setColorSpace( self._qt_colourspace )
+                qt_image.convertToColorSpace( QG.QColorSpace.SRgb )
+                
+            except:
+                
+                HydrusData.Print( 'Failed to load the ICC Profile for {} into a Qt Colourspace!'.format( self._path ) )
+                
+                self._icc_profile_bytes = None
+                
+            
+        
+        return qt_image
         
     
-    def GetQtPixmap( self, target_resolution = None ):
+    def GetQtPixmap( self, clip_rect = None, target_resolution = None ):
         
-        # add region param to this to allow clipping before resize
+        # colourspace conversions seem to be exclusively QImage territory
+        if self._icc_profile_bytes is not None:
+            
+            qt_image = self.GetQtImage( clip_rect = clip_rect, target_resolution = target_resolution )
+            
+            return QG.QPixmap.fromImage( qt_image )
+            
         
-        numpy_image = self._GetNumPyImage( target_resolution = target_resolution )
+        ( my_width, my_height ) = self._resolution
         
-        ( height, width, depth ) = numpy_image.shape
+        if clip_rect is None:
+            
+            clip_rect = QC.QRect( QC.QPoint( 0, 0 ), QC.QSize( my_width, my_height ) )
+            
         
-        data = numpy_image.data
+        if target_resolution is None:
+            
+            target_resolution = clip_rect.size()
+            
         
-        return HG.client_controller.bitmap_manager.GetQtPixmapFromBuffer( width, height, depth * 8, data )
+        my_full_rect = QC.QRect( 0, 0, my_width, my_height )
+        
+        if my_full_rect.contains( clip_rect ):
+            
+            try:
+                
+                numpy_image = self._GetNumPyImage( clip_rect, target_resolution )
+                
+                ( height, width, depth ) = numpy_image.shape
+                
+                data = numpy_image.data
+                
+                return HG.client_controller.bitmap_manager.GetQtPixmapFromBuffer( width, height, depth * 8, data )
+                
+            except Exception as e:
+                
+                HydrusData.PrintException( e, do_wait = False )
+                
+            
+        
+        HydrusData.Print( 'Failed to produce a tile! Info is: {}, {}, {}, {}'.format( self._hash.hex(), ( my_width, my_height ), clip_rect, target_resolution ) )
+        
+        pixmap = QG.QPixmap( target_resolution )
+        
+        pixmap.fill( QC.Qt.black )
+        
+        return pixmap
         
     
     def IsReady( self ):
         
         return self._numpy_image is not None
+        
+    
+class ImageTile( object ):
+    
+    def __init__( self, hash: bytes, clip_rect: QC.QRect, qt_pixmap: QG.QPixmap ):
+        
+        self.hash = hash
+        self.clip_rect = clip_rect
+        self.qt_pixmap = qt_pixmap
+        
+        self._num_bytes = self.qt_pixmap.width() * self.qt_pixmap.height() * 3
+        
+    
+    def GetEstimatedMemoryFootprint( self ):
+        
+        return self._num_bytes
         
     
 class RasterContainer( object ):
@@ -231,6 +471,7 @@ class RasterContainerVideo( RasterContainer ):
         self._renderer = None
         
         self._frames = {}
+        self._durations = []
         
         self._buffer_start_index = -1
         self._buffer_end_index = -1
@@ -352,7 +593,7 @@ class RasterContainerVideo( RasterContainer ):
         
         while True:
             
-            if self._stop or HG.view_shutdown:
+            if self._stop or HG.started_shutdown:
                 
                 self._renderer.Stop()
                 
@@ -499,12 +740,13 @@ class RasterContainerVideo( RasterContainer ):
         
         if self._media.GetMime() == HC.IMAGE_GIF:
             
-            return self._durations[ index ]
+            if index in self._durations:
+                
+                return self._durations[ index ]
+                
             
-        else:
-            
-            return self._average_frame_duration
-            
+        
+        return self._average_frame_duration
         
     
     def GetFrame( self, index ):
@@ -626,6 +868,39 @@ class RasterContainerVideo( RasterContainer ):
         return self._times_to_play_gif
         
     
+    def GetFrameIndex( self, timestamp_ms ):
+        
+        if self._media.GetMime() == HC.IMAGE_GIF:
+            
+            so_far = 0
+            
+            for ( frame_index, duration_ms ) in enumerate( self._durations ):
+                
+                so_far += duration_ms
+                
+                if so_far > timestamp_ms:
+                    
+                    result = frame_index
+                    
+                    if FrameIndexOutOfRange( result, 0, self.GetNumFrames() - 1 ):
+                        
+                        return 0
+                        
+                    else:
+                        
+                        return result
+                        
+                    
+                
+            
+            return 0
+            
+        else:
+            
+            return timestamp_ms // self._average_frame_duration
+            
+        
+    
     def GetTimestampMS( self, frame_index ):
         
         if self._media.GetMime() == HC.IMAGE_GIF:
@@ -688,16 +963,16 @@ class HydrusBitmap( object ):
     
     def __init__( self, data, size, depth, compressed = True ):
         
-        if not LZ4_OK:
-            
-            compressed = False
-            
-        
         self._compressed = compressed
+        
+        if isinstance( data, memoryview ) and not data.c_contiguous:
+            
+            data = data.copy()
+            
         
         if self._compressed:
             
-            self._data = lz4.block.compress( data )
+            self._data = HydrusCompression.CompressFastBytesToBytes( data )
             
         else:
             
@@ -712,7 +987,7 @@ class HydrusBitmap( object ):
         
         if self._compressed:
             
-            return lz4.block.decompress( self._data )
+            return HydrusCompression.DecompressFastBytesToBytes( self._data )
             
         else:
             

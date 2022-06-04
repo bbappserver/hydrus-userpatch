@@ -1,21 +1,8 @@
+import hashlib
 import json
 import os
-import zlib
-import typing
-LZ4_OK = False
 
-try:
-    
-    import lz4
-    import lz4.block
-    
-    LZ4_OK = True
-    
-except: # ImportError wasn't enough here as Linux went up the shoot with a __version__ doesn't exist bs
-    
-    print( 'Could not import lz4--nbd.' )
-    
-
+from hydrus.core import HydrusCompression
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 
@@ -32,7 +19,7 @@ SERIALISABLE_TYPE_HDD_IMPORT = 9
 SERIALISABLE_TYPE_SERVER_TO_CLIENT_CONTENT_UPDATE_PACKAGE = 10
 SERIALISABLE_TYPE_SERVER_TO_CLIENT_SERVICE_UPDATE_PACKAGE = 11
 SERIALISABLE_TYPE_MANAGEMENT_CONTROLLER = 12
-SERIALISABLE_TYPE_GUI_SESSION = 13
+SERIALISABLE_TYPE_GUI_SESSION_LEGACY = 13
 SERIALISABLE_TYPE_PREDICATE = 14
 SERIALISABLE_TYPE_FILE_SEARCH_CONTEXT = 15
 SERIALISABLE_TYPE_EXPORT_FOLDER = 16
@@ -122,30 +109,22 @@ SERIALISABLE_TYPE_STRING_SORTER = 99
 SERIALISABLE_TYPE_STRING_SLICER = 100
 SERIALISABLE_TYPE_TAG_SORT = 101
 SERIALISABLE_TYPE_ACCOUNT_TYPE = 102
+SERIALISABLE_TYPE_LOCATION_CONTEXT = 103
+SERIALISABLE_TYPE_GUI_SESSION_CONTAINER = 104
+SERIALISABLE_TYPE_GUI_SESSION_PAGE_DATA = 105
+SERIALISABLE_TYPE_GUI_SESSION_CONTAINER_PAGE_NOTEBOOK = 106
+SERIALISABLE_TYPE_GUI_SESSION_CONTAINER_PAGE_SINGLE = 107
+SERIALISABLE_TYPE_PRESENTATION_IMPORT_OPTIONS = 108
 
 SERIALISABLE_TYPES_TO_OBJECT_TYPES = {}
-def CreateFromNetworkBytes( network_string, raise_error_on_future_version = False ):
-    '''Uncompress a blob into a serialized string and then attemot to decode it into an object.'''
-    try:
-        
-        obj_bytes = zlib.decompress( network_string )
-    except zlib.error:
-        
-        if LZ4_OK:
-            
-            obj_bytes = lz4.block.decompress( network_string )
-            
-        else:
-            
-            raise
-            
-        
+
+def CreateFromNetworkBytes( network_bytes: bytes, raise_error_on_future_version = False ):
     
-    obj_string = str( obj_bytes, 'utf-8' )
+    obj_string = HydrusCompression.DecompressBytesToString( network_bytes )
     
     return CreateFromString( obj_string, raise_error_on_future_version = raise_error_on_future_version )
     
-def CreateFromNoneableSerialisableTuple( obj_tuple_or_none, raise_error_on_future_version = False ) ->object:
+def CreateFromNoneableSerialisableTuple( obj_tuple_or_none, raise_error_on_future_version = False ):
     
     if obj_tuple_or_none is None:
         
@@ -156,19 +135,13 @@ def CreateFromNoneableSerialisableTuple( obj_tuple_or_none, raise_error_on_futur
         return CreateFromSerialisableTuple( obj_tuple_or_none, raise_error_on_future_version = raise_error_on_future_version )
         
     
-def CreateFromString( obj_string, raise_error_on_future_version = False ) ->object:
+def CreateFromString( obj_string, raise_error_on_future_version = False ):
     
     obj_tuple = json.loads( obj_string )
     
     return CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = raise_error_on_future_version )
     
-def CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = False )-> object:
-    '''
-    Deserialize a tuple of the form (type,name,version,data) or (type,version,data)
-    :param type a type constant named in HydrusSerializable
-    :param version an integer version
-    :param name
-    '''
+def CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = False ):
     
     if len( obj_tuple ) == 3:
         
@@ -187,7 +160,7 @@ def CreateFromSerialisableTuple( obj_tuple, raise_error_on_future_version = Fals
     
     return obj
     
-def GetNoneableSerialisableTuple( obj_or_none ) -> tuple:
+def GetNoneableSerialisableTuple( obj_or_none ):
     
     if obj_or_none is None:
         
@@ -218,7 +191,7 @@ def ObjectVersionIsFromTheFuture( obj_tuple ):
     return SERIALISABLE_TYPES_TO_OBJECT_TYPES[ serialisable_type ].SERIALISABLE_VERSION > version
     
 class SerialisableBase( object ):
-    '''Baseclass for all serializable objects, do not instantiate directly.''' 
+    
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_BASE
     SERIALISABLE_NAME = 'Base Serialisable Object'
     SERIALISABLE_VERSION = 1
@@ -242,9 +215,7 @@ class SerialisableBase( object ):
         
         obj_string = self.DumpToString()
         
-        obj_bytes = bytes( obj_string, 'utf-8' )
-        
-        return zlib.compress( obj_bytes, 9 )
+        return HydrusCompression.CompressStringToBytes( obj_string )
         
     
     def DumpToString( self ):
@@ -257,6 +228,12 @@ class SerialisableBase( object ):
     def Duplicate( self ):
         
         return CreateFromString( self.DumpToString() )
+        
+    
+    def GetSerialisedHash( self ):
+        
+        # as a note, this should not be relied on in future--the serialised string could change due to object updates, or in rare cases, because the contained objects are still hot
+        return hashlib.sha256( bytes( self.DumpToString(), 'utf-8' ) ).digest()
         
     
     def GetSerialisableTuple( self ):
@@ -305,7 +282,7 @@ class SerialisableBase( object ):
         
     
 class SerialisableBaseNamed( SerialisableBase ):
-    '''Base classe for all named serializable objects, do not instantiate directly.'''
+    
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_BASE_NAMED
     SERIALISABLE_NAME = 'Named Base Serialisable Object'
     
@@ -390,18 +367,17 @@ class SerialisableDictionary( SerialisableBase, dict ):
         return ( simple_key_simple_value_pairs, simple_key_serialisable_value_pairs, serialisable_key_simple_value_pairs, serialisable_key_serialisable_value_pairs )
         
     
-    def _InitialiseFromSerialisableInfo( self, serialisable_info:tuple ) -> None:
+    def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
         have_shown_load_error = False
         
         ( simple_key_simple_value_pairs, simple_key_serialisable_value_pairs, serialisable_key_simple_value_pairs, serialisable_key_serialisable_value_pairs ) = serialisable_info
         
-        #unpack primitives
         for ( key, value ) in simple_key_simple_value_pairs:
             
             self[ key ] = value
             
-        #recursivly deserialize complex objects keyed by primitives
+        
         for ( key, serialisable_value ) in simple_key_serialisable_value_pairs:
             
             try:
@@ -423,7 +399,7 @@ class SerialisableDictionary( SerialisableBase, dict ):
             
             self[ key ] = value
             
-        #recursivly deserialize primitives keyed by complex objects
+        
         for ( serialisable_key, value ) in serialisable_key_simple_value_pairs:
             
             try:
@@ -445,7 +421,7 @@ class SerialisableDictionary( SerialisableBase, dict ):
             
             self[ key ] = value
             
-        #recursivly deserialize cpmplex objects keyed by complex objects
+        
         for ( serialisable_key, serialisable_value ) in serialisable_key_serialisable_value_pairs:
             
             try:
@@ -552,7 +528,7 @@ class SerialisableBytesDictionary( SerialisableBase, dict ):
 SERIALISABLE_TYPES_TO_OBJECT_TYPES[ SERIALISABLE_TYPE_BYTES_DICT ] = SerialisableBytesDictionary
 
 class SerialisableList( SerialisableBase, list ):
-    '''Given a list of serialized tuples produces a list containing their deserialized forms as entries.'''
+    
     SERIALISABLE_TYPE = SERIALISABLE_TYPE_LIST
     SERIALISABLE_NAME = 'Serialisable List'
     SERIALISABLE_VERSION = 1
@@ -563,12 +539,12 @@ class SerialisableList( SerialisableBase, list ):
         SerialisableBase.__init__( self )
         
     
-    def _GetSerialisableInfo( self )->list:
+    def _GetSerialisableInfo( self ):
         
         return [ obj.GetSerialisableTuple() for obj in self ]
         
     
-    def _InitialiseFromSerialisableInfo( self, serialisable_info : typing.Iterable ):
+    def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
         have_shown_load_error = False
         

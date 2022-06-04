@@ -1,4 +1,4 @@
-import gc
+import collections
 import os
 import psutil
 import re
@@ -7,7 +7,6 @@ import shlex
 import shutil
 import stat
 import subprocess
-import tempfile
 import threading
 import traceback
 
@@ -16,8 +15,32 @@ from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusThreading
 
-TEMP_PATH_LOCK = threading.Lock()
-IN_USE_TEMP_PATHS = set()
+mimes_to_default_thumbnail_paths = collections.defaultdict( lambda: os.path.join( HC.STATIC_DIR, 'hydrus.png' ) )
+
+mimes_to_default_thumbnail_paths[ HC.APPLICATION_PDF ] = os.path.join( HC.STATIC_DIR, 'pdf.png' )
+mimes_to_default_thumbnail_paths[ HC.APPLICATION_PSD ] = os.path.join( HC.STATIC_DIR, 'psd.png' )
+mimes_to_default_thumbnail_paths[ HC.APPLICATION_CLIP ] = os.path.join( HC.STATIC_DIR, 'clip.png' )
+
+for mime in HC.AUDIO:
+    
+    path = os.path.join( HC.STATIC_DIR, 'audio.png' )
+    
+    mimes_to_default_thumbnail_paths[ mime ] = os.path.join( path )
+    
+
+for mime in HC.VIDEO:
+    
+    path = os.path.join( HC.STATIC_DIR, 'video.png' )
+    
+    mimes_to_default_thumbnail_paths[ mime ] = os.path.join( path )
+    
+
+for mime in HC.ARCHIVES:
+    
+    path = os.path.join( HC.STATIC_DIR, 'zip.png' )
+    
+    mimes_to_default_thumbnail_paths[ mime ] = os.path.join( path )
+    
 
 def AppendPathUntilNoConflicts( path ):
     
@@ -36,124 +59,6 @@ def AppendPathUntilNoConflicts( path ):
     
     return good_path_absent_ext + ext
     
-def CheckHasSpaceForDBTransaction( db_dir, num_bytes ):
-    
-    if HG.no_db_temp_files:
-        
-        space_needed = int( num_bytes * 1.1 )
-        
-        approx_available_memory = psutil.virtual_memory().available * 4 / 5
-        
-        if approx_available_memory < num_bytes:
-            
-            raise Exception( 'I believe you need about ' + HydrusData.ToHumanBytes( space_needed ) + ' available memory, since you are running in no_db_temp_files mode, but you only seem to have ' + HydrusData.ToHumanBytes( approx_available_memory ) + '.' )
-            
-        
-        db_disk_free_space = GetFreeSpace( db_dir )
-        
-        if db_disk_free_space < space_needed:
-            
-            raise Exception( 'I believe you need about ' + HydrusData.ToHumanBytes( space_needed ) + ' on your db\'s partition, but you only seem to have ' + HydrusData.ToHumanBytes( db_disk_free_space ) + '.' )
-            
-        
-    else:
-        
-        temp_dir = tempfile.gettempdir()
-        
-        temp_disk_free_space = GetFreeSpace( temp_dir )
-        
-        temp_and_db_on_same_device = GetDevice( temp_dir ) == GetDevice( db_dir )
-        
-        if temp_and_db_on_same_device:
-            
-            space_needed = int( num_bytes * 2.2 )
-            
-            if temp_disk_free_space < space_needed:
-                
-                raise Exception( 'I believe you need about ' + HydrusData.ToHumanBytes( space_needed ) + ' on your db\'s partition, which I think also holds your temporary path, but you only seem to have ' + HydrusData.ToHumanBytes( temp_disk_free_space ) + '.' )
-                
-            
-        else:
-            
-            space_needed = int( num_bytes * 1.1 )
-            
-            if temp_disk_free_space < space_needed:
-                
-                raise Exception( 'I believe you need about ' + HydrusData.ToHumanBytes( space_needed ) + ' on your temporary path\'s partition, which I think is ' + temp_dir + ', but you only seem to have ' + HydrusData.ToHumanBytes( temp_disk_free_space ) + '.' )
-                
-            
-            db_disk_free_space = GetFreeSpace( db_dir )
-            
-            if db_disk_free_space < space_needed:
-                
-                raise Exception( 'I believe you need about ' + HydrusData.ToHumanBytes( space_needed ) + ' on your db\'s partition, but you only seem to have ' + HydrusData.ToHumanBytes( db_disk_free_space ) + '.' )
-                
-            
-        
-    
-def CleanUpTempPath( os_file_handle, temp_path ):
-    
-    try:
-        
-        os.close( os_file_handle )
-        
-    except OSError:
-        
-        gc.collect()
-        
-        try:
-            
-            os.close( os_file_handle )
-            
-        except OSError:
-            
-            HydrusData.Print( 'Could not close the temporary file ' + temp_path )
-            
-            return
-            
-        
-    
-    try:
-        
-        os.remove( temp_path )
-        
-    except OSError:
-        
-        with TEMP_PATH_LOCK:
-            
-            IN_USE_TEMP_PATHS.add( ( HydrusData.GetNow(), temp_path ) )
-            
-        
-    
-def CleanUpOldTempPaths():
-    
-    with TEMP_PATH_LOCK:
-        
-        data = list( IN_USE_TEMP_PATHS )
-        
-        for row in data:
-            
-            ( time_failed, temp_path ) = row
-            
-            if HydrusData.TimeHasPassed( time_failed + 60 ):
-                
-                try:
-                    
-                    os.remove( temp_path )
-                    
-                    IN_USE_TEMP_PATHS.discard( row )
-                    
-                except OSError:
-                    
-                    if HydrusData.TimeHasPassed( time_failed + 600 ):
-                        
-                        IN_USE_TEMP_PATHS.discard( row )
-                        
-                    
-                
-            
-        
-
 def ConvertAbsPathToPortablePath( abs_path, base_dir_override = None ):
     
     try:
@@ -275,7 +180,7 @@ def DeletePath( path ):
     
     if os.path.exists( path ):
         
-        MakeFileWriteable( path )
+        TryToMakeFileWriteable( path )
         
         try:
             
@@ -306,9 +211,6 @@ def DeletePath( path ):
     
 def DirectoryIsWriteable( path ):
     
-    # testing access bits on directories to see if we can make new files is multiplatform hellmode
-    # so, just try it and see what happens
-    
     while not os.path.exists( path ):
         
         try:
@@ -320,6 +222,13 @@ def DirectoryIsWriteable( path ):
             return False
             
         
+    
+    return os.access( path, os.W_OK | os.X_OK )
+    
+    # old crazy method:
+    '''
+    # testing access bits on directories to see if we can make new files is multiplatform hellmode
+    # so, just try it and see what happens
     
     temp_path = os.path.join( path, 'hydrus_temp_test_top_jej' )
     
@@ -352,6 +261,10 @@ def DirectoryIsWriteable( path ):
         
         return False
         
+    '''
+def FileisWriteable( path: str ):
+    
+    return os.access( path, os.W_OK )
     
 def FilterFreePaths( paths ):
     
@@ -368,10 +281,6 @@ def FilterFreePaths( paths ):
         
     
     return free_paths
-    
-def GetCurrentTempDir():
-    
-    return tempfile.gettempdir()
     
 def GetDefaultLaunchPath():
     
@@ -430,45 +339,6 @@ def GetFreeSpace( path ):
     disk_usage = psutil.disk_usage( path )
     
     return disk_usage.free
-    
-def GetTempDir( dir = None ):
-    
-    return tempfile.mkdtemp( prefix = 'hydrus', dir = dir )
-    
-def SetEnvTempDir( path ):
-    
-    if os.path.exists( path ) and not os.path.isdir( path ):
-        
-        raise Exception( 'The given temp directory, "{}", does not seem to be a directory!'.format( path ) )
-        
-    
-    try:
-        
-        MakeSureDirectoryExists( path )
-        
-    except Exception as e:
-        
-        raise Exception( 'Could not create the temp dir: {}'.format( e ) )
-        
-    
-    if not DirectoryIsWriteable( path ):
-        
-        raise Exception( 'The given temp directory, "{}", does not seem to be writeable-to!'.format( path ) )
-        
-    
-    for tmp_name in ( 'TMPDIR', 'TEMP', 'TMP' ):
-        
-        if tmp_name in os.environ:
-            
-            os.environ[ tmp_name ] = path
-            
-        
-    
-    tempfile.tempdir = path
-    
-def GetTempPath( suffix = '', dir = None ):
-    
-    return tempfile.mkstemp( suffix = suffix, prefix = 'hydrus', dir = dir )
     
 def LaunchDirectory( path ):
     
@@ -599,66 +469,57 @@ def MakeSureDirectoryExists( path ):
     
     os.makedirs( path, exist_ok = True )
     
-def MakeFileWriteable( path ):
+def safe_copy2( source, dest ):
     
-    if not os.path.exists( path ):
+    copy_metadata = True
+    
+    if HC.PLATFORM_WINDOWS:
         
-        return
+        mtime = os.path.getmtime( source )
+        
+        # this is 1980-01-01 UTC, before which Windows can have trouble copying lmaoooooo
+        if mtime < 315532800:
+            
+            copy_metadata = False
+            
         
     
-    try:
+    if copy_metadata:
         
-        stat_result = os.stat( path )
+        # this overwrites on conflict without hassle
+        shutil.copy2( source, dest )
         
-        current_bits = stat_result.st_mode
+    else:
         
-        if HC.PLATFORM_WINDOWS:
-            
-            # this is actually the same value as S_IWUSR, but let's not try to second guess ourselves
-            desired_bits = stat.S_IREAD | stat.S_IWRITE
-            
-        else:
-            
-            # guarantee 644 for regular files m8
-            desired_bits = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
-            
-        
-        if not ( desired_bits & current_bits ) == desired_bits:
-            
-            os.chmod( path, current_bits | desired_bits )
-            
-        
-    except Exception as e:
-        
-        HydrusData.Print( 'Wanted to add write permission to "{}", but had an error: {}'.format( path, str( e ) ) )
+        shutil.copy( source, dest )
         
     
 def MergeFile( source, dest ):
     
+    # this can merge a file, but if it is given a dir it will just straight up overwrite not merge
+    
     if not os.path.isdir( source ):
         
-        MakeFileWriteable( source )
+        if PathsHaveSameSizeAndDate( source, dest ):
+            
+            DeletePath( source )
+            
+            return True
+            
         
     
-    if PathsHaveSameSizeAndDate( source, dest ):
+    try:
         
-        DeletePath( source )
+        # this overwrites on conflict without hassle
+        shutil.move( source, dest, copy_function = safe_copy2 )
         
-    else:
+    except Exception as e:
         
-        try:
-            
-            # this overwrites on conflict without hassle
-            shutil.move( source, dest )
-            
-        except Exception as e:
-            
-            HydrusData.ShowText( 'Trying to move ' + source + ' to ' + dest + ' caused the following problem:' )
-            
-            HydrusData.ShowException( e )
-            
-            return False
-            
+        HydrusData.ShowText( 'Trying to move ' + source + ' to ' + dest + ' caused the following problem:' )
+        
+        HydrusData.ShowException( e )
+        
+        return False
         
     
     return True
@@ -671,7 +532,7 @@ def MergeTree( source, dest, text_update_hook = None ):
         
         try:
             
-            shutil.move( source, dest )
+            shutil.move( source, dest, copy_function = safe_copy2 )
             
         except OSError:
             
@@ -685,71 +546,55 @@ def MergeTree( source, dest, text_update_hook = None ):
         
     else:
         
-        if len( os.listdir( dest ) ) == 0:
+        # I had a thing here that tried to optimise if dest existed but was empty, but it wasn't neat
+        
+        num_errors = 0
+        
+        for ( root, dirnames, filenames ) in os.walk( source ):
             
-            for filename in os.listdir( source ):
+            if text_update_hook is not None:
                 
-                source_path = os.path.join( source, filename )
-                dest_path = os.path.join( dest, filename )
-                
-                if not os.path.isdir( source_path ):
-                    
-                    MakeFileWriteable( source_path )
-                    
-                
-                shutil.move( source_path, dest_path )
+                text_update_hook( 'Copying ' + root + '.' )
                 
             
-        else:
+            dest_root = root.replace( source, dest )
             
-            num_errors = 0
+            for dirname in dirnames:
+                
+                pauser.Pause()
+                
+                source_path = os.path.join( root, dirname )
+                dest_path = os.path.join( dest_root, dirname )
+                
+                MakeSureDirectoryExists( dest_path )
+                
+                shutil.copystat( source_path, dest_path )
+                
             
-            for ( root, dirnames, filenames ) in os.walk( source ):
+            for filename in filenames:
                 
-                if text_update_hook is not None:
+                if num_errors > 5:
                     
-                    text_update_hook( 'Copying ' + root + '.' )
-                    
-                
-                dest_root = root.replace( source, dest )
-                
-                for dirname in dirnames:
-                    
-                    pauser.Pause()
-                    
-                    source_path = os.path.join( root, dirname )
-                    dest_path = os.path.join( dest_root, dirname )
-                    
-                    MakeSureDirectoryExists( dest_path )
-                    
-                    shutil.copystat( source_path, dest_path )
+                    raise Exception( 'Too many errors, directory move abandoned.' )
                     
                 
-                for filename in filenames:
+                pauser.Pause()
+                
+                source_path = os.path.join( root, filename )
+                dest_path = os.path.join( dest_root, filename )
+                
+                ok = MergeFile( source_path, dest_path )
+                
+                if not ok:
                     
-                    if num_errors > 5:
-                        
-                        raise Exception( 'Too many errors, directory move abandoned.' )
-                        
-                    
-                    pauser.Pause()
-                    
-                    source_path = os.path.join( root, filename )
-                    dest_path = os.path.join( dest_root, filename )
-                    
-                    ok = MergeFile( source_path, dest_path )
-                    
-                    if not ok:
-                        
-                        num_errors += 1
-                        
+                    num_errors += 1
                     
                 
             
-            if num_errors == 0:
-                
-                DeletePath( source )
-                
+        
+        if num_errors == 0:
+            
+            DeletePath( source )
             
         
     
@@ -759,30 +604,9 @@ def MirrorFile( source, dest ):
         
         try:
             
-            MakeFileWriteable( dest )
+            TryToMakeFileWriteable( dest )
             
-            copy_metadata = True
-            
-            if HC.PLATFORM_WINDOWS:
-                
-                mtime = os.path.getmtime( source )
-                
-                # this is 1980-01-01 UTC, before which Windows can have trouble copying lmaoooooo
-                if mtime < 315532800:
-                    
-                    copy_metadata = False
-                    
-                
-            
-            if copy_metadata:
-                
-                # this overwrites on conflict without hassle
-                shutil.copy2( source, dest )
-                
-            else:
-                
-                shutil.copy( source, dest )
-                
+            safe_copy2( source, dest )
             
         except Exception as e:
             
@@ -964,7 +788,7 @@ def RecyclePath( path ):
     
     if os.path.exists( path ):
         
-        MakeFileWriteable( path )
+        TryToMakeFileWriteable( path )
         
         try:
             
@@ -995,4 +819,88 @@ def SanitizeFilename( filename ):
         
     
     return filename
+    
+def TryToGiveFileNicePermissionBits( path ):
+    
+    if not os.path.exists( path ):
+        
+        return
+        
+    
+    try:
+        
+        stat_result = os.stat( path )
+        
+        current_bits = stat_result.st_mode
+        
+        if HC.PLATFORM_WINDOWS:
+            
+            # this is actually the same value as S_IWUSR, but let's not try to second guess ourselves
+            desired_bits = stat.S_IREAD | stat.S_IWRITE
+            
+        else:
+            
+            # typically guarantee 644 for regular files m8, but now we also take umask into account
+            
+            try:
+                
+                umask = os.umask( 0o022 )
+                os.umask( umask )
+                
+            except:
+                
+                umask = 0o022
+                
+            
+            desired_bits = ( stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH ) & ~umask
+            
+        
+        if not ( desired_bits & current_bits ) == desired_bits:
+            
+            os.chmod( path, current_bits | desired_bits )
+            
+        
+    except Exception as e:
+        
+        HydrusData.Print( 'Wanted to add read and write permission to "{}", but had an error: {}'.format( path, str( e ) ) )
+        
+    
+def TryToMakeFileWriteable( path ):
+    
+    if not os.path.exists( path ):
+        
+        return
+        
+    
+    if FileisWriteable( path ):
+        
+        return
+        
+    
+    try:
+        
+        stat_result = os.stat( path )
+        
+        current_bits = stat_result.st_mode
+        
+        if HC.PLATFORM_WINDOWS:
+            
+            # this is actually the same value as S_IWUSR, but let's not try to second guess ourselves
+            desired_bits = stat.S_IREAD | stat.S_IWRITE
+            
+        else:
+            
+            # this only does what we want if we own the file, but only owners can non-sudo change permission anyway
+            desired_bits = stat.S_IWUSR
+            
+        
+        if not ( desired_bits & current_bits ) == desired_bits:
+            
+            os.chmod( path, current_bits | desired_bits )
+            
+        
+    except Exception as e:
+        
+        HydrusData.Print( 'Wanted to add user write permission to "{}", but had an error: {}'.format( path, str( e ) ) )
+        
     

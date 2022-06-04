@@ -291,6 +291,10 @@ def ConvertTagSliceToString( tag_slice ):
         return tag_slice
         
     
+def IsUnnamespaced( tag ):
+    
+    return SplitTag( tag )[0] == ''
+    
 def SplitTag( tag ):
     
     if ':' in tag:
@@ -602,6 +606,59 @@ class TagFilter( HydrusSerialisable.SerialisableBase ):
             
             return True
             
+        
+    
+    def CleanRules( self ):
+        
+        new_tag_slices_to_rules = {}
+        
+        for ( tag_slice, rule ) in self._tag_slices_to_rules.items():
+            
+            if tag_slice == '':
+                
+                pass
+                
+            elif tag_slice == ':':
+                
+                pass
+                
+            elif tag_slice.count( ':' ) == 1 and tag_slice.endswith( ':' ):
+                
+                example_tag = tag_slice + 'example'
+                
+                try:
+                    
+                    clean_example_tag = CleanTag( example_tag )
+                    
+                except:
+                    
+                    continue
+                    
+                
+                tag_slice = clean_example_tag[:-7]
+                
+            else:
+                
+                tag = tag_slice
+                
+                try:
+                    
+                    clean_tag = CleanTag( tag )
+                    
+                except:
+                    
+                    continue
+                    
+                
+                tag_slice = clean_tag
+                
+            
+            new_tag_slices_to_rules[ tag_slice ] = rule
+            
+        
+        self._tag_slices_to_rules = new_tag_slices_to_rules
+        
+        self._UpdateRuleCache()
         
     
     def Filter( self, tags, apply_unnamespaced_rules_to_namespaced_tags = False ):

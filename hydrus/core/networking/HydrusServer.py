@@ -12,7 +12,8 @@ REMOTE_DOMAIN = HydrusServerResources.HydrusDomain( False )
 
 class FatHTTPChannel( HTTPChannel ):
     
-    totalHeadersSize = 1048576 # :^)
+    MAX_LENGTH = 2 * 1048576
+    totalHeadersSize = 2 * 1048576 # :^)
     
 class HydrusService( Site ):
     
@@ -59,6 +60,7 @@ class HydrusService( Site ):
     def getResourceFor( self, request: Request ):
         
         request.setHeader( 'Server', self._server_version_string )
+        request.setHeader( 'Hydrus-Server', self._server_version_string )
         
         return Site.getResourceFor( self, request )
         

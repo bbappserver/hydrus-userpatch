@@ -3,18 +3,15 @@ import threading
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
-from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
-from hydrus.core import HydrusPaths
 from hydrus.core import HydrusSerialisable
+from hydrus.core import HydrusTemp
 from hydrus.core import HydrusThreading
 
 from hydrus.client import ClientConstants as CC
-from hydrus.client import ClientParsing
 from hydrus.client import ClientThreading
-from hydrus.client.importing import ClientImportFileSeeds
-from hydrus.client.importing import ClientImportOptions
-from hydrus.client.networking import ClientNetworkingDomain
+from hydrus.client.importing import ClientImportFiles
+from hydrus.client.importing.options import FileImportOptions
 
 def ConvertGalleryIdentifierToGUGKeyAndName( gallery_identifier ):
     
@@ -216,7 +213,7 @@ class QuickDownloadManager( object ):
         total_hashes_in_this_run = 0
         total_successful_hashes_in_this_run = 0
         
-        while not ( HydrusThreading.IsThreadShuttingDown() or self._shutting_down or HG.view_shutdown ):
+        while not ( HydrusThreading.IsThreadShuttingDown() or self._shutting_down or HG.started_shutdown ):
             
             with self._lock:
                 
@@ -226,7 +223,7 @@ class QuickDownloadManager( object ):
                         
                         job_key = ClientThreading.JobKey( cancellable = True )
                         
-                        job_key.SetVariable( 'popup_title', 'downloading' )
+                        job_key.SetStatusTitle( 'downloading' )
                         
                         job_key.SetVariable( 'popup_text_1', 'initialising downloader' )
                         
@@ -284,7 +281,7 @@ class QuickDownloadManager( object ):
                 
                 random.shuffle( service_keys )
                 
-                if CC.LOCAL_FILE_SERVICE_KEY in service_keys:
+                if CC.COMBINED_LOCAL_FILE_SERVICE_KEY in service_keys:
                     
                     total_successful_hashes_in_this_run += 1
                     
@@ -310,7 +307,7 @@ class QuickDownloadManager( object ):
                             
                             if file_repository.IsFunctional():
                                 
-                                ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
+                                ( os_file_handle, temp_path ) = HydrusTemp.GetTempPath()
                                 
                                 try:
                                     
@@ -326,14 +323,15 @@ class QuickDownloadManager( object ):
                                     min_resolution = None
                                     max_resolution = None
                                     automatic_archive = False
+                                    associate_primary_urls = True
                                     associate_source_urls = True
                                     
-                                    file_import_options = ClientImportOptions.FileImportOptions()
+                                    file_import_options = FileImportOptions.FileImportOptions()
                                     
                                     file_import_options.SetPreImportOptions( exclude_deleted, do_not_check_known_urls_before_importing, do_not_check_hashes_before_importing, allow_decompression_bombs, min_size, max_size, max_gif_size, min_resolution, max_resolution )
-                                    file_import_options.SetPostImportOptions( automatic_archive, associate_source_urls )
+                                    file_import_options.SetPostImportOptions( automatic_archive, associate_primary_urls, associate_source_urls )
                                     
-                                    file_import_job = ClientImportFileSeeds.FileImportJob( temp_path, file_import_options )
+                                    file_import_job = ClientImportFiles.FileImportJob( temp_path, file_import_options )
                                     
                                     file_import_job.DoWork()
                                     
@@ -343,7 +341,7 @@ class QuickDownloadManager( object ):
                                     
                                 finally:
                                     
-                                    HydrusPaths.CleanUpTempPath( os_file_handle, temp_path )
+                                    HydrusTemp.CleanUpTempPath( os_file_handle, temp_path )
                                     
                                 
                             

@@ -2,7 +2,7 @@ import os
 import re
 import typing
 
-from qtpy import QtCore as QC
+from qtpy import QtCore as QC, QtWidgets as QW
 from qtpy import QtWidgets as QW
 from qtpy import QtGui as QG
 
@@ -19,14 +19,6 @@ from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUIMenus
 from hydrus.client.gui import ClientGUIShortcuts
 from hydrus.client.gui import QtPorting as QP
-
-CANVAS_MEDIA_VIEWER = 0
-CANVAS_PREVIEW = 1
-
-canvas_str_lookup = {}
-
-canvas_str_lookup[ CANVAS_MEDIA_VIEWER ] = 'media viewer'
-canvas_str_lookup[ CANVAS_PREVIEW ] = 'preview'
 
 def AddGridboxStretchSpacer( layout: QW.QGridLayout ):
     
@@ -89,15 +81,15 @@ def WrapInGrid( parent, rows, expand_text = False, add_stretch_at_end = True ):
     
     return gridbox
     
-def WrapInText( control, parent, text, colour = None ):
+def WrapInText( control, parent, text, object_name = None ):
     
     hbox = QP.HBoxLayout()
     
     st = BetterStaticText( parent, text )
     
-    if colour is not None:
+    if object_name is not None:
         
-        QP.SetForegroundColour( st, colour )
+        st.setObjectName( object_name )
         
     
     QP.AddToLayout( hbox, st, CC.FLAGS_CENTER_PERPENDICULAR )
@@ -255,6 +247,120 @@ class BetterButton( ShortcutAwareToolTipMixin, QW.QPushButton ):
         button_label = ClientGUIFunctions.EscapeMnemonics( label )
         
         QW.QPushButton.setText( self, button_label )
+        
+    
+class BetterCheckBoxList( QW.QListWidget ):
+    
+    checkBoxListChanged = QC.Signal()
+    rightClicked = QC.Signal()
+    
+    def __init__( self, parent: QW.QWidget ):
+        
+        QW.QListWidget.__init__( self, parent )
+        
+        self.itemClicked.connect( self._ItemCheckStateChanged )
+        
+        self.setSelectionMode( QW.QAbstractItemView.ExtendedSelection )
+        
+    
+    def _ItemCheckStateChanged( self, item ):
+        
+        self.checkBoxListChanged.emit()
+        
+    
+    def Append( self, text, data, starts_checked = False ):
+        
+        item = QW.QListWidgetItem()
+        
+        item.setFlags( item.flags() | QC.Qt.ItemIsUserCheckable )
+        
+        qt_state = QC.Qt.Checked if starts_checked else QC.Qt.Unchecked
+        
+        item.setCheckState( qt_state )
+        
+        item.setText( text )
+        
+        item.setData( QC.Qt.UserRole, data )
+        
+        self.addItem( item )
+        
+        self._ItemCheckStateChanged( item )
+        
+    
+    def Check( self, index: int, value: bool = True ):
+        
+        qt_state = QC.Qt.Checked if value else QC.Qt.Unchecked
+        
+        item = self.item( index )
+        
+        item.setCheckState( qt_state )
+        
+        self._ItemCheckStateChanged( item )
+        
+    
+    def Flip( self, index: int ):
+        
+        self.Check( index, not self.IsChecked( index ) )
+        
+    
+    def GetData( self, index: int ):
+        
+        return self.item( index ).data( QC.Qt.UserRole )
+        
+    
+    def GetCheckedIndices( self ) -> typing.List[ int ]:
+        
+        checked_indices = [ i for i in range( self.count() ) if self.IsChecked( i ) ]
+        
+        return checked_indices
+        
+    
+    def GetSelectedIndices( self ):
+        
+        selected_indices = [ i for i in range( self.count() ) if self.IsSelected( i ) ]
+        
+        return selected_indices
+        
+    
+    def GetValue( self ):
+        
+        result = [ self.GetData( index ) for index in self.GetCheckedIndices() ]
+        
+        return result
+        
+    
+    def IsChecked( self, index: int ) -> bool:
+        
+        return self.item( index ).checkState() == QC.Qt.Checked
+        
+    
+    def IsSelected( self, index: int ) -> bool:
+        
+        return self.item( index ).isSelected()
+        
+    
+    def SetValue( self, datas: typing.Collection ):
+        
+        for index in range( self.count() ):
+            
+            data = self.GetData( index )
+            
+            check_it = data in datas
+            
+            self.Check( index, check_it )
+            
+        
+    
+    def mousePressEvent( self, event ):
+        
+        if event.button() == QC.Qt.RightButton:
+            
+            self.rightClicked.emit()
+            
+        else:
+            
+            QW.QListWidget.mousePressEvent( self, event )
+            
         
     
 class BetterChoice( QW.QComboBox ):
@@ -453,6 +559,64 @@ class BetterNotebook( QW.QTabWidget ):
         self._ShiftSelection( 1 )
         
     
+class BetterSpinBox( QW.QSpinBox ):
+    
+    def __init__( self, parent: QW.QWidget, initial = None, min = None, max = None, width = None ):
+        
+        QW.QSpinBox.__init__( self, parent )
+        
+        if min is not None:
+            
+            self.setMinimum( min )
+            
+        
+        if max is not None:
+            
+            self.setMaximum( max )
+            
+        
+        if initial is not None:
+            
+            self.setValue( initial )
+            
+        
+        if width is not None:
+            
+            self.setMinimumWidth( width )
+            
+        
+    
+class ButtonWithMenuArrow( QW.QToolButton ):
+    
+    def __init__( self, parent: QW.QWidget, action: QW.QAction ):
+        
+        QW.QToolButton.__init__( self, parent )
+        
+        self.setPopupMode( QW.QToolButton.MenuButtonPopup )
+        
+        self.setToolButtonStyle( QC.Qt.ToolButtonTextOnly )
+        
+        self.setDefaultAction( action )
+        
+        self._menu = QW.QMenu( self )
+        
+        self.setMenu( self._menu )
+        
+        self._menu.aboutToShow.connect( self._ClearAndPopulateMenu )
+        
+    
+    def _ClearAndPopulateMenu( self ):
+        
+        self._menu.clear()
+        
+        self._PopulateMenu( self._menu )
+        
+    
+    def _PopulateMenu( self, menu ):
+        
+        raise NotImplementedError()
+        
+    
 class BetterRadioBox( QP.RadioBox ):
     
     def __init__( self, *args, **kwargs ):
@@ -545,11 +709,20 @@ class BetterHyperLink( BetterStaticText ):
         self._url = url
         
         self.setToolTip( self._url )
-
-        self.setTextFormat( QC.Qt.RichText )
-        self.setTextInteractionFlags( QC.Qt.TextBrowserInteraction )
         
-        self.setText( '<a href="{}">{}</a>'.format( url, label ) )
+        self.setTextFormat( QC.Qt.RichText )
+        self.setTextInteractionFlags( QC.Qt.LinksAccessibleByMouse | QC.Qt.LinksAccessibleByKeyboard )
+        
+        self._colours = {
+            'link_color' : QG.QColor( 0, 0, 255 )
+        }
+        
+        self.setObjectName( 'HydrusHyperlink' )
+        
+        # need this polish to load the QSS property and update self._colours
+        self.style().polish( self )
+        
+        self.setText( '<a style="text-decoration:none; color:{};" href="{}">{}</a>'.format( self._colours[ 'link_color' ].name(), url, label ) )
         
         self.linkActivated.connect( self.Activated )
         
@@ -558,7 +731,19 @@ class BetterHyperLink( BetterStaticText ):
         
         ClientPaths.LaunchURLInWebBrowser( self._url )
         
-
+    
+    def get_link_color( self ):
+        
+        return self._colours[ 'link_color' ]
+        
+    
+    def set_link_color( self, colour ):
+        
+        self._colours[ 'link_color' ] = colour
+        
+    
+    link_color = QC.Property( QG.QColor, get_link_color, set_link_color )
+    
 class BufferedWindow( QW.QWidget ):
     
     def __init__( self, *args, **kwargs ):
@@ -626,6 +811,17 @@ class BufferedWindowIcon( BufferedWindow ):
             
             self._click_callable()
             
+        
+    
+class BusyCursor( object ):
+    
+    def __enter__( self ):
+        
+        QW.QApplication.setOverrideCursor( QC.Qt.WaitCursor )
+    
+    def __exit__( self, exc_type, exc_val, exc_tb ):
+        
+        QW.QApplication.restoreOverrideCursor()
         
     
 class CheckboxManager( object ):
@@ -714,6 +910,11 @@ class CheckboxManagerOptions( CheckboxManager ):
         
         new_options.InvertBoolean( self._boolean_name )
         
+        if self._boolean_name == 'advanced_mode':
+            
+            HG.client_controller.pub( 'notify_advanced_mode' )
+            
+        
         HG.client_controller.pub( 'checkbox_manager_inverted' )
         HG.client_controller.pub( 'notify_new_menu_option' )
         
@@ -726,7 +927,7 @@ class AlphaColourControl( QW.QWidget ):
         
         self._colour_picker = BetterColourControl( self )
         
-        self._alpha_selector = QP.MakeQSpinBox( self, min=0, max=255 )
+        self._alpha_selector = BetterSpinBox( self, min=0, max=255 )
         
         hbox = QP.HBoxLayout( spacing = 5 )
         
@@ -801,6 +1002,9 @@ class Gauge( QW.QProgressBar ):
         
         self._is_pulsing = False
         
+        self.SetRange( 1 )
+        self.SetValue( 0 )
+        
     
     def GetValueRange( self ):
         
@@ -818,11 +1022,9 @@ class Gauge( QW.QProgressBar ):
     
     def SetRange( self, range ):
         
-        if range is None:
+        if range is None or range == 0:
             
             self.Pulse()
-            
-            self._is_pulsing = True
             
         else:
             
@@ -858,8 +1060,6 @@ class Gauge( QW.QProgressBar ):
                 
                 self.Pulse()
                 
-                self._is_pulsing = True
-                
             else:
                 
                 if self._actual_range is not None:
@@ -882,7 +1082,6 @@ class Gauge( QW.QProgressBar ):
         self._is_pulsing = False
         
         self.SetRange( 1 )
-        self.SetValue( 1 )
         self.SetValue( 0 )
         
     
@@ -895,7 +1094,6 @@ class Gauge( QW.QProgressBar ):
         #self.setMinimum( 0 )
         
         self.SetRange( 1 )
-        self.SetValue( 1 )
         self.SetValue( 0 )
         
         self._is_pulsing = True
@@ -1270,7 +1468,7 @@ class NoneableSpinCtrl( QW.QWidget ):
         self._checkbox.stateChanged.connect( self.EventCheckBox )
         self._checkbox.setText( none_phrase )
         
-        self._one = QP.MakeQSpinBox( self, min=min, max=max )
+        self._one = BetterSpinBox( self, min=min, max=max )
         
         width = ClientGUIFunctions.ConvertTextToPixelWidth( self._one, len( str( max ) ) + 5 )
         
@@ -1278,7 +1476,7 @@ class NoneableSpinCtrl( QW.QWidget ):
         
         if num_dimensions == 2:
             
-            self._two = QP.MakeQSpinBox( self, initial=0, min=min, max=max )
+            self._two = BetterSpinBox( self, initial=0, min=min, max=max )
             self._two.valueChanged.connect( self._HandleValueChanged )
             
             width = ClientGUIFunctions.ConvertTextToPixelWidth( self._two, len( str( max ) ) + 5 )
@@ -1666,10 +1864,10 @@ class StaticBox( QW.QFrame ):
         
         title_font = QG.QFont( normal_font_family, int( normal_font_size ), QG.QFont.Bold )
         
-        title_text = QW.QLabel( title, self )
-        title_text.setFont( title_font )
+        self._title_st = BetterStaticText( self, label = title )
+        self._title_st.setFont( title_font )
         
-        QP.AddToLayout( self._sizer, title_text, CC.FLAGS_CENTER )
+        QP.AddToLayout( self._sizer, self._title_st, CC.FLAGS_CENTER )
         
         self.setLayout( self._sizer )
         
@@ -1683,6 +1881,11 @@ class StaticBox( QW.QFrame ):
         QP.AddToLayout( self._sizer, widget, flags )
 
         self.layout().addSpacerItem( self._spacer )
+        
+    
+    def SetTitle( self, title ):
+        
+        self._title_st.setText( title )
         
     
 class RadioBox( StaticBox ):
@@ -1787,4 +1990,3 @@ class TextAndGauge( QW.QWidget ):
         self._gauge.SetRange( range )
         self._gauge.SetValue( value )
         
-    

@@ -13,7 +13,8 @@ from hydrus.client import ClientConstants as CC
 from hydrus.client.importing import ClientImporting
 from hydrus.client.importing import ClientImportFileSeeds
 from hydrus.client.importing import ClientImportGallerySeeds
-from hydrus.client.importing import ClientImportOptions
+from hydrus.client.importing.options import FileImportOptions
+from hydrus.client.importing.options import TagImportOptions
 from hydrus.client.metadata import ClientTags
 from hydrus.client.networking import ClientNetworkingJobs
 
@@ -44,11 +45,15 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
         
         self._lock = threading.Lock()
         
+        self._have_started = False
+        
         self._files_network_job = None
         self._page_network_job = None
         
         self._files_repeating_job = None
         self._queue_repeating_job = None
+        
+        self._last_serialisable_change_timestamp = 0
         
         HG.client_controller.sub( self, 'NotifyFileSeedsUpdated', 'file_seed_cache_file_seeds_updated' )
         
@@ -122,6 +127,11 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
             
         
         return ClientImporting.NetworkJobPresentationContext( enter_call, exit_call )
+        
+    
+    def _SerialisableChangeMade( self ):
+        
+        self._last_serialisable_change_timestamp = HydrusData.GetNow()
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -200,11 +210,11 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
             
         
-        tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+        tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
         
         did_substantial_work = file_seed.WorkOnURL( self._file_seed_cache, status_hook, self._NetworkJobFactory, self._FileNetworkJobPresentationContextFactory, self._file_import_options, tag_import_options )
         
-        if file_seed.ShouldPresent( self._file_import_options ):
+        if file_seed.ShouldPresent( self._file_import_options.GetPresentationImportOptions() ):
             
             file_seed.PresentToPage( page_key )
             
@@ -369,6 +379,8 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                     
                     self._pending_jobs.insert( index - 1, job )
                     
+                    self._SerialisableChangeMade()
+                    
                 
             
         
@@ -397,6 +409,8 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                     
                     self._pending_jobs.insert( index + 1, job )
                     
+                    self._SerialisableChangeMade()
+                    
                 
             
         
@@ -408,6 +422,8 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
             if job in self._pending_jobs:
                 
                 self._pending_jobs.remove( job )
+                
+                self._SerialisableChangeMade()
                 
             
         
@@ -494,11 +510,21 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def HasSerialisableChangesSince( self, since_timestamp ):
+        
+        with self._lock:
+            
+            return self._last_serialisable_change_timestamp > since_timestamp
+            
+        
+    
     def NotifyFileSeedsUpdated( self, file_seed_cache_key, file_seeds ):
         
         if file_seed_cache_key == self._file_seed_cache.GetFileSeedCacheKey():
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
+            
+            self._SerialisableChangeMade()
             
         
     
@@ -510,6 +536,8 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
             
+            self._SerialisableChangeMade()
+            
         
     
     def PausePlayQueue( self ):
@@ -519,6 +547,8 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
             self._queue_paused = not self._queue_paused
             
             ClientImporting.WakeRepeatingJob( self._queue_repeating_job )
+            
+            self._SerialisableChangeMade()
             
         
     
@@ -532,14 +562,21 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 ClientImporting.WakeRepeatingJob( self._queue_repeating_job )
                 
+                self._SerialisableChangeMade()
+                
             
         
     
-    def SetFileImportOptions( self, file_import_options ):
+    def SetFileImportOptions( self, file_import_options: FileImportOptions.FileImportOptions ):
         
         with self._lock:
             
-            self._file_import_options = file_import_options
+            if file_import_options.DumpToString() != self._file_import_options.DumpToString():
+                
+                self._file_import_options = file_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -547,20 +584,35 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._formula_name = formula_name
+            if formula_name != self._formula_name:
+                
+                self._formula_name = formula_name
+                
+                self._SerialisableChangeMade()
+                
             
         
     
     def Start( self, page_key ):
         
-        self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
-        self._queue_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnQueue, page_key )
-        
-        self._files_repeating_job.SetThreadSlotType( 'misc' )
-        self._queue_repeating_job.SetThreadSlotType( 'misc' )
+        with self._lock:
+            
+            if self._have_started:
+                
+                return
+                
+            
+            self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
+            self._queue_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnQueue, page_key )
+            
+            self._files_repeating_job.SetThreadSlotType( 'misc' )
+            self._queue_repeating_job.SetThreadSlotType( 'misc' )
+            
+            self._have_started = True
+            
         
     
-    def REPEATINGWorkOnFiles( self, page_key ):
+    def CanDoFileWork( self, page_key ):
         
         with self._lock:
             
@@ -568,18 +620,67 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 self._files_repeating_job.Cancel()
                 
-                return
+                return False
                 
             
             files_paused = self._files_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
             
-            work_to_do = self._file_seed_cache.WorkToDo() and not ( files_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            if files_paused:
+                
+                return False
+                
             
-            ok_to_work = work_to_do and network_engine_good
+            try:
+                
+                self._file_import_options.CheckReadyToImport()
+                
+            except Exception as e:
+                
+                self._current_action = str( e )
+                
+                HydrusData.ShowText( str( e ) )
+                
+                self._files_paused = True
+                
+                return False
+                
+            
+            work_to_do = self._file_seed_cache.WorkToDo()
+            
+            if not work_to_do:
+                
+                return False
+                
             
         
-        while ok_to_work:
+        return self.CanDoNetworkWork( page_key )
+        
+    
+    def CanDoNetworkWork( self, page_key ):
+        
+        with self._lock:
+            
+            page_shown = not HG.client_controller.PageClosedButNotDestroyed( page_key )
+            
+            if not page_shown:
+                
+                return False
+                
+            
+            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            
+            if not network_engine_good:
+                
+                return False
+                
+            
+        
+        return True
+        
+    
+    def REPEATINGWorkOnFiles( self, page_key ):
+        
+        while self.CanDoFileWork( page_key ):
             
             try:
                 
@@ -587,31 +688,16 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 HG.client_controller.WaitUntilViewFree()
                 
+                self._SerialisableChangeMade()
+                
             except Exception as e:
                 
                 HydrusData.ShowException( e )
                 
             
-            with self._lock:
-                
-                if ClientImporting.PageImporterShouldStopWorking( page_key ):
-                    
-                    self._files_repeating_job.Cancel()
-                    
-                    return
-                    
-                
-                files_paused = self._files_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
-                
-                work_to_do = self._file_seed_cache.WorkToDo() and not ( files_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-                network_engine_good = not HG.client_controller.network_engine.IsBusy()
-                
-                ok_to_work = work_to_do and network_engine_good
-                
-            
         
     
-    def REPEATINGWorkOnQueue( self, page_key ):
+    def CanDoQueueWork( self, page_key ):
         
         with self._lock:
             
@@ -619,19 +705,23 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 self._queue_repeating_job.Cancel()
                 
-                return
+                return False
                 
             
             queue_paused = self._queue_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_gallery_searches' )
             
-            queue_good = not queue_paused
-            page_shown = not HG.client_controller.PageClosedButNotDestroyed( page_key )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
-            
-            ok_to_work = queue_good and page_shown and network_engine_good
+            if queue_paused:
+                
+                return False
+                
             
         
-        while ok_to_work:
+        return self.CanDoNetworkWork( page_key )
+        
+    
+    def REPEATINGWorkOnQueue( self, page_key ):
+        
+        while self.CanDoQueueWork( page_key ):
             
             try:
                 
@@ -648,27 +738,11 @@ class SimpleDownloaderImport( HydrusSerialisable.SerialisableBase ):
                 
                 HG.client_controller.WaitUntilViewFree()
                 
+                self._SerialisableChangeMade()
+                
             except Exception as e:
                 
                 HydrusData.ShowException( e )
-                
-            
-            with self._lock:
-                
-                if ClientImporting.PageImporterShouldStopWorking( page_key ):
-                    
-                    self._queue_repeating_job.Cancel()
-                    
-                    return
-                    
-                
-                queue_paused = self._queue_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_gallery_searches' )
-                
-                queue_good = not queue_paused
-                page_shown = not HG.client_controller.PageClosedButNotDestroyed( page_key )
-                network_engine_good = not HG.client_controller.network_engine.IsBusy()
-                
-                ok_to_work = queue_good and page_shown and network_engine_good
                 
             
         
@@ -688,18 +762,22 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
         self._gallery_seed_log = ClientImportGallerySeeds.GallerySeedLog()
         self._file_seed_cache = ClientImportFileSeeds.FileSeedCache()
         self._file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
-        self._tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+        self._tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
         self._paused = False
         
         self._downloader_key = HydrusData.GenerateKey()
         
         self._lock = threading.Lock()
         
+        self._have_started = False
+        
         self._files_network_job = None
         self._gallery_network_job = None
         
         self._files_repeating_job = None
         self._gallery_repeating_job = None
+        
+        self._last_serialisable_change_timestamp = 0
         
         HG.client_controller.sub( self, 'NotifyFileSeedsUpdated', 'file_seed_cache_file_seeds_updated' )
         HG.client_controller.sub( self, 'NotifyGallerySeedsUpdated', 'gallery_seed_log_gallery_seeds_updated' )
@@ -774,6 +852,11 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
         return network_job
         
     
+    def _SerialisableChangeMade( self ):
+        
+        self._last_serialisable_change_timestamp = HydrusData.GetNow()
+        
+    
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
         
         if version == 1:
@@ -793,7 +876,7 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
             ( serialisable_gallery_seed_log, serialisable_file_seed_cache, serialisable_file_import_options, paused ) = old_serialisable_info
             
-            tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+            tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
             
             serialisable_tag_import_options = tag_import_options.GetSerialisableTuple()
             
@@ -822,7 +905,7 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
             did_substantial_work = file_seed.WorkOnURL( self._file_seed_cache, status_hook, self._NetworkJobFactory, self._FileNetworkJobPresentationContextFactory, self._file_import_options, self._tag_import_options )
             
-            if file_seed.ShouldPresent( self._file_import_options ):
+            if file_seed.ShouldPresent( self._file_import_options.GetPresentationImportOptions() ):
                 
                 file_seed.PresentToPage( page_key )
                 
@@ -903,6 +986,14 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def GetFileImportOptions( self ) -> FileImportOptions.FileImportOptions:
+        
+        with self._lock:
+            
+            return self._file_import_options
+            
+        
+    
     def GetFileSeedCache( self ):
         
         with self._lock:
@@ -951,6 +1042,14 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def HasSerialisableChangesSince( self, since_timestamp ):
+        
+        with self._lock:
+            
+            return self._last_serialisable_change_timestamp > since_timestamp
+            
+        
+    
     def IsPaused( self ):
         
         with self._lock:
@@ -965,6 +1064,8 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
             
+            self._SerialisableChangeMade()
+            
         
     
     def NotifyGallerySeedsUpdated( self, gallery_seed_log_key, gallery_seeds ):
@@ -972,6 +1073,8 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
         if gallery_seed_log_key == self._gallery_seed_log.GetGallerySeedLogKey():
             
             ClientImporting.WakeRepeatingJob( self._gallery_repeating_job )
+            
+            self._SerialisableChangeMade()
             
         
     
@@ -983,6 +1086,8 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
             ClientImporting.WakeRepeatingJob( self._gallery_repeating_job )
+            
+            self._SerialisableChangeMade()
             
         
     
@@ -1045,6 +1150,8 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                 
                 ClientImporting.WakeRepeatingJob( self._gallery_repeating_job )
                 
+                self._SerialisableChangeMade()
+                
             
             if len( file_seeds ) > 0:
                 
@@ -1052,35 +1159,57 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                 
                 ClientImporting.WakeRepeatingJob( self._files_repeating_job )
                 
+                self._SerialisableChangeMade()
+                
             
         
     
-    def SetFileImportOptions( self, file_import_options ):
+    def SetFileImportOptions( self, file_import_options: FileImportOptions.FileImportOptions ):
         
         with self._lock:
             
-            self._file_import_options = file_import_options
+            if file_import_options.DumpToString() != self._file_import_options.DumpToString():
+                
+                self._file_import_options = file_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
-    def SetTagImportOptions( self, tag_import_options ):
+    def SetTagImportOptions( self, tag_import_options: TagImportOptions.TagImportOptions ):
         
         with self._lock:
             
-            self._tag_import_options = tag_import_options
+            if tag_import_options.DumpToString() != self._tag_import_options.DumpToString():
+                
+                self._tag_import_options = tag_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
     def Start( self, page_key ):
         
-        self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
-        self._gallery_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnGallery, page_key )
-        
-        self._files_repeating_job.SetThreadSlotType( 'misc' )
-        self._gallery_repeating_job.SetThreadSlotType( 'misc' )
+        with self._lock:
+            
+            if self._have_started:
+                
+                return
+                
+            
+            self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles, page_key )
+            self._gallery_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnGallery, page_key )
+            
+            self._files_repeating_job.SetThreadSlotType( 'misc' )
+            self._gallery_repeating_job.SetThreadSlotType( 'misc' )
+            
+            self._have_started = True
+            
         
     
-    def REPEATINGWorkOnFiles( self, page_key ):
+    def CanDoFileWork( self, page_key ):
         
         with self._lock:
             
@@ -1088,50 +1217,81 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                 
                 self._files_repeating_job.Cancel()
                 
-                return
+                return False
                 
             
             files_paused = self._paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
             
-            work_to_do = self._file_seed_cache.WorkToDo() and not ( files_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            if files_paused:
+                
+                return False
+                
             
-            ok_to_work = work_to_do and network_engine_good
+            try:
+                
+                self._file_import_options.CheckReadyToImport()
+                
+            except Exception as e:
+                
+                self._paused = True
+                
+                HydrusData.ShowText( str( e ) )
+                
+                return False
+                
+            
+            work_to_do = self._file_seed_cache.WorkToDo()
+            
+            if not work_to_do:
+                
+                return False
+                
             
         
-        while ok_to_work:
+        return self.CanDoNetworkWork( page_key )
+        
+    
+    def CanDoNetworkWork( self, page_key ):
+        
+        with self._lock:
+            
+            page_shown = not HG.client_controller.PageClosedButNotDestroyed( page_key )
+            
+            if not page_shown:
+                
+                return False
+                
+            
+            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            
+            if not network_engine_good:
+                
+                return False
+                
+            
+        
+        return True
+        
+    
+    def REPEATINGWorkOnFiles( self, page_key ):
+        
+        while self.CanDoFileWork( page_key ):
             
             try:
                 
                 self._WorkOnFiles( page_key )
                 
                 HG.client_controller.WaitUntilViewFree()
+                self._SerialisableChangeMade()
                 
             except Exception as e:
                 
                 HydrusData.ShowException( e )
                 
             
-            with self._lock:
-                
-                if ClientImporting.PageImporterShouldStopWorking( page_key ):
-                    
-                    self._files_repeating_job.Cancel()
-                    
-                    return
-                    
-                
-                files_paused = self._paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
-                
-                work_to_do = self._file_seed_cache.WorkToDo() and not ( files_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-                network_engine_good = not HG.client_controller.network_engine.IsBusy()
-                
-                ok_to_work = work_to_do and network_engine_good
-                
-            
         
     
-    def REPEATINGWorkOnGallery( self, page_key ):
+    def CanDoGalleryWork( self, page_key ):
         
         with self._lock:
             
@@ -1139,18 +1299,30 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                 
                 self._gallery_repeating_job.Cancel()
                 
-                return
+                return False
                 
             
             gallery_paused = self._paused or HG.client_controller.new_options.GetBoolean( 'pause_all_gallery_searches' )
             
-            work_to_do = self._gallery_seed_log.WorkToDo() and not ( gallery_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            if gallery_paused:
+                
+                return False
+                
             
-            ok_to_work = work_to_do and network_engine_good
+            work_to_do = self._gallery_seed_log.WorkToDo()
+            
+            if not work_to_do:
+                
+                return False
+                
             
         
-        while ok_to_work:
+        return self.CanDoNetworkWork( page_key )
+        
+    
+    def REPEATINGWorkOnGallery( self, page_key ):
+        
+        while self.CanDoGalleryWork( page_key ):
             
             try:
                 
@@ -1158,26 +1330,11 @@ class URLsImport( HydrusSerialisable.SerialisableBase ):
                 
                 HG.client_controller.WaitUntilViewFree()
                 
+                self._SerialisableChangeMade()
+                
             except Exception as e:
                 
                 HydrusData.ShowException( e )
-                
-            
-            with self._lock:
-                
-                if ClientImporting.PageImporterShouldStopWorking( page_key ):
-                    
-                    self._gallery_repeating_job.Cancel()
-                    
-                    return
-                    
-                
-                gallery_paused = self._paused or HG.client_controller.new_options.GetBoolean( 'pause_all_gallery_searches' )
-                
-                work_to_do = self._gallery_seed_log.WorkToDo() and not ( gallery_paused or HG.client_controller.PageClosedButNotDestroyed( page_key ) )
-                network_engine_good = not HG.client_controller.network_engine.IsBusy()
-                
-                ok_to_work = work_to_do and network_engine_good
                 
             
         

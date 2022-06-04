@@ -3,7 +3,7 @@ import os
 import random
 import unittest
 
-from mock import patch
+from unittest.mock import patch
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
@@ -12,12 +12,15 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusTags
 
 from hydrus.client import ClientConstants as CC
+from hydrus.client import ClientLocation
 from hydrus.client.importing import ClientImportFileSeeds
-from hydrus.client.importing import ClientImportOptions
-from hydrus.client.media import ClientMedia
+from hydrus.client.importing.options import ClientImportOptions
+from hydrus.client.importing.options import FileImportOptions
+from hydrus.client.importing.options import NoteImportOptions
+from hydrus.client.importing.options import PresentationImportOptions
+from hydrus.client.importing.options import TagImportOptions
 from hydrus.client.media import ClientMediaManagers
 from hydrus.client.media import ClientMediaResult
-from hydrus.client.metadata import ClientTags
 
 class TestCheckerOptions( unittest.TestCase ):
     
@@ -205,7 +208,7 @@ class TestFileImportOptions( unittest.TestCase ):
     
     def test_file_import_options( self ):
         
-        file_import_options = ClientImportOptions.FileImportOptions()
+        file_import_options = FileImportOptions.FileImportOptions()
         
         exclude_deleted = False
         do_not_check_known_urls_before_importing = False
@@ -220,32 +223,21 @@ class TestFileImportOptions( unittest.TestCase ):
         file_import_options.SetPreImportOptions( exclude_deleted, do_not_check_known_urls_before_importing, do_not_check_hashes_before_importing, allow_decompression_bombs, min_size, max_size, max_gif_size, min_resolution, max_resolution )
         
         automatic_archive = False
+        associate_primary_urls = False
         associate_source_urls = False
         
-        file_import_options.SetPostImportOptions( automatic_archive, associate_source_urls )
-        
-        present_new_files = True
-        present_already_in_inbox_files = True
-        present_already_in_archive_files = True
-        
-        file_import_options.SetPresentationOptions( present_new_files, present_already_in_inbox_files, present_already_in_archive_files )
+        file_import_options.SetPostImportOptions( automatic_archive, associate_primary_urls, associate_source_urls )
         
         #
         
         self.assertFalse( file_import_options.ExcludesDeleted() )
         self.assertFalse( file_import_options.AllowsDecompressionBombs() )
         self.assertFalse( file_import_options.AutomaticallyArchives() )
+        self.assertFalse( file_import_options.ShouldAssociatePrimaryURLs() )
         self.assertFalse( file_import_options.ShouldAssociateSourceURLs() )
         
         file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 480 )
         file_import_options.CheckFileIsValid( 65536, HC.APPLICATION_7Z, None, None )
-        
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, True ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, True ) )
-        
-        self.assertFalse( file_import_options.ShouldPresent( CC.STATUS_DELETED, False ) )
         
         #
         
@@ -270,13 +262,15 @@ class TestFileImportOptions( unittest.TestCase ):
         #
         
         automatic_archive = True
+        associate_primary_urls = True
         associate_source_urls  = True
         
-        file_import_options.SetPostImportOptions( automatic_archive, associate_source_urls )
+        file_import_options.SetPostImportOptions( automatic_archive, associate_primary_urls, associate_source_urls )
         
         self.assertTrue( file_import_options.ExcludesDeleted() )
         self.assertTrue( file_import_options.AllowsDecompressionBombs() )
         self.assertTrue( file_import_options.AutomaticallyArchives() )
+        self.assertTrue( file_import_options.ShouldAssociatePrimaryURLs() )
         self.assertTrue( file_import_options.ShouldAssociateSourceURLs() )
         
         #
@@ -287,7 +281,7 @@ class TestFileImportOptions( unittest.TestCase ):
         
         file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 480 )
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 512, HC.IMAGE_JPEG, 640, 480 )
             
@@ -301,7 +295,7 @@ class TestFileImportOptions( unittest.TestCase ):
         
         file_import_options.CheckFileIsValid( 1800, HC.IMAGE_JPEG, 640, 480 )
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 2200, HC.IMAGE_JPEG, 640, 480 )
             
@@ -318,7 +312,7 @@ class TestFileImportOptions( unittest.TestCase ):
         
         file_import_options.CheckFileIsValid( 1800, HC.IMAGE_GIF, 640, 480 )
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 2200, HC.IMAGE_GIF, 640, 480 )
             
@@ -332,12 +326,12 @@ class TestFileImportOptions( unittest.TestCase ):
         
         file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 480 )
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 180, 480 )
             
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 80 )
             
@@ -353,52 +347,17 @@ class TestFileImportOptions( unittest.TestCase ):
         
         file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 480 )
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 3200, 480 )
             
         
-        with self.assertRaises( HydrusExceptions.FileSizeException ):
+        with self.assertRaises( HydrusExceptions.FileImportRulesException ):
             
             file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 640, 4200 )
             
         
         file_import_options.CheckFileIsValid( 65536, HC.IMAGE_JPEG, 2800, 3800 )
-        
-        #
-        
-        present_new_files = False
-        
-        file_import_options.SetPresentationOptions( present_new_files, present_already_in_inbox_files, present_already_in_archive_files )
-        
-        self.assertFalse( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, False ) )
-        self.assertFalse( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, True ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, True ) )
-        
-        #
-        
-        present_new_files = True
-        present_already_in_inbox_files = False
-        
-        file_import_options.SetPresentationOptions( present_new_files, present_already_in_inbox_files, present_already_in_archive_files )
-        
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, True ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, False ) )
-        self.assertFalse( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, True ) )
-        
-        #
-        
-        present_already_in_inbox_files = True
-        present_already_in_archive_files = False
-        
-        file_import_options.SetPresentationOptions( present_new_files, present_already_in_inbox_files, present_already_in_archive_files )
-        
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_AND_NEW, True ) )
-        self.assertFalse( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, False ) )
-        self.assertTrue( file_import_options.ShouldPresent( CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, True ) )
         
     
 def GetNotesMediaResult( hash, names_to_notes ):
@@ -418,10 +377,10 @@ def GetNotesMediaResult( hash, names_to_notes ):
     
     tags_manager = ClientMediaManagers.TagsManager( service_keys_to_statuses_to_tags, service_keys_to_statuses_to_display_tags )
     
-    locations_manager = ClientMediaManagers.LocationsManager( set(), set(), set(), set(), inbox = True )
+    locations_manager = ClientMediaManagers.LocationsManager( dict(), dict(), set(), set(), inbox = True )
     ratings_manager = ClientMediaManagers.RatingsManager( {} )
     notes_manager = ClientMediaManagers.NotesManager( names_to_notes )
-    file_viewing_stats_manager = ClientMediaManagers.FileViewingStatsManager( 0, 0, 0, 0 )
+    file_viewing_stats_manager = ClientMediaManagers.FileViewingStatsManager.STATICGenerateEmptyManager()
     
     media_result = ClientMediaResult.MediaResult( file_info_manager, tags_manager, locations_manager, ratings_manager, notes_manager, file_viewing_stats_manager )
     
@@ -438,11 +397,11 @@ class TestNoteImportOptions( unittest.TestCase ):
         
         #
         
-        note_import_options = ClientImportOptions.NoteImportOptions()
+        note_import_options = NoteImportOptions.NoteImportOptions()
         
         note_import_options.SetGetNotes( True )
         note_import_options.SetExtendExistingNoteIfPossible( True )
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
         
         self.assertEqual( note_import_options.GetServiceKeysToContentUpdates( media_result, [] ), {} )
         
@@ -468,7 +427,7 @@ class TestNoteImportOptions( unittest.TestCase ):
         extending_names_and_notes = [ ( 'notes', 'and here is a note that is more interesting' ) ]
         
         note_import_options.SetExtendExistingNoteIfPossible( True )
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, extending_names_and_notes )
         expected_result = { CC.LOCAL_NOTES_SERVICE_KEY : [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'notes', 'and here is a note that is more interesting' ) ) ] }
@@ -485,27 +444,27 @@ class TestNoteImportOptions( unittest.TestCase ):
         
         conflict_names_and_notes = [ ( 'notes', 'other note' ) ]
         
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, conflict_names_and_notes )
         
         self.assertEqual( result, {} )
         
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_REPLACE )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_REPLACE )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, conflict_names_and_notes )
         expected_result = { CC.LOCAL_NOTES_SERVICE_KEY : [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'notes', 'other note' ) ) ] }
         
         self.assertEqual( result, expected_result )
         
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_RENAME )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_RENAME )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, conflict_names_and_notes )
         expected_result = { CC.LOCAL_NOTES_SERVICE_KEY : [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'notes (1)', 'other note' ) ) ] }
         
         self.assertEqual( result, expected_result )
         
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_APPEND )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_APPEND )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, conflict_names_and_notes )
         expected_result = { CC.LOCAL_NOTES_SERVICE_KEY : [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'notes', 'here is a note' + os.linesep * 2 + 'other note' ) ) ] }
@@ -516,7 +475,7 @@ class TestNoteImportOptions( unittest.TestCase ):
         
         multinotes = [ ( 'notes', 'other note' ), ( 'b', 'bbb' ), ( 'c', 'ccc' ) ]
         
-        note_import_options.SetConflictResolution( ClientImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
+        note_import_options.SetConflictResolution( NoteImportOptions.NOTE_IMPORT_CONFLICT_IGNORE )
         
         result = note_import_options.GetServiceKeysToContentUpdates( media_result, multinotes )
         expected_result = { CC.LOCAL_NOTES_SERVICE_KEY : [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'b', 'bbb' ) ), HydrusData.ContentUpdate( HC.CONTENT_TYPE_NOTES, HC.CONTENT_UPDATE_SET, ( example_hash, 'c', 'ccc' ) ) ] }
@@ -555,14 +514,345 @@ def GetTagsMediaResult( hash, in_inbox, service_key, deleted_tags ):
     
     tags_manager = ClientMediaManagers.TagsManager( service_keys_to_statuses_to_tags, service_keys_to_statuses_to_display_tags )
     
-    locations_manager = ClientMediaManagers.LocationsManager( set(), set(), set(), set(), inbox = in_inbox )
+    locations_manager = ClientMediaManagers.LocationsManager( dict(), dict(), set(), set(), inbox = in_inbox )
     ratings_manager = ClientMediaManagers.RatingsManager( {} )
     notes_manager = ClientMediaManagers.NotesManager( {} )
-    file_viewing_stats_manager = ClientMediaManagers.FileViewingStatsManager( 0, 0, 0, 0 )
+    file_viewing_stats_manager = ClientMediaManagers.FileViewingStatsManager.STATICGenerateEmptyManager()
     
     media_result = ClientMediaResult.MediaResult( file_info_manager, tags_manager, locations_manager, ratings_manager, notes_manager, file_viewing_stats_manager )
     
     return media_result
+    
+class TestPresentationImportOptions( unittest.TestCase ):
+    
+    def test_presentation_import_options( self ):
+        
+        new_and_inboxed_hash = HydrusData.GenerateKey()
+        new_and_archived_hash = HydrusData.GenerateKey()
+        already_in_and_inboxed_hash = HydrusData.GenerateKey()
+        already_in_and_archived_hash = HydrusData.GenerateKey()
+        new_and_inboxed_but_trashed_hash = HydrusData.GenerateKey()
+        skipped_hash = HydrusData.GenerateKey()
+        deleted_hash = HydrusData.GenerateKey()
+        failed_hash = HydrusData.GenerateKey()
+        
+        hashes_and_statuses = [
+            ( new_and_inboxed_hash, CC.STATUS_SUCCESSFUL_AND_NEW ),
+            ( new_and_archived_hash, CC.STATUS_SUCCESSFUL_AND_NEW ),
+            ( already_in_and_inboxed_hash, CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ),
+            ( already_in_and_archived_hash, CC.STATUS_SUCCESSFUL_BUT_REDUNDANT ),
+            ( new_and_inboxed_but_trashed_hash, CC.STATUS_SUCCESSFUL_AND_NEW ),
+            ( skipped_hash, CC.STATUS_SKIPPED ),
+            ( deleted_hash, CC.STATUS_DELETED ),
+            ( failed_hash, CC.STATUS_ERROR )
+        ]
+        
+        # all good
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_ANY_GOOD )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', 'not used' )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # all good and trash too
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_ANY_GOOD )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', 'not used' )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_FILE_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # silent
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_NONE )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        expected_result = []
+        
+        HG.test_controller.SetRead( 'inbox_hashes', 'not used' )
+        HG.test_controller.SetRead( 'filter_hashes', 'not used' )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        self.assertEqual( result, expected_result )
+        
+        # new files only
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', 'not used' )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # inbox only
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_ANY_GOOD )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_REQUIRE_INBOX )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_inbox_filter_expected_result = {
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        }
+        
+        inbox_filter_answer = {
+            new_and_inboxed_hash,
+            already_in_and_inboxed_hash,
+            new_and_inboxed_but_trashed_hash
+        }
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            already_in_and_inboxed_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            already_in_and_inboxed_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', inbox_filter_answer )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'inbox_hashes' )
+        
+        self.assertEqual( args, ( pre_inbox_filter_expected_result, ) )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # new only
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', 'not used' )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # new and inbox only
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_REQUIRE_INBOX )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_inbox_filter_expected_result = {
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            new_and_inboxed_but_trashed_hash
+        }
+        
+        inbox_filter_answer = {
+            new_and_inboxed_hash,
+            new_and_inboxed_but_trashed_hash
+        }
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', inbox_filter_answer )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'inbox_hashes' )
+        
+        self.assertEqual( args, ( pre_inbox_filter_expected_result, ) )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
+        # new or inbox only
+        
+        HG.test_controller.ClearReads( 'inbox_hashes' )
+        HG.test_controller.ClearReads( 'file_query_ids' )
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY )
+        presentation_import_options.SetPresentationInbox( PresentationImportOptions.PRESENTATION_INBOX_INCLUDE_INBOX )
+        presentation_import_options.SetLocationContext( ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY ) )
+        
+        pre_inbox_filter_expected_result = {
+            already_in_and_inboxed_hash,
+            already_in_and_archived_hash
+        }
+        
+        inbox_filter_answer = {
+            already_in_and_inboxed_hash
+        }
+        
+        pre_filter_expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+            new_and_inboxed_but_trashed_hash
+        ]
+        
+        expected_result = [
+            new_and_inboxed_hash,
+            new_and_archived_hash,
+            already_in_and_inboxed_hash,
+        ]
+        
+        HG.test_controller.SetRead( 'inbox_hashes', inbox_filter_answer )
+        HG.test_controller.SetRead( 'filter_hashes', expected_result )
+        
+        result = presentation_import_options.GetPresentedHashes( hashes_and_statuses )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'inbox_hashes' )
+        
+        self.assertEqual( args, ( pre_inbox_filter_expected_result, ) )
+        
+        [ ( args, kwargs ) ] = HG.test_controller.GetRead( 'filter_hashes' )
+        
+        self.assertEqual( args, ( ClientLocation.LocationContext( current_service_keys = ( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY, ) ), pre_filter_expected_result ) )
+        
+        self.assertEqual( result, expected_result )
+        
     
 class TestTagImportOptions( unittest.TestCase ):
     
@@ -576,7 +866,7 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        default_tag_import_options = ClientImportOptions.TagImportOptions()
+        default_tag_import_options = TagImportOptions.TagImportOptions()
         
         self.assertEqual( default_tag_import_options.ShouldFetchTagsEvenIfURLKnownAndFileAlreadyInDB(), False )
         self.assertEqual( default_tag_import_options.ShouldFetchTagsEvenIfHashKnownAndFileAlreadyInDB(), False )
@@ -593,14 +883,14 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        tag_import_options = ClientImportOptions.TagImportOptions( fetch_tags_even_if_url_recognised_and_file_already_in_db = True )
+        tag_import_options = TagImportOptions.TagImportOptions( fetch_tags_even_if_url_recognised_and_file_already_in_db = True )
         
         self.assertEqual( tag_import_options.ShouldFetchTagsEvenIfURLKnownAndFileAlreadyInDB(), True )
         self.assertEqual( tag_import_options.ShouldFetchTagsEvenIfHashKnownAndFileAlreadyInDB(), False )
         
         #
         
-        tag_import_options = ClientImportOptions.TagImportOptions( fetch_tags_even_if_hash_recognised_and_file_already_in_db = True )
+        tag_import_options = TagImportOptions.TagImportOptions( fetch_tags_even_if_hash_recognised_and_file_already_in_db = True )
         
         self.assertEqual( tag_import_options.ShouldFetchTagsEvenIfURLKnownAndFileAlreadyInDB(), False )
         self.assertEqual( tag_import_options.ShouldFetchTagsEvenIfHashKnownAndFileAlreadyInDB(), True )
@@ -614,9 +904,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         tag_blacklist.SetRule( 'series:', HC.FILTER_BLACKLIST )
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( tag_blacklist = tag_blacklist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( tag_blacklist = tag_blacklist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         with self.assertRaises( HydrusExceptions.VetoException ):
             
@@ -637,9 +927,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         tag_whitelist = [ 'bodysuit' ]
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( tag_whitelist = tag_whitelist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( tag_whitelist = tag_whitelist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         with self.assertRaises( HydrusExceptions.VetoException ):
             
@@ -663,9 +953,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags, external_filterable_tags = external_filterable_tags, external_additional_service_keys_to_tags = external_additional_service_keys_to_tags )
         
@@ -686,9 +976,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         get_tags_filter.SetRule( 'series:', HC.FILTER_BLACKLIST )
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = get_tags_filter ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = get_tags_filter ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags, external_filterable_tags = external_filterable_tags, external_additional_service_keys_to_tags = external_additional_service_keys_to_tags )
         
@@ -717,10 +1007,10 @@ class TestTagImportOptions( unittest.TestCase ):
         
         service_keys_to_service_tag_import_options = {}
         
-        service_keys_to_service_tag_import_options[ example_service_key_1 ] = ClientImportOptions.ServiceTagImportOptions( get_tags = True )
-        service_keys_to_service_tag_import_options[ example_service_key_2 ] = ClientImportOptions.ServiceTagImportOptions( get_tags = False )
+        service_keys_to_service_tag_import_options[ example_service_key_1 ] = TagImportOptions.ServiceTagImportOptions( get_tags = True )
+        service_keys_to_service_tag_import_options[ example_service_key_2 ] = TagImportOptions.ServiceTagImportOptions( get_tags = False )
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags )
         
@@ -745,9 +1035,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags )
         
@@ -764,9 +1054,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags )
         
@@ -792,9 +1082,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = some_tags ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = some_tags ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags )
         
@@ -811,9 +1101,9 @@ class TestTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_keys_to_service_tag_import_options = { example_service_key : ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True, additional_tags = some_tags ) }
+        service_keys_to_service_tag_import_options = { example_service_key : TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True, additional_tags = some_tags ) }
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
         
         result = tag_import_options.GetServiceKeysToContentUpdates( CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags )
         
@@ -841,7 +1131,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        default_service_tag_import_options = ClientImportOptions.ServiceTagImportOptions()
+        default_service_tag_import_options = TagImportOptions.ServiceTagImportOptions()
         
         self.assertEqual( default_service_tag_import_options._get_tags, False )
         self.assertEqual( default_service_tag_import_options._additional_tags, [] )
@@ -863,7 +1153,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), some_tags )
         
@@ -873,7 +1163,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         only_namespaced.SetRule( '', HC.FILTER_BLACKLIST )
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = only_namespaced )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = only_namespaced )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran', 'series:metroid' } )
         
@@ -885,7 +1175,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         only_samus.SetRule( ':', HC.FILTER_BLACKLIST )
         only_samus.SetRule( 'character:samus aran', HC.FILTER_WHITELIST )
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = only_samus )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_filter = only_samus )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran' } )
         
@@ -900,7 +1190,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = [ 'wew' ] )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = [ 'wew' ] )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), some_tags.union( [ 'wew' ] ) )
         
@@ -915,19 +1205,19 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = False )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = False )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran' } )
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, get_tags_overwrite_deleted = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), some_tags )
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags_overwrite_deleted = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags_overwrite_deleted = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran' } )
         
@@ -942,19 +1232,19 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, additional_tags_overwrite_deleted = False )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, additional_tags_overwrite_deleted = False )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran' } )
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, additional_tags_overwrite_deleted = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, additional_tags_overwrite_deleted = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'bodysuit', 'character:samus aran', 'series:metroid' } )
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, get_tags_overwrite_deleted = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, additional_tags = { 'bodysuit', 'character:samus aran', 'series:metroid' }, get_tags_overwrite_deleted = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'character:samus aran' } )
         
@@ -970,7 +1260,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = True, to_already_in_inbox = False, to_already_in_archive = False )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = True, to_already_in_inbox = False, to_already_in_archive = False )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, inbox_media_result, some_tags ), some_tags )
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, inbox_media_result, some_tags ), set() )
@@ -978,7 +1268,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = False, to_already_in_inbox = True, to_already_in_archive = False )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = False, to_already_in_inbox = True, to_already_in_archive = False )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, inbox_media_result, some_tags ), set() )
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, inbox_media_result, some_tags ), some_tags )
@@ -986,7 +1276,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         #
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = False, to_already_in_inbox = False, to_already_in_archive = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, to_new_files = False, to_already_in_inbox = False, to_already_in_archive = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, inbox_media_result, some_tags ), set() )
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_BUT_REDUNDANT, inbox_media_result, some_tags ), set() )
@@ -1006,7 +1296,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         HG.test_controller.SetRead( 'filter_existing_tags', existing_tags )
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, only_add_existing_tags = True )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, only_add_existing_tags = True )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), existing_tags )
         
@@ -1021,7 +1311,7 @@ class TestServiceTagImportOptions( unittest.TestCase ):
         
         HG.test_controller.SetRead( 'filter_existing_tags', existing_tags )
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = True, only_add_existing_tags = True, only_add_existing_tags_filter = only_unnamespaced )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = True, only_add_existing_tags = True, only_add_existing_tags_filter = only_unnamespaced )
         
         self.assertEqual( service_tag_import_options.GetTags( example_service_key, CC.STATUS_SUCCESSFUL_AND_NEW, media_result, some_tags ), { 'bodysuit', 'character:samus aran', 'series:metroid' } )
         

@@ -6,9 +6,7 @@ import numpy.core.multiarray # important this comes before cv!
 import cv2
 
 from hydrus.client import ClientConstants as CC
-from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
-from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusImageHandling
 from hydrus.core import HydrusGlobals as HG
 
@@ -20,11 +18,11 @@ cv_interpolation_enum_lookup[ CC.ZOOM_AREA ] = cv2.INTER_AREA
 cv_interpolation_enum_lookup[ CC.ZOOM_CUBIC ] = cv2.INTER_CUBIC
 cv_interpolation_enum_lookup[ CC.ZOOM_LANCZOS4 ] = cv2.INTER_LANCZOS4
 
-def DiscardBlankPerceptualHashes( phashes ):
+def DiscardBlankPerceptualHashes( perceptual_hashes ):
     
-    phashes = { phash for phash in phashes if HydrusData.Get64BitHammingDistance( phash, CC.BLANK_PHASH ) > 4 }
+    perceptual_hashes = { perceptual_hash for perceptual_hash in perceptual_hashes if HydrusData.Get64BitHammingDistance( perceptual_hash, CC.BLANK_PERCEPTUAL_HASH ) > 4 }
     
-    return phashes
+    return perceptual_hashes
     
 def GenerateNumPyImage( path, mime ):
     
@@ -51,9 +49,13 @@ def GenerateShapePerceptualHashes( path, mime ):
     if depth == 4:
         
         # doing this on 10000x10000 pngs eats ram like mad
-        target_resolution = HydrusImageHandling.GetThumbnailResolution( ( x, y ), ( 1024, 1024 ) )
+        # we don't want to do GetThumbnailResolutionAndClipRegion as for extremely wide or tall images, we'll then scale below 32 pixels for one dimension, losing information!
+        # however, it does not matter if we stretch the image a bit, since we'll be coercing 32x32 in a minute
         
-        numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, target_resolution )
+        new_x = min( 256, x )
+        new_y = min( 256, y )
+        
+        numpy_image = cv2.resize( numpy_image, ( new_x, new_y ), interpolation = cv2.INTER_AREA )
         
         ( y, x, depth ) = numpy_image.shape
         
@@ -61,22 +63,30 @@ def GenerateShapePerceptualHashes( path, mime ):
         
         numpy_alpha = numpy_image[ :, :, 3 ]
         
-        numpy_alpha_float = numpy_alpha / 255.0
+        numpy_image_rgb = numpy_image[ :, :, :3 ]
         
-        numpy_image_bgr = numpy_image[ :, :, :3 ]
-        
-        numpy_image_gray_bare = cv2.cvtColor( numpy_image_bgr, cv2.COLOR_RGB2GRAY )
+        numpy_image_gray_bare = cv2.cvtColor( numpy_image_rgb, cv2.COLOR_RGB2GRAY )
         
         # create a white greyscale canvas
         
-        white = numpy.ones( ( y, x ) ) * 255.0
+        white = numpy.full( ( y, x ), 255.0 )
         
-        # paste the grayscale image onto the white canvas using: pixel * alpha + white * ( 1 - alpha )
+        # paste the grayscale image onto the white canvas using: pixel * alpha_float + white * ( 1 - alpha_float )
         
-        numpy_image_gray = numpy.uint8( ( numpy_image_gray_bare * numpy_alpha_float ) + ( white * ( numpy.ones( ( y, x ) ) - numpy_alpha_float ) ) )
+        # note alpha 255 = opaque, alpha 0 = transparent
+        
+        # also, note:
+        # white * ( 1 - alpha_float )
+        # =
+        # 255 * ( 1 - ( alpha / 255 ) )
+        # =
+        # 255 - alpha
+        
+        numpy_image_gray = numpy.uint8( ( numpy_image_gray_bare * ( numpy_alpha / 255.0 ) ) + ( white - numpy_alpha ) )
         
     else:
         
+        # this single step is nice and fast, so we won't scale to 256x256 beforehand
         numpy_image_gray = cv2.cvtColor( numpy_image, cv2.COLOR_RGB2GRAY )
         
     
@@ -168,29 +178,29 @@ def GenerateShapePerceptualHashes( path, mime ):
         list_of_bytes.append( byte )
         
     
-    phash = bytes( list_of_bytes ) # this works!
+    perceptual_hash = bytes( list_of_bytes ) # this works!
     
     if HG.phash_generation_report_mode:
         
-        HydrusData.ShowText( 'phash generation: phash: {}'.format( phash.hex() ) )
+        HydrusData.ShowText( 'phash generation: perceptual_hash: {}'.format( perceptual_hash.hex() ) )
         
     
     # now discard the blank hash, which is 1000000... and not useful
     
-    phashes = set()
+    perceptual_hashes = set()
     
-    phashes.add( phash )
+    perceptual_hashes.add( perceptual_hash )
     
-    phashes = DiscardBlankPerceptualHashes( phashes )
+    perceptual_hashes = DiscardBlankPerceptualHashes( perceptual_hashes )
     
     if HG.phash_generation_report_mode:
         
-        HydrusData.ShowText( 'phash generation: final phashes: {}'.format( len( phashes ) ) )
+        HydrusData.ShowText( 'phash generation: final perceptual_hashes: {}'.format( len( perceptual_hashes ) ) )
         
     
     # we good
     
-    return phashes
+    return perceptual_hashes
     
 def ResizeNumPyImageForMediaViewer( mime, numpy_image, target_resolution ):
     
@@ -199,7 +209,7 @@ def ResizeNumPyImageForMediaViewer( mime, numpy_image, target_resolution ):
     
     ( scale_up_quality, scale_down_quality ) = new_options.GetMediaZoomQuality( mime )
     
-    ( image_width, image_height, depth ) = numpy_image.shape
+    ( image_height, image_width, depth ) = numpy_image.shape
     
     if ( target_width, target_height ) == ( image_height, image_width ):
         
@@ -207,7 +217,7 @@ def ResizeNumPyImageForMediaViewer( mime, numpy_image, target_resolution ):
         
     else:
         
-        if target_width > image_height or target_height > image_width:
+        if target_width > image_width or target_height > image_height:
             
             interpolation = cv_interpolation_enum_lookup[ scale_up_quality ]
             

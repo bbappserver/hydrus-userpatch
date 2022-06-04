@@ -4,6 +4,7 @@ from qtpy import QtWidgets as QW
 from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
+from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUIScrolledPanels
 from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.widgets import ClientGUICommon
@@ -21,14 +22,23 @@ class QuestionCommitInterstitialFilteringPanel( ClientGUIScrolledPanels.Resizing
         
         vbox = QP.VBoxLayout()
         
-        QP.AddToLayout( vbox, QP.MakeQLabelWithAlignment( label, self, QC.Qt.AlignVCenter | QC.Qt.AlignHCenter ), CC.FLAGS_EXPAND_PERPENDICULAR )
+        st = ClientGUICommon.BetterStaticText( self, label )
+        
+        st.setAlignment( QC.Qt.AlignCenter )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._commit, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
-        QP.AddToLayout( vbox, QP.MakeQLabelWithAlignment( '-or-', self, QC.Qt.AlignVCenter | QC.Qt.AlignHCenter ), CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        st = ClientGUICommon.BetterStaticText( self, '-or-' )
+        
+        st.setAlignment( QC.Qt.AlignCenter )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._back, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         self.widget().setLayout( vbox )
         
-        HG.client_controller.CallAfterQtSafe( self._commit, self._commit.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._commit )
         
     
 class QuestionFinishFilteringPanel( ClientGUIScrolledPanels.ResizingScrolledPanel ):
@@ -58,14 +68,23 @@ class QuestionFinishFilteringPanel( ClientGUIScrolledPanels.ResizingScrolledPane
         
         vbox = QP.VBoxLayout()
         
-        QP.AddToLayout( vbox, QP.MakeQLabelWithAlignment( label, self, QC.Qt.AlignVCenter | QC.Qt.AlignHCenter ), CC.FLAGS_EXPAND_PERPENDICULAR )
+        st = ClientGUICommon.BetterStaticText( self, label )
+        
+        st.setAlignment( QC.Qt.AlignCenter )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, hbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
-        QP.AddToLayout( vbox, QP.MakeQLabelWithAlignment( '-or-', self, QC.Qt.AlignVCenter | QC.Qt.AlignHCenter ), CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        st = ClientGUICommon.BetterStaticText( self, '-or-' )
+        
+        st.setAlignment( QC.Qt.AlignCenter )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._back, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         self.widget().setLayout( vbox )
         
-        HG.client_controller.CallAfterQtSafe( self._commit, self._commit.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._commit )
         
     
 class QuestionYesNoPanel( ClientGUIScrolledPanels.ResizingScrolledPanel ):
@@ -99,7 +118,7 @@ class QuestionYesNoPanel( ClientGUIScrolledPanels.ResizingScrolledPanel ):
         
         self.widget().setLayout( vbox )
         
-        HG.client_controller.CallAfterQtSafe( self._yes, self._yes.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._yes )
         
     
 

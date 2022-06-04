@@ -8,15 +8,16 @@ from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
+from hydrus.client import ClientLocation
 from hydrus.client import ClientSearch
 from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUIDialogsQuick
-from hydrus.client.gui import ClientGUIResultsSortCollect
 from hydrus.client.gui import ClientGUIScrolledPanels
 from hydrus.client.gui import ClientGUITopLevelWindowsPanels
 from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.lists import ClientGUIListConstants as CGLC
 from hydrus.client.gui.lists import ClientGUIListCtrl
+from hydrus.client.gui.pages import ClientGUIResultsSortCollect
 from hydrus.client.gui.widgets import ClientGUICommon
 
 class EditFavouriteSearchPanel( ClientGUIScrolledPanels.EditPanel ):
@@ -204,7 +205,7 @@ class EditFavouriteSearchesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         if initial_search_row_to_edit is not None:
             
-            HG.client_controller.CallLaterQtSafe( self, 0.5, self._AddNewFavouriteSearch, initial_search_row_to_edit )
+            HG.client_controller.CallLaterQtSafe( self, 0.5, 'add new favourite search', self._AddNewFavouriteSearch, initial_search_row_to_edit )
             
         
     
@@ -218,7 +219,11 @@ class EditFavouriteSearchesPanel( ClientGUIScrolledPanels.EditPanel ):
             
             foldername = None
             name = 'new favourite search'
-            file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY )
+            
+            default_location_context = HG.client_controller.new_options.GetDefaultLocalLocationContext()
+            
+            file_search_context = ClientSearch.FileSearchContext( location_context = default_location_context )
+            
             synchronised = True
             media_sort = None
             media_collect = None

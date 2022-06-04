@@ -209,7 +209,7 @@ class COLUMN_LIST_FILE_SEED_CACHE( COLUMN_LIST_DEFINITION ):
     NOTE = 6
     
 
-column_list_type_name_lookup[ COLUMN_LIST_FILE_SEED_CACHE.ID ] = 'file imports'
+column_list_type_name_lookup[ COLUMN_LIST_FILE_SEED_CACHE.ID ] = 'file log'
 
 register_column_type( COLUMN_LIST_FILE_SEED_CACHE.ID, COLUMN_LIST_FILE_SEED_CACHE.NUMBER, '#', False, 3, True )
 register_column_type( COLUMN_LIST_FILE_SEED_CACHE.ID, COLUMN_LIST_FILE_SEED_CACHE.SOURCE, 'source', False, 30, True )
@@ -235,7 +235,7 @@ class COLUMN_LIST_GALLERY_SEED_LOG( COLUMN_LIST_DEFINITION ):
     NOTE = 5
     
 
-column_list_type_name_lookup[ COLUMN_LIST_GALLERY_SEED_LOG.ID ] = 'gallery log'
+column_list_type_name_lookup[ COLUMN_LIST_GALLERY_SEED_LOG.ID ] = 'search log'
 
 register_column_type( COLUMN_LIST_GALLERY_SEED_LOG.ID, COLUMN_LIST_GALLERY_SEED_LOG.NUMBER, '#', False, 3, True )
 register_column_type( COLUMN_LIST_GALLERY_SEED_LOG.ID, COLUMN_LIST_GALLERY_SEED_LOG.URL, 'url', False, 30, True )
@@ -1054,8 +1054,8 @@ class COLUMN_LIST_DB_MIGRATION_LOCATIONS( COLUMN_LIST_DEFINITION ):
 column_list_type_name_lookup[ COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID ] = 'db file storage locations'
 
 register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.LOCATION, 'location', False, 36, True )
-register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.PORTABLE, 'portable?', False, 12, True )
-register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.FREE_SPACE, 'free space', False, 12, True )
+register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.PORTABLE, 'beneath db?', False, 12, True )
+register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.FREE_SPACE, 'disk free space', False, 12, True )
 register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.CURRENT_USAGE, 'current usage', False, 24, True )
 register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.WEIGHT, 'weight', False, 8, True )
 register_column_type( COLUMN_LIST_DB_MIGRATION_LOCATIONS.ID, COLUMN_LIST_DB_MIGRATION_LOCATIONS.IDEAL_USAGE, 'ideal usage', False, 24, True )
@@ -1421,3 +1421,47 @@ register_column_type( COLUMN_LIST_TAG_SIBLINGS.ID, COLUMN_LIST_TAG_SIBLINGS.NEW,
 register_column_type( COLUMN_LIST_TAG_SIBLINGS.ID, COLUMN_LIST_TAG_SIBLINGS.NOTE, 'note', False, 40, True )
 
 default_column_list_sort_lookup[ COLUMN_LIST_TAG_SIBLINGS.ID ] = ( COLUMN_LIST_TAG_SIBLINGS.NEW, True )
+
+#
+
+class COLUMN_LIST_JOB_SCHEDULER_REVIEW( COLUMN_LIST_DEFINITION ):
+    
+    ID = 65
+    
+    TYPE = 0
+    JOB = 1
+    DUE = 2
+    
+
+column_list_type_name_lookup[ COLUMN_LIST_JOB_SCHEDULER_REVIEW.ID ] = 'current jobs review'
+
+register_column_type( COLUMN_LIST_JOB_SCHEDULER_REVIEW.ID, COLUMN_LIST_JOB_SCHEDULER_REVIEW.TYPE, 'type', False, 10, True )
+register_column_type( COLUMN_LIST_JOB_SCHEDULER_REVIEW.ID, COLUMN_LIST_JOB_SCHEDULER_REVIEW.JOB, 'job', False, 30, True )
+register_column_type( COLUMN_LIST_JOB_SCHEDULER_REVIEW.ID, COLUMN_LIST_JOB_SCHEDULER_REVIEW.DUE, 'due', False, 30, True )
+
+default_column_list_sort_lookup[ COLUMN_LIST_JOB_SCHEDULER_REVIEW.ID ] = ( COLUMN_LIST_JOB_SCHEDULER_REVIEW.DUE, True )
+
+#
+
+class COLUMN_LIST_VACUUM_DATA( COLUMN_LIST_DEFINITION ):
+    
+    ID = 66
+    
+    NAME = 0
+    SIZE = 1
+    FREE_SPACE = 2
+    LAST_VACUUM = 3
+    CAN_VACUUM = 4
+    VACUUM_TIME_ESTIMATE = 5
+    
+
+column_list_type_name_lookup[ COLUMN_LIST_VACUUM_DATA.ID ] = 'vacuum data'
+
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.NAME, 'name', False, 32, True )
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.SIZE, 'size', False, 8, True )
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.FREE_SPACE, 'free space', False, 14, True )
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.LAST_VACUUM, 'last vacuum', False, 32, True )
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.CAN_VACUUM, 'can vacuum?', False, 64, True )
+register_column_type( COLUMN_LIST_VACUUM_DATA.ID, COLUMN_LIST_VACUUM_DATA.VACUUM_TIME_ESTIMATE, 'vacuum time estimate', False, 48, True )
+
+default_column_list_sort_lookup[ COLUMN_LIST_VACUUM_DATA.ID ] = ( COLUMN_LIST_VACUUM_DATA.NAME, True )

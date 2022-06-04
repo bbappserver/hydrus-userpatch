@@ -5,6 +5,7 @@ import os
 # If not explicitely set, prefer PySide2 instead of the qtpy default which is PyQt5
 # It is important that this runs on startup *before* anything is imported from qtpy.
 # Since test.py, client.py and client.pyw all import this module first before any other Qt related ones, this requirement is satisfied.
+
 if not 'QT_API' in os.environ:
     
     try:
@@ -25,7 +26,6 @@ from qtpy import QtWidgets as QW
 from qtpy import QtGui as QG
 
 import math
-import typing
 
 from collections import defaultdict
     
@@ -869,7 +869,7 @@ class TabWidgetWithDnD( QW.QTabWidget ):
                     page_key = source_notebook.GetPageKey()
                     
                 
-                HG.client_controller.gui.ShowPage( page_key )
+                CallAfter( HG.client_controller.gui.ShowPage, page_key )
                 
             
         
@@ -939,16 +939,6 @@ def SplitHorizontally( splitter: QW.QSplitter, w1, w2, vpos ):
     elif vpos > 0:
         
         splitter.setSizes( [ vpos, total_sum - vpos ] )
-
-
-def MakeQLabelWithAlignment( label, parent, align ):
-    
-    res = QW.QLabel( label, parent )
-
-    res.setAlignment( align )
-
-    return res
-
 
 class GridLayout( QW.QGridLayout ):
     
@@ -1196,17 +1186,6 @@ def AddShortcut( widget, modifier, key, callable, *args ):
     
     shortcut.activated.connect( lambda: callable( *args ) )
     
-class BusyCursor:
-    
-    def __enter__( self ):
-        
-        QW.QApplication.setOverrideCursor( QC.Qt.WaitCursor )
-    
-    def __exit__( self, exc_type, exc_val, exc_tb ):
-        
-        QW.QApplication.restoreOverrideCursor()
-
-
 def GetBackgroundColour( widget ):
     
     return widget.palette().color( QG.QPalette.Window )
@@ -1246,7 +1225,16 @@ class CallAfterEventCatcher( QC.QObject ):
         
         if event.type() == CallAfterEventType and isinstance( event, CallAfterEvent ):
             
-            event.Execute()
+            if HG.profile_mode:
+                
+                summary = 'Profiling CallAfter Event: {}'.format( event._fn )
+                
+                HydrusData.Profile( summary, 'event.Execute()', globals(), locals(), min_duration_ms = HG.callto_profile_min_job_time_ms )
+                
+            else:
+                
+                event.Execute()
+                
             
             event.accept()
             
@@ -1294,9 +1282,6 @@ def GetClientData( widget, idx ):
         
         return widget.itemData( idx, QC.Qt.UserRole )
     
-    elif isinstance( widget, CheckListBox ):
-        
-        return widget.item( idx ).data( QC.Qt.UserRole )
     
     elif isinstance( widget, QW.QTreeWidget ):
         
@@ -1318,10 +1303,6 @@ def Unsplit( splitter, widget ):
         widget.setVisible( False )
         
     
-def GetSystemColour( colour ):
-    
-    return QG.QPalette().color( colour )
-
 def CenterOnWindow( parent, window ):
     
     parent_window = parent.window()
@@ -1387,21 +1368,6 @@ def ListWidgetSetSelection( widget, idxs ):
             
         
     
-def MakeQSpinBox( parent = None, initial = None, min = None, max = None, width = None ):
-    
-    spinbox = QW.QSpinBox( parent )
-    
-    if min is not None: spinbox.setMinimum( min )
-    
-    if max is not None: spinbox.setMaximum( max )
-    
-    if initial is not None: spinbox.setValue( initial )
-    
-    if width is not None: spinbox.setMinimumWidth( width )
-
-    return spinbox
-
-
 def SetInitialSize( widget, size ):
     
     if hasattr( widget, 'SetInitialSize' ):
@@ -1445,34 +1411,6 @@ def SetBackgroundColour( widget, colour ):
         widget.setStyleSheet( '#{} {{ background-color: {} }}'.format( object_name, QG.QColor( colour ).name() ) )
         
     
-def SetForegroundColour( widget, colour ):
-    
-    widget.setAutoFillBackground( True )
-    
-    object_name = widget.objectName()
-
-    if not object_name:
-        
-        object_name = str( id( widget ) )
-        
-        widget.setObjectName( object_name )
-        
-
-    if isinstance( colour, QG.QColor ):
-
-        widget.setStyleSheet( '#{} {{ color: {} }}'.format( object_name, colour.name()) )
-        
-    elif isinstance( colour, tuple ):
-        
-        colour = QG.QColor( *colour )
-        
-        widget.setStyleSheet( '#{} {{ color: {} }}'.format( object_name, colour.name() ) )
-        
-    else:
-
-        widget.setStyleSheet( '#{} {{ color: {} }}'.format( object_name, QG.QColor( colour ).name() ) )
-        
-
 def SetStringSelection( combobox, string ):
     
     index = combobox.findText( string )
@@ -1614,6 +1552,7 @@ class UIActionSimulator:
         QW.QApplication.instance().postEvent( widget, ev2 )
         
 
+# TODO: rewrite this to be on my newer panel system so this can resize for lads on small screens etc..
 class AboutBox( QW.QDialog ):
     
     def __init__( self, parent, about_info ):
@@ -1681,126 +1620,6 @@ class AboutBox( QW.QDialog ):
         
         self.exec_()
 
-
-class CheckListBox( QW.QListWidget ):
-    
-    checkListBoxChanged = QC.Signal( int )
-    rightClicked = QC.Signal()
-    
-    def __init__( self, parent = None ):
-        
-        QW.QListWidget.__init__( self, parent )
-        
-        self.itemClicked.connect( self._ItemCheckStateChanged )
-        
-        self.setSelectionMode( QW.QAbstractItemView.ExtendedSelection )
-        
-    
-    def Check(self, index, state = True):
-        
-        item = self.item( index )
-        
-        item.setFlags( item.flags() | QC.Qt.ItemIsUserCheckable )
-        
-        if state:
-            
-            item.setCheckState( QC.Qt.Checked )
-            
-        else:
-            
-            item.setCheckState( QC.Qt.Unchecked )
-        
-        
-    def IsChecked(self, index):
-        
-        return self.item( index ).checkState() == QC.Qt.Checked
-    
-    
-    def GetCheckedItems(self):
-        
-        indices = []
-        
-        for i in range( self.count() ):
-            
-            if self.item( i ).checkState() == QC.Qt.Checked: indices.append( i )
-        
-        return indices
-    
-    
-    def GetSelections( self ):
-        
-        indices = []
-
-        for i in range( self.count() ):
-
-            if self.item( i ).isSelected(): indices.append( i )
-
-        return indices
-    
-    def SetCheckedItems( self, items ):
-        
-        for i in range( self.count() ):
-            
-            if i in items:
-                
-                self.item( i ).setCheckState( QC.Qt.Checked )
-            
-            else:
-
-                self.item( i ).setCheckState( QC.Qt.Unchecked )
-                
-    
-    def Append( self, str, client_data ):
-        
-        item = QW.QListWidgetItem()
-
-        item.setFlags( item.flags() | QC.Qt.ItemIsUserCheckable )
-
-        item.setCheckState( QC.Qt.Unchecked )
-        
-        item.setText( str )
-        
-        item.setData( QC.Qt.UserRole, client_data )
-        
-        self.addItem( item )
-        
-        
-    def _ItemCheckStateChanged( self, item ):
-        
-        self.checkListBoxChanged.emit( self.row( item ) )
-
-
-    def GetChecked( self ):
-
-        result = [ self.item( index ).data( QC.Qt.UserRole ) for index in self.GetCheckedItems() ]
-
-        return result
-
-
-    def SetCheckedData( self, datas ):
-
-        for index in range( self.count() ):
-            
-            data = self.item( index ).data( QC.Qt.UserRole )
-            
-            check_it = data in datas
-            
-            self.Check( index, check_it )
-            
-        
-    
-    def mousePressEvent( self, event ):
-
-        if event.button() == QC.Qt.RightButton:
-
-            self.rightClicked.emit()
-            
-        else:
-
-            QW.QListWidget.mousePressEvent( self, event )
-            
-        
-    
 class RadioBox( QW.QFrame ):
     
     radioBoxChanged = QC.Signal()
@@ -1841,6 +1660,18 @@ class RadioBox( QW.QFrame ):
             self._choices[-1].setChecked( True )
         
         
+    def _GetCurrentChoiceWidget( self ):
+        
+        for choice in self._choices:
+            
+            if choice.isChecked():
+                
+                return choice
+                
+            
+        
+        return None
+        
     def GetCurrentIndex( self ):
         
         for i in range( len( self._choices ) ):
@@ -1870,6 +1701,20 @@ class RadioBox( QW.QFrame ):
             if self._choices[ i ].isChecked(): return self._choices[ i ].text()
 
         return None
+    
+    def setFocus( self, reason ):
+        
+        item = self._GetCurrentChoiceWidget()
+        
+        if item is not None:
+            
+            item.setFocus( reason )
+            
+        else:
+            
+            QW.QFrame.setFocus( self, reason )
+            
+        
     
     def SetValue( self, data ):
         
@@ -2393,10 +2238,6 @@ class WidgetEventFilter ( QC.QObject ):
             
             event_killed = event_killed or self._ExecuteCallbacks( 'EVT_KEY_DOWN', event )
             
-        elif type == QC.QEvent.Close:
-            
-            event_killed = event_killed or self._ExecuteCallbacks( 'EVT_CLOSE', event )
-            
         elif type == QC.QEvent.WindowStateChange:
             
             if isValid( self._parent_widget ):
@@ -2495,10 +2336,6 @@ class WidgetEventFilter ( QC.QObject ):
             
         self._callback_map[ evt_name ].append( callback )
 
-    def EVT_CLOSE( self, callback ):
-        
-        self._AddCallback( 'EVT_CLOSE', callback )
-
     def EVT_ICONIZE( self, callback ):
         
         self._AddCallback( 'EVT_ICONIZE', callback )
@@ -2574,9 +2411,9 @@ class CheckBoxDelegate(QW.QStyledItemDelegate):
         
 
 class CollectComboCtrl( QW.QComboBox ):
-
+    
     itemChanged = QC.Signal()
-
+    
     def __init__( self, parent, media_collect ):
         
         QW.QComboBox.__init__( self, parent )
@@ -2587,26 +2424,35 @@ class CollectComboCtrl( QW.QComboBox ):
         self.setItemDelegate( CheckBoxDelegate() )
         
         self.setModel( QG.QStandardItemModel( self ) )
-
+        
         text_and_data_tuples = set()
-
-        sort_by = HC.options[ 'sort_by' ]
-
-        for ( sort_by_type, namespaces ) in sort_by:
+        
+        for media_sort in HG.client_controller.new_options.GetDefaultNamespaceSorts():
             
-            text_and_data_tuples.update( namespaces )
+            namespaces = media_sort.GetNamespaces()
             
-
+            try:
+                
+                text_and_data_tuples.update( namespaces )
+                
+            except:
+                
+                HydrusData.DebugPrint( 'Bad namespaces: {}'.format( namespaces ) )
+                
+                HydrusData.ShowText( 'Hey, your namespace-based sorts are likely damaged. Details have been written to the log, please let hydev know!' )
+                
+            
+        
         text_and_data_tuples = sorted( ( ( namespace, ( 'namespace', namespace ) ) for namespace in text_and_data_tuples ) )
         
         ratings_services = HG.client_controller.services_manager.GetServices( ( HC.LOCAL_RATING_LIKE, HC.LOCAL_RATING_NUMERICAL ) )
-
+        
         for ratings_service in ratings_services:
             
             text_and_data_tuples.append( ( ratings_service.GetName(), ('rating', ratings_service.GetServiceKey() ) ) )
             
-
-        for (text, data) in text_and_data_tuples:
+        
+        for ( text, data ) in text_and_data_tuples:
 
             self.Append( text, data )
             
@@ -2637,10 +2483,10 @@ class CollectComboCtrl( QW.QComboBox ):
     
     def GetValues( self ):
 
-        namespaces = [ ]
-        rating_service_keys = [ ]
+        namespaces = []
+        rating_service_keys = []
 
-        for index in self.GetCheckedItems():
+        for index in self.GetCheckedIndices():
 
             (collect_type, collect_data) = self.itemData( index, QC.Qt.UserRole )
 
@@ -2697,7 +2543,7 @@ class CollectComboCtrl( QW.QComboBox ):
                     
                     indices_to_check.append( index )
 
-            self.SetCheckedItems( indices_to_check )
+            self.SetCheckedIndices( indices_to_check )
             
             self.itemChanged.emit()
 
@@ -2708,7 +2554,7 @@ class CollectComboCtrl( QW.QComboBox ):
             HydrusData.ShowException( e )
 
 
-    def SetCheckedItems( self, indices_to_check ):
+    def SetCheckedIndices( self, indices_to_check ):
         
         for idx in range( self.count() ):
 
@@ -2725,7 +2571,7 @@ class CollectComboCtrl( QW.QComboBox ):
             
         
     
-    def GetCheckedItems( self ):
+    def GetCheckedIndices( self ):
         
         indices = []
         

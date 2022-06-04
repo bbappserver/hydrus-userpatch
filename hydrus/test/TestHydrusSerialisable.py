@@ -12,9 +12,11 @@ from hydrus.client import ClientDefaults
 from hydrus.client import ClientDuplicates
 from hydrus.client import ClientSearch
 from hydrus.client.gui import ClientGUIShortcuts
-from hydrus.client.importing import ClientImportOptions
 from hydrus.client.importing import ClientImportSubscriptions
 from hydrus.client.importing import ClientImportSubscriptionQuery
+from hydrus.client.importing.options import ClientImportOptions
+from hydrus.client.importing.options import FileImportOptions
+from hydrus.client.importing.options import TagImportOptions
 from hydrus.client.media import ClientMedia
 from hydrus.client.media import ClientMediaManagers
 from hydrus.client.media import ClientMediaResult
@@ -134,12 +136,14 @@ class TestSerialisables( unittest.TestCase ):
             
             self.assertEqual( obj.GetCommandType(), dupe_obj.GetCommandType() )
             
-            self.assertEqual( obj.GetData(), dupe_obj.GetData() )
+            self.assertSequenceEqual( tuple( obj._data ), tuple( dupe_obj._data ) )
             
         
         acs = []
         
-        acs.append( ( CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_SIMPLE, CAC.SIMPLE_ARCHIVE_FILE ), 'archive file' ) )
+        acs.append( ( CAC.ApplicationCommand.STATICCreateSimpleCommand( CAC.SIMPLE_ARCHIVE_FILE ), 'archive file' ) )
+        acs.append( ( CAC.ApplicationCommand.STATICCreateSimpleCommand( CAC.SIMPLE_MEDIA_SEEK_DELTA, simple_data = ( -1, 2500 ) ), 'seek media (back 2.5 seconds)' ) )
+        acs.append( ( CAC.ApplicationCommand.STATICCreateSimpleCommand( CAC.SIMPLE_MEDIA_SEEK_DELTA, simple_data = ( 1, 800 ) ), 'seek media (forwards 800 milliseconds)' ) )
         acs.append( ( CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_CONTENT, ( HydrusData.GenerateKey(), HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_FLIP, 'test' ) ), 'flip on/off mappings "test" for unknown service!' ) )
         acs.append( ( CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_CONTENT, ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_FLIP, 'test' ) ), 'flip on/off mappings "test" for my tags' ) )
         acs.append( ( CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_CONTENT, ( HydrusData.GenerateKey(), HC.CONTENT_TYPE_RATINGS, HC.CONTENT_UPDATE_SET, 0.4 ) ), 'set ratings uncertain rating, "0.4" for unknown service!' ) )
@@ -159,9 +163,18 @@ class TestSerialisables( unittest.TestCase ):
             self.assertEqual( obj.ToTuple(), dupe_obj.ToTuple() )
             
         
-        duplicate_action_options_delete_and_move = ClientDuplicates.DuplicateActionOptions( [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, HydrusTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ) ] )
-        duplicate_action_options_copy = ClientDuplicates.DuplicateActionOptions( [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY, HydrusTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ) ] )
-        duplicate_action_options_merge = ClientDuplicates.DuplicateActionOptions( [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, HydrusTags.TagFilter() ) ], [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ) ] )
+        duplicate_action_options_delete_and_move = ClientDuplicates.DuplicateActionOptions(
+            tag_service_actions = [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE, HydrusTags.TagFilter() ) ],
+            rating_service_actions = [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_MOVE ) ]
+        )
+        duplicate_action_options_copy = ClientDuplicates.DuplicateActionOptions(
+            tag_service_actions = [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY, HydrusTags.TagFilter() ) ],
+            rating_service_actions = [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_COPY ) ]
+        )
+        duplicate_action_options_merge = ClientDuplicates.DuplicateActionOptions(
+            tag_service_actions = [ ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE, HydrusTags.TagFilter() ) ],
+            rating_service_actions = [ ( TC.LOCAL_RATING_LIKE_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ), ( TC.LOCAL_RATING_NUMERICAL_SERVICE_KEY, HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ) ]
+        )
         
         inbox = True
         size = 40960
@@ -173,9 +186,9 @@ class TestSerialisables( unittest.TestCase ):
         has_audio = False
         num_words = None
         
-        local_locations_manager = ClientMediaManagers.LocationsManager( { CC.LOCAL_FILE_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY }, set(), set(), set(), inbox )
-        trash_locations_manager = ClientMediaManagers.LocationsManager( { CC.TRASH_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY }, set(), set(), set(), inbox )
-        deleted_locations_manager = ClientMediaManagers.LocationsManager( set(), { CC.COMBINED_LOCAL_FILE_SERVICE_KEY }, set(), set(), inbox )
+        local_locations_manager = ClientMediaManagers.LocationsManager( { CC.LOCAL_FILE_SERVICE_KEY : 123, CC.COMBINED_LOCAL_FILE_SERVICE_KEY : 123 }, dict(), set(), set(), inbox )
+        trash_locations_manager = ClientMediaManagers.LocationsManager( { CC.TRASH_SERVICE_KEY : 123, CC.COMBINED_LOCAL_FILE_SERVICE_KEY : 12 }, dict(), set(), set(), inbox )
+        deleted_locations_manager = ClientMediaManagers.LocationsManager( dict(), { CC.LOCAL_FILE_SERVICE_KEY : 120, CC.COMBINED_LOCAL_FILE_SERVICE_KEY : 123 }, set(), set(), inbox )
         
         # duplicate to generate proper dicts
         
@@ -294,7 +307,7 @@ class TestSerialisables( unittest.TestCase ):
         
         scu = {}
         
-        scu[ CC.TRASH_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { trashed_hash_empty }, reason = file_deletion_reason ) ]
+        scu[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ] = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, { trashed_hash_empty }, reason = file_deletion_reason ) ]
         
         assertSCUEqual( result, scu )
         
@@ -428,7 +441,7 @@ class TestSerialisables( unittest.TestCase ):
             
             for ( shortcut, command ) in obj:
                 
-                self.assertEqual( dupe_obj.GetCommand( shortcut ).GetData(), command.GetData() )
+                self.assertEqual( dupe_obj.GetCommand( shortcut ), command )
                 
             
         
@@ -439,7 +452,7 @@ class TestSerialisables( unittest.TestCase ):
             self._dump_and_load_and_test( shortcuts, test )
             
         
-        command_1 = CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_SIMPLE, CAC.SIMPLE_ARCHIVE_FILE )
+        command_1 = CAC.ApplicationCommand.STATICCreateSimpleCommand( CAC.SIMPLE_ARCHIVE_FILE )
         command_2 = CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_CONTENT, ( HydrusData.GenerateKey(), HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_FLIP, 'test' ) )
         command_3 = CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_CONTENT, ( CC.DEFAULT_LOCAL_TAG_SERVICE_KEY, HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_UPDATE_FLIP, 'test' ) )
         
@@ -465,11 +478,11 @@ class TestSerialisables( unittest.TestCase ):
         
         self._dump_and_load_and_test( shortcut_set, test )
         
-        self.assertEqual( shortcut_set.GetCommand( k_shortcut_1 ).GetData(), command_1.GetData() )
+        self.assertEqual( tuple( shortcut_set.GetCommand( k_shortcut_1 )._data ), tuple( command_1._data ) )
         
         shortcut_set.SetCommand( k_shortcut_1, command_3 )
         
-        self.assertEqual( shortcut_set.GetCommand( k_shortcut_1 ).GetData(), command_3.GetData() )
+        self.assertEqual( tuple( shortcut_set.GetCommand( k_shortcut_1 )._data ), tuple( command_3._data ) )
         
     
     def test_SERIALISABLE_TYPE_SUBSCRIPTION( self ):
@@ -511,11 +524,11 @@ class TestSerialisables( unittest.TestCase ):
         periodic_file_limit = 50
         paused = False
         
-        file_import_options = ClientImportOptions.FileImportOptions()
+        file_import_options = FileImportOptions.FileImportOptions()
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = False, additional_tags = { 'test additional tag', 'and another' } )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = False, additional_tags = { 'test additional tag', 'and another' } )
         
-        tag_import_options = ClientImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = { HydrusData.GenerateKey() : service_tag_import_options } )
+        tag_import_options = TagImportOptions.TagImportOptions( service_keys_to_service_tag_import_options = { HydrusData.GenerateKey() : service_tag_import_options } )
         
         no_work_until = HydrusData.GetNow() - 86400 * 20
         

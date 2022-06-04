@@ -13,7 +13,7 @@ def DAEMONCheckExportFolders():
     
     controller = HG.client_controller
     
-    if not controller.options[ 'pause_export_folders_sync' ]:
+    if not controller.new_options.GetBoolean( 'pause_export_folders_sync' ):
         
         HG.export_folders_running = True
         
@@ -25,7 +25,7 @@ def DAEMONCheckExportFolders():
                 
                 export_folder = controller.Read( 'serialisable_named', HydrusSerialisable.SERIALISABLE_TYPE_EXPORT_FOLDER, name )
                 
-                if controller.options[ 'pause_export_folders_sync' ] or HydrusThreading.IsThreadShuttingDown():
+                if controller.new_options.GetBoolean( 'pause_export_folders_sync' ) or HydrusThreading.IsThreadShuttingDown():
                     
                     break
                     
@@ -43,7 +43,7 @@ def DAEMONCheckImportFolders():
     
     controller = HG.client_controller
     
-    if not controller.options[ 'pause_import_folders_sync' ]:
+    if not controller.new_options.GetBoolean( 'pause_import_folders_sync' ):
         
         HG.import_folders_running = True
         
@@ -55,7 +55,7 @@ def DAEMONCheckImportFolders():
                 
                 import_folder = controller.Read( 'serialisable_named', HydrusSerialisable.SERIALISABLE_TYPE_IMPORT_FOLDER, name )
                 
-                if controller.options[ 'pause_import_folders_sync' ] or HydrusThreading.IsThreadShuttingDown():
+                if controller.new_options.GetBoolean( 'pause_import_folders_sync' ) or HydrusThreading.IsThreadShuttingDown():
                     
                     break
                     
@@ -69,7 +69,9 @@ def DAEMONCheckImportFolders():
             
         
     
-def DAEMONMaintainTrash( controller ):
+def DAEMONMaintainTrash():
+    
+    controller = HG.client_controller
     
     if HC.options[ 'trash_max_size' ] is not None:
         
@@ -93,7 +95,7 @@ def DAEMONMaintainTrash( controller ):
             
             content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, hashes )
             
-            service_keys_to_content_updates = { CC.TRASH_SERVICE_KEY : [ content_update ] }
+            service_keys_to_content_updates = { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] }
             
             controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
             
@@ -118,7 +120,7 @@ def DAEMONMaintainTrash( controller ):
             
             content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, hashes )
             
-            service_keys_to_content_updates = { CC.TRASH_SERVICE_KEY : [ content_update ] }
+            service_keys_to_content_updates = { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] }
             
             controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
             

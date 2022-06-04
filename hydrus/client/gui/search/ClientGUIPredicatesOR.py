@@ -4,9 +4,12 @@ from qtpy import QtWidgets as QW
 
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
+from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
+from hydrus.client import ClientLocation
 from hydrus.client import ClientSearch
+from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import QtPorting as QP
 
 # ultimately, rewrite acread to be two classes, acread and acreadthatsupportsor
@@ -31,15 +34,21 @@ class ORPredicateControl( QW.QWidget ):
         
         page_key = HydrusData.GenerateKey()
         
-        file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY, predicates = predicates )
+        location_context = HG.client_controller.new_options.GetDefaultLocalLocationContext()
+        
+        file_search_context = ClientSearch.FileSearchContext( location_context = location_context, predicates = predicates )
         
         self._search_control = ClientGUIACDropdown.AutoCompleteDropdownTagsRead( self, page_key, file_search_context, hide_favourites_edit_actions = True )
+        
+        self._search_control.setMinimumWidth( ClientGUIFunctions.ConvertTextToPixelWidth( self._search_control, 64 ) )
         
         vbox = QP.VBoxLayout()
         
         QP.AddToLayout( vbox, self._search_control, CC.FLAGS_EXPAND_BOTH_WAYS )
         
         self.setLayout( vbox )
+        
+        ClientGUIFunctions.SetFocusLater( self._search_control )
         
     
     def CheckValid( self ):

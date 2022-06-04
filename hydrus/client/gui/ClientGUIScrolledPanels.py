@@ -92,11 +92,11 @@ class ResizingScrolledPanel( QW.QScrollArea ):
             
             if size_hint.width() > screen_fill_factor * available_screen_size.width():
                 
-                size_hint.setWidth( screen_fill_factor * available_screen_size.width() )
+                size_hint.setWidth( int( screen_fill_factor * available_screen_size.width() ) )
                 
             if size_hint.height() > screen_fill_factor * available_screen_size.height():
                 
-                size_hint.setHeight( screen_fill_factor * available_screen_size.height() )
+                size_hint.setHeight( int( screen_fill_factor * available_screen_size.height() ) )
                 
             
             return size_hint
@@ -167,10 +167,11 @@ class EditPanel( ResizingScrolledPanel ):
         self.GetValue()
         
     
-class EditSingleCtrlPanel( EditPanel ):
+class EditSingleCtrlPanel( EditPanel, CAC.ApplicationCommandProcessorMixin ):
     
     def __init__( self, parent, ok_on_these_commands = None ):
         
+        CAC.ApplicationCommandProcessorMixin.__init__( self )
         EditPanel.__init__( self, parent )
         
         self._control = None
@@ -208,11 +209,9 @@ class EditSingleCtrlPanel( EditPanel ):
         
         command_processed = True
         
-        data = command.GetData()
-        
         if command.IsSimpleCommand():
             
-            action = data
+            action = command.GetSimpleAction()
             
             if action in self._ok_on_these_commands:
                 

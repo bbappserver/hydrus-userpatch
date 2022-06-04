@@ -405,6 +405,8 @@ class EditNetworkContextCustomHeadersPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _Edit( self ):
         
+        edited_datas = []
+        
         for data in self._list_ctrl.GetData( only_selected = True ):
             
             ( network_context, ( key, value ), approved, reason ) = data
@@ -425,12 +427,16 @@ class EditNetworkContextCustomHeadersPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     self._list_ctrl.AddDatas( ( new_data, ) )
                     
+                    edited_datas.append( new_data )
+                    
                 else:
                     
                     break
                     
                 
             
+        
+        self._list_ctrl.SelectDatas( edited_datas )
         
     
     def GetValue( self ):
@@ -591,7 +597,7 @@ class ReviewAllBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self._bandwidths.Sort()
         
-        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 5.0, self._Update )
+        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 5.0, 'repeating all bandwidth status update', self._Update )
         
         #
         
@@ -950,9 +956,9 @@ class ReviewNetworkContextBandwidthPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         #
         
-        self._rules_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 5.0, self._UpdateRules )
+        self._rules_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 5.0, 'repeating bandwidth rules update', self._UpdateRules )
         
-        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 1.0, self._Update )
+        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.5, 1.0, 'repeating bandwidth status update', self._Update )
         
     
     def _EditRules( self ):

@@ -88,7 +88,7 @@ class DialogChooseNewServiceMethod( Dialog ):
         
         Dialog.__init__( self, parent, 'how to set up the account?', position = 'center' )
         
-        register_message = 'I want to initialise a new account with the server. I have a registration key (a key starting with \'r\').'
+        register_message = 'I want to initialise a new account with the server. I have a registration token (a hexadecimal key starting with \'r\').'
         
         self._register = QW.QPushButton( register_message, self )
         self._register.clicked.connect( self.EventRegister )
@@ -101,7 +101,12 @@ class DialogChooseNewServiceMethod( Dialog ):
         vbox = QP.VBoxLayout()
         
         QP.AddToLayout( vbox, self._register, CC.FLAGS_EXPAND_PERPENDICULAR )
-        QP.AddToLayout( vbox, QP.MakeQLabelWithAlignment('-or-', self, QC.Qt.AlignHCenter | QC.Qt.AlignVCenter ), CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        st = ClientGUICommon.BetterStaticText( self, '-or-' )
+        
+        st.setAlignment( QC.Qt.AlignCenter )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._setup, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         self.setLayout( vbox )
@@ -112,7 +117,7 @@ class DialogChooseNewServiceMethod( Dialog ):
         
         self._should_register = False
         
-        HG.client_controller.CallAfterQtSafe( self._register, self._register.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._register )
         
     
     def EventRegister( self ):
@@ -135,7 +140,7 @@ class DialogGenerateNewAccounts( Dialog ):
         
         self._service_key = service_key
         
-        self._num = QP.MakeQSpinBox( self, min=1, max=10000, width = 80 )
+        self._num = ClientGUICommon.BetterSpinBox( self, min=1, max=10000, width = 80 )
         
         self._account_types = ClientGUICommon.BetterChoice( self )
         
@@ -198,7 +203,7 @@ class DialogGenerateNewAccounts( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( self._ok, self._ok.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._ok )
         
     
     def EventOK( self ):
@@ -356,7 +361,7 @@ class DialogInputLocalBooruShare( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( self._ok, self._ok.setFocus, QC.Qt.OtherFocusReason)
+        ClientGUIFunctions.SetFocusLater( self._ok )
         
     
     def EventCopyExternalShareURL( self ):
@@ -463,7 +468,7 @@ class DialogInputNamespaceRegex( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( self._ok, self._ok.setFocus, QC.Qt.OtherFocusReason)
+        ClientGUIFunctions.SetFocusLater( self._ok )
         
     
     def EventOK( self ):
@@ -514,7 +519,11 @@ class DialogInputTags( Dialog ):
         
         self._tags = ClientGUIListBoxes.ListBoxTagsStringsAddRemove( self, service_key, tag_display_type )
         
-        self._tag_autocomplete = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self, self.EnterTags, CC.LOCAL_FILE_SERVICE_KEY, service_key, null_entry_callable = self.OK, show_paste_button = True )
+        default_location_context = HG.client_controller.new_options.GetDefaultLocalLocationContext()
+        
+        self._tag_autocomplete = ClientGUIACDropdown.AutoCompleteDropdownTagsWrite( self, self.EnterTags, default_location_context, service_key, show_paste_button = True )
+        
+        self._tag_autocomplete.nullEntered.connect( self.OK )
         
         self._ok = ClientGUICommon.BetterButton( self, 'OK', self.done, QW.QDialog.Accepted )
         self._ok.setObjectName( 'HydrusAccept' )
@@ -557,7 +566,7 @@ class DialogInputTags( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( self._tag_autocomplete, self._tag_autocomplete.setFocus, QC.Qt.OtherFocusReason)
+        ClientGUIFunctions.SetFocusLater( self._tag_autocomplete )
         
 
     def EnterTags( self, tags ):
@@ -584,15 +593,15 @@ class DialogInputUPnPMapping( Dialog ):
         
         Dialog.__init__( self, parent, 'configure upnp mapping' )
         
-        self._external_port = QP.MakeQSpinBox( self, min=0, max=65535 )
+        self._external_port = ClientGUICommon.BetterSpinBox( self, min=0, max=65535 )
         
         self._protocol_type = ClientGUICommon.BetterChoice( self )
         self._protocol_type.addItem( 'TCP', 'TCP' )
         self._protocol_type.addItem( 'UDP', 'UDP' )
         
-        self._internal_port = QP.MakeQSpinBox( self, min=0, max=65535 )
+        self._internal_port = ClientGUICommon.BetterSpinBox( self, min=0, max=65535 )
         self._description = QW.QLineEdit( self )
-        self._duration = QP.MakeQSpinBox( self, min=0, max=86400 )
+        self._duration = ClientGUICommon.BetterSpinBox( self, min=0, max=86400 )
         
         self._ok = ClientGUICommon.BetterButton( self, 'OK', self.done, QW.QDialog.Accepted )
         self._ok.setObjectName( 'HydrusAccept' )
@@ -639,7 +648,7 @@ class DialogInputUPnPMapping( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( self._ok, self._ok.setFocus, QC.Qt.OtherFocusReason)
+        ClientGUIFunctions.SetFocusLater( self._ok )
         
     
     def GetInfo( self ):
@@ -769,75 +778,6 @@ class DialogSelectFromURLTree( Dialog ):
         return urls
         
     
-class DialogSelectImageboard( Dialog ):
-    
-    def __init__( self, parent ):
-        
-        Dialog.__init__( self, parent, 'select imageboard' )
-        
-        self._tree = QW.QTreeWidget( self )
-        self._tree.itemActivated.connect( self.EventActivate )
-        
-        #
-        
-        all_imageboards = HG.client_controller.Read( 'imageboards' )
-        
-        root_item = QW.QTreeWidgetItem()
-        root_item.setText( 0, 'all sites' )
-        self._tree.addTopLevelItem( root_item )
-        
-        for ( site, imageboards ) in list(all_imageboards.items()):
-
-            site_item = QW.QTreeWidgetItem()
-            site_item.setText( 0, site )
-            root_item.addChild( site_item )
-            
-            for imageboard in imageboards:
-                
-                name = imageboard.GetName()
-
-                imageboard_item = QW.QTreeWidgetItem()
-                imageboard_item.setText( 0, name )
-                imageboard_item.setData( 0, QC.Qt.UserRole, imageboard )
-                site_item.addChild( imageboard_item )
-                
-            
-        
-        root_item.setExpanded( True )
-        
-        #
-        
-        vbox = QP.VBoxLayout()
-        
-        QP.AddToLayout( vbox, self._tree, CC.FLAGS_EXPAND_BOTH_WAYS )
-        
-        self.setLayout( vbox )
-        
-        size_hint = self.sizeHint()
-        
-        size_hint.setWidth( max( size_hint.width(), 320 ) )
-        size_hint.setHeight( max( size_hint.height(), 640 ) )
-        
-        QP.SetInitialSize( self, size_hint )
-        
-    
-    def EventActivate( self, item, column ):
-        
-        data_object = item.data( 0, QC.Qt.UserRole )
-        
-        if data_object is None: item.setExpanded( not item.isExpanded() )
-        else: self.done( QW.QDialog.Accepted )
-        
-    
-    def GetImageboard( self ):
-        
-        items = self._tree.selectedItems()
-        
-        if len(items):
-            
-            return items[0].data( 0, QC.Qt.UserRole ).GetData()
-    
-
 class DialogTextEntry( Dialog ):
     
     def __init__( self, parent, message, default = '', placeholder = None, allow_blank = False, suggestions = None, max_chars = None, password_entry = False, min_char_width = 72 ):
@@ -1034,7 +974,7 @@ class DialogYesYesNo( Dialog ):
         
         QP.SetInitialSize( self, size_hint )
         
-        HG.client_controller.CallAfterQtSafe( yes_buttons[0], yes_buttons[0].setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( yes_buttons[0] )
         
     
     def _DoYes( self, value ):

@@ -14,7 +14,7 @@ from hydrus.client.gui import QtPorting as QP
 CHILD_POSITION_PADDING = 24
 FUZZY_PADDING = 10
 
-def GetSafePosition( position: QC.QPoint ):
+def GetSafePosition( position: QC.QPoint, frame_key ):
     
     # some window managers size the windows just off screen to cut off borders
     # so choose a test position that's a little more lenient
@@ -37,7 +37,7 @@ def GetSafePosition( position: QC.QPoint ):
             
             if rescue_screen == first_display:
                 
-                message = 'A window that wanted to display at "{}" was rescued from apparent off-screen to the new location at "{}".'.format( position, rescue_position )
+                message = 'A window with frame key "{}" that wanted to display at "{}" was rescued from apparent off-screen to the new location at "{}".'.format( frame_key, position, rescue_position )
                 
                 return ( rescue_position, message )
                 
@@ -49,7 +49,7 @@ def GetSafePosition( position: QC.QPoint ):
             HydrusData.PrintException( e )
             
         
-        message = 'A window that wanted to display at "{}" could not be rescued from off-screen! Please let hydrus dev know!'
+        message = 'A window with frame key "{}" that wanted to display at "{}" could not be rescued from off-screen! Please let hydrus dev know!'.format( frame_key, position )
         
         return ( None, message )
         
@@ -196,7 +196,7 @@ def SaveTLWSizeAndPosition( tlw: QW.QWidget, frame_key ):
     
     if not ( maximised or fullscreen ):
         
-        ( safe_position, position_message ) = GetSafePosition( tlw.pos() )
+        ( safe_position, position_message ) = GetSafePosition( tlw.pos(), frame_key )
         
         if safe_position is not None:
             
@@ -298,7 +298,7 @@ def SetInitialTLWSizeAndPosition( tlw: QW.QWidget, frame_key ):
             
         
     
-    ( safe_position, position_message ) = GetSafePosition( desired_position )
+    ( safe_position, position_message ) = GetSafePosition( desired_position, frame_key )
     
     if we_care_about_off_screen_messages and position_message is not None:
         
@@ -605,7 +605,6 @@ class Frame( QW.QWidget ):
         self.setWindowIcon( QG.QIcon( HG.client_controller.frame_icon_pixmap ) )
         
         self._widget_event_filter = QP.WidgetEventFilter( self )
-        self._widget_event_filter.EVT_CLOSE( self.EventAboutToClose )
         self._widget_event_filter.EVT_MOVE( self.EventMove )
         
         HG.client_controller.ResetIdleTimer()
@@ -616,11 +615,9 @@ class Frame( QW.QWidget ):
         pass
         
     
-    def EventAboutToClose( self, event ):
+    def closeEvent( self, event ):
         
         self.CleanBeforeDestroy()
-        
-        return True # was: event.ignore()
         
     
     def EventMove( self, event ):
@@ -648,7 +645,6 @@ class MainFrame( QW.QMainWindow ):
         self.setWindowIcon( QG.QIcon( HG.client_controller.frame_icon_pixmap ) )
         
         self._widget_event_filter = QP.WidgetEventFilter( self )
-        self._widget_event_filter.EVT_CLOSE( self.EventAboutToClose )
         
         HG.client_controller.ResetIdleTimer()
         
@@ -658,11 +654,9 @@ class MainFrame( QW.QMainWindow ):
         pass
         
     
-    def EventAboutToClose( self, event ):
+    def closeEvent( self, event ):
         
         self.CleanBeforeDestroy()
-        
-        return True # was: event.ignore()
         
     
 class FrameThatResizes( Frame ):
@@ -675,14 +669,21 @@ class FrameThatResizes( Frame ):
         
         self._widget_event_filter.EVT_SIZE( self.EventSizeAndPositionChanged )
         self._widget_event_filter.EVT_MOVE_END( self.EventSizeAndPositionChanged )
-        self._widget_event_filter.EVT_CLOSE( self.EventSizeAndPositionChanged )
         self._widget_event_filter.EVT_MAXIMIZE( self.EventSizeAndPositionChanged )
+        
+    
+    def CleanBeforeDestroy( self ):
+        
+        MainFrame.CleanBeforeDestroy( self )
+        
+        # maximise sends a pre-maximise size event that poisons last_size if this is immediate
+        HG.client_controller.CallLaterQtSafe( self, 0.1, 'save frame size and position: {}'.format( self._frame_key ), SaveTLWSizeAndPosition, self, self._frame_key )
         
     
     def EventSizeAndPositionChanged( self, event ):
         
         # maximise sends a pre-maximise size event that poisons last_size if this is immediate
-        HG.client_controller.CallLaterQtSafe( self, 0.1, SaveTLWSizeAndPosition, self, self._frame_key )
+        HG.client_controller.CallLaterQtSafe( self, 0.1, 'save frame size and position: {}'.format( self._frame_key ), SaveTLWSizeAndPosition, self, self._frame_key )
         
         return True # was: event.ignore()
         
@@ -699,13 +700,21 @@ class MainFrameThatResizes( MainFrame ):
 
         self._widget_event_filter.EVT_SIZE( self.EventSizeAndPositionChanged )
         self._widget_event_filter.EVT_MOVE_END( self.EventSizeAndPositionChanged )
-        self._widget_event_filter.EVT_CLOSE( self.EventSizeAndPositionChanged )
         self._widget_event_filter.EVT_MAXIMIZE( self.EventSizeAndPositionChanged )
+        
 
+    def CleanBeforeDestroy( self ):
+        
+        MainFrame.CleanBeforeDestroy( self )
+        
+        # maximise sends a pre-maximise size event that poisons last_size if this is immediate
+        HG.client_controller.CallLaterQtSafe( self, 0.1, 'save frame size and position: {}'.format( self._frame_key ), SaveTLWSizeAndPosition, self, self._frame_key )
+        
+    
     def EventSizeAndPositionChanged( self, event ):
         
         # maximise sends a pre-maximise size event that poisons last_size if this is immediate
-        HG.client_controller.CallLaterQtSafe( self, 0.1, SaveTLWSizeAndPosition, self, self._frame_key )
+        HG.client_controller.CallLaterQtSafe( self, 0.1, 'save frame size and position: {}'.format( self._frame_key ), SaveTLWSizeAndPosition, self, self._frame_key )
 
         return True # was: event.ignore()
         

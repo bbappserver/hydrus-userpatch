@@ -12,14 +12,13 @@ from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusTags
 
 from hydrus.client import ClientConstants as CC
-from hydrus.client import ClientServices
-from hydrus.client.metadata import ClientTags
+from hydrus.client import ClientLocation
 
 class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_TAG_AUTOCOMPLETE_OPTIONS
     SERIALISABLE_NAME = 'Tag Autocomplete Options'
-    SERIALISABLE_VERSION = 3
+    SERIALISABLE_VERSION = 4
     
     def __init__( self, service_key: typing.Optional[ bytes ] = None ):
         
@@ -34,15 +33,15 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         
         self._write_autocomplete_tag_domain = self._service_key
         
-        self._override_write_autocomplete_file_domain = True
+        self._override_write_autocomplete_location_context = True
         
         if service_key == CC.DEFAULT_LOCAL_TAG_SERVICE_KEY:
             
-            self._write_autocomplete_file_domain = CC.LOCAL_FILE_SERVICE_KEY
+            self._write_autocomplete_location_context = ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY )
             
         else:
             
-            self._write_autocomplete_file_domain = CC.COMBINED_FILE_SERVICE_KEY
+            self._write_autocomplete_location_context = ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_FILE_SERVICE_KEY )
             
         
         self._search_namespaces_into_full_tags = False
@@ -58,13 +57,13 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         serialisable_service_key = self._service_key.hex()
         
         serialisable_write_autocomplete_tag_domain = self._write_autocomplete_tag_domain.hex()
-        serialisable_write_autocomplete_file_domain = self._write_autocomplete_file_domain.hex()
+        serialisable_write_autocomplete_location_context = self._write_autocomplete_location_context.GetSerialisableTuple()
         
         serialisable_info = [
             serialisable_service_key,
             serialisable_write_autocomplete_tag_domain,
-            self._override_write_autocomplete_file_domain,
-            serialisable_write_autocomplete_file_domain,
+            self._override_write_autocomplete_location_context,
+            serialisable_write_autocomplete_location_context,
             self._search_namespaces_into_full_tags,
             self._namespace_bare_fetch_all_allowed,
             self._namespace_fetch_all_allowed,
@@ -81,8 +80,8 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         [
             serialisable_service_key,
             serialisable_write_autocomplete_tag_domain,
-            self._override_write_autocomplete_file_domain,
-            serialisable_write_autocomplete_file_domain,
+            self._override_write_autocomplete_location_context,
+            serialisable_write_autocomplete_location_context,
             self._search_namespaces_into_full_tags,
             self._namespace_bare_fetch_all_allowed,
             self._namespace_fetch_all_allowed,
@@ -93,7 +92,7 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         
         self._service_key = bytes.fromhex( serialisable_service_key )
         self._write_autocomplete_tag_domain = bytes.fromhex( serialisable_write_autocomplete_tag_domain )
-        self._write_autocomplete_file_domain = bytes.fromhex( serialisable_write_autocomplete_file_domain )
+        self._write_autocomplete_location_context = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_write_autocomplete_location_context )
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -103,7 +102,7 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
             [
                 serialisable_service_key,
                 serialisable_write_autocomplete_tag_domain,
-                override_write_autocomplete_file_domain,
+                override_write_autocomplete_location_context,
                 serialisable_write_autocomplete_file_domain,
                 search_namespaces_into_full_tags,
                 namespace_fetch_all_allowed,
@@ -115,7 +114,7 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
             new_serialisable_info = [
                 serialisable_service_key,
                 serialisable_write_autocomplete_tag_domain,
-                override_write_autocomplete_file_domain,
+                override_write_autocomplete_location_context,
                 serialisable_write_autocomplete_file_domain,
                 search_namespaces_into_full_tags,
                 namespace_bare_fetch_all_allowed,
@@ -132,7 +131,7 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
             [
                 serialisable_service_key,
                 serialisable_write_autocomplete_tag_domain,
-                override_write_autocomplete_file_domain,
+                override_write_autocomplete_location_context,
                 serialisable_write_autocomplete_file_domain,
                 search_namespaces_into_full_tags,
                 namespace_bare_fetch_all_allowed,
@@ -146,7 +145,7 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
             new_serialisable_info = [
                 serialisable_service_key,
                 serialisable_write_autocomplete_tag_domain,
-                override_write_autocomplete_file_domain,
+                override_write_autocomplete_location_context,
                 serialisable_write_autocomplete_file_domain,
                 search_namespaces_into_full_tags,
                 namespace_bare_fetch_all_allowed,
@@ -157,6 +156,42 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
             ]
             
             return ( 3, new_serialisable_info )
+            
+        
+        if version == 3:
+            
+            [
+                serialisable_service_key,
+                serialisable_write_autocomplete_tag_domain,
+                override_write_autocomplete_location_context,
+                serialisable_write_autocomplete_file_domain,
+                search_namespaces_into_full_tags,
+                namespace_bare_fetch_all_allowed,
+                namespace_fetch_all_allowed,
+                fetch_all_allowed,
+                fetch_results_automatically,
+                exact_match_character_threshold
+            ] = old_serialisable_info
+            
+            file_service_key = bytes.fromhex( serialisable_write_autocomplete_file_domain )
+            location_context = ClientLocation.LocationContext.STATICCreateSimple( file_service_key )
+            
+            serialisable_write_autocomplete_location_context = location_context.GetSerialisableTuple()
+            
+            new_serialisable_info = [
+                serialisable_service_key,
+                serialisable_write_autocomplete_tag_domain,
+                override_write_autocomplete_location_context,
+                serialisable_write_autocomplete_location_context,
+                search_namespaces_into_full_tags,
+                namespace_bare_fetch_all_allowed,
+                namespace_fetch_all_allowed,
+                fetch_all_allowed,
+                fetch_results_automatically,
+                exact_match_character_threshold
+            ]
+            
+            return ( 4, new_serialisable_info )
             
         
     
@@ -180,31 +215,31 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         return self._service_key
         
     
-    def GetWriteAutocompleteFileDomain( self ):
+    def GetWriteAutocompleteLocationContext( self ) -> ClientLocation.LocationContext:
         
-        return self._write_autocomplete_file_domain
+        return self._write_autocomplete_location_context
         
     
-    def GetWriteAutocompleteServiceKeys( self, file_service_key: bytes ):
+    def GetWriteAutocompleteSearchDomain( self, location_context: ClientLocation.LocationContext ):
         
         tag_service_key = self._service_key
         
         if self._service_key != CC.COMBINED_TAG_SERVICE_KEY:
             
-            if self._override_write_autocomplete_file_domain:
+            if self._override_write_autocomplete_location_context:
                 
-                file_service_key = self._write_autocomplete_file_domain
+                location_context = self._write_autocomplete_location_context.Duplicate()
                 
             
             tag_service_key = self._write_autocomplete_tag_domain
             
         
-        if file_service_key == CC.COMBINED_FILE_SERVICE_KEY and tag_service_key == CC.COMBINED_TAG_SERVICE_KEY: # ruh roh
+        if location_context.IsAllKnownFiles() and tag_service_key == CC.COMBINED_TAG_SERVICE_KEY: # ruh roh
             
-            file_service_key = CC.COMBINED_LOCAL_FILE_SERVICE_KEY
+            location_context = ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
             
         
-        return ( file_service_key, tag_service_key )
+        return ( location_context, tag_service_key )
         
     
     def GetWriteAutocompleteTagDomain( self ):
@@ -222,9 +257,9 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
         return self._namespace_fetch_all_allowed
         
     
-    def OverridesWriteAutocompleteFileDomain( self ):
+    def OverridesWriteAutocompleteLocationContext( self ):
         
-        return self._override_write_autocomplete_file_domain
+        return self._override_write_autocomplete_location_context
         
     
     def SearchNamespacesIntoFullTags( self ):
@@ -244,8 +279,8 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
     
     def SetTuple( self,
         write_autocomplete_tag_domain: bytes,
-        override_write_autocomplete_file_domain: bool,
-        write_autocomplete_file_domain: bytes,
+        override_write_autocomplete_location_context: bool,
+        write_autocomplete_location_context: ClientLocation.LocationContext,
         search_namespaces_into_full_tags: bool,
         namespace_bare_fetch_all_allowed: bool,
         namespace_fetch_all_allowed: bool,
@@ -253,8 +288,8 @@ class TagAutocompleteOptions( HydrusSerialisable.SerialisableBase ):
     ):
         
         self._write_autocomplete_tag_domain = write_autocomplete_tag_domain
-        self._override_write_autocomplete_file_domain = override_write_autocomplete_file_domain
-        self._write_autocomplete_file_domain = write_autocomplete_file_domain
+        self._override_write_autocomplete_location_context = override_write_autocomplete_location_context
+        self._write_autocomplete_location_context = write_autocomplete_location_context
         self._search_namespaces_into_full_tags = search_namespaces_into_full_tags
         self._namespace_bare_fetch_all_allowed = namespace_bare_fetch_all_allowed
         self._namespace_fetch_all_allowed = namespace_fetch_all_allowed
@@ -290,7 +325,7 @@ class TagDisplayMaintenanceManager( object ):
         self._controller.sub( self, 'NotifyNewDisplayData', 'notify_new_tag_display_application' )
         
     
-    def _GetAfterWorkWaitTime( self, service_key ):
+    def _GetAfterWorkWaitTime( self, service_key, expected_work_time, actual_work_time ):
         
         with self._lock:
             
@@ -311,7 +346,16 @@ class TagDisplayMaintenanceManager( object ):
             
         else:
             
-            return 30
+            if actual_work_time > expected_work_time * 5:
+                
+                # if suddenly a job blats the user for ten seconds or _ten minutes_ during normal time, we are going to take a big break
+                
+                return 1800
+                
+            else:
+                
+                return 30
+                
             
         
     
@@ -405,7 +449,10 @@ class TagDisplayMaintenanceManager( object ):
                 
                 status = self._controller.Read( 'tag_display_maintenance_status', service_key )
                 
-                self._service_keys_to_needs_work[ service_key ] = status[ 'num_siblings_to_sync' ] + status[ 'num_parents_to_sync' ] > 0
+                work_to_do = status[ 'num_siblings_to_sync' ] + status[ 'num_parents_to_sync' ] > 0
+                sync_halted = len( status[ 'waiting_on_tag_repos' ] ) > 0
+                
+                self._service_keys_to_needs_work[ service_key ] = work_to_do and not sync_halted
                 
             
             if self._service_keys_to_needs_work[ service_key ]:
@@ -444,6 +491,11 @@ class TagDisplayMaintenanceManager( object ):
         self.Wake()
         
     
+    def GetName( self ):
+        
+        return 'tag display maintenance'
+        
+    
     def IsShutdown( self ):
         
         return self._mainloop_finished
@@ -457,7 +509,9 @@ class TagDisplayMaintenanceManager( object ):
             
             self._wake_event.wait( INIT_WAIT )
             
-            while not ( HG.view_shutdown or self._shutdown ):
+            while not ( HG.started_shutdown or self._shutdown ):
+                
+                self._controller.WaitUntilViewFree()
                 
                 if self._WorkPermitted() and self._WorkToDo():
                     
@@ -474,11 +528,17 @@ class TagDisplayMaintenanceManager( object ):
                     
                     work_time = self._GetWorkTime( service_key )
                     
+                    start_time = HydrusData.GetNowPrecise()
+                    
                     still_needs_work = self._controller.WriteSynchronous( 'sync_tag_display_maintenance', service_key, work_time )
+                    
+                    finish_time = HydrusData.GetNowPrecise()
+                    
+                    total_time_took = finish_time - start_time
                     
                     self._service_keys_to_needs_work[ service_key ] = still_needs_work
                     
-                    wait_time = self._GetAfterWorkWaitTime( service_key )
+                    wait_time = self._GetAfterWorkWaitTime( service_key, work_time, total_time_took )
                     
                     self._last_loop_work_time = work_time
                     

@@ -1,3 +1,4 @@
+import collections
 import os
 import re
 
@@ -12,6 +13,7 @@ from hydrus.core import HydrusThreading
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientFiles
+from hydrus.client import ClientLocation
 from hydrus.client import ClientPaths
 from hydrus.client import ClientSearch
 from hydrus.client.media import ClientMediaManagers
@@ -20,7 +22,7 @@ from hydrus.client.metadata import ClientTagSorting
 
 MAX_PATH_LENGTH = 240 # bit of padding from 255 for .txt neigbouring and other surprises
 
-def GenerateExportFilename( destination_directory, media, terms, append_number = None ):
+def GenerateExportFilename( destination_directory, media, terms, do_not_use_filenames = None ):
     
     def clean_tag_text( t ):
         
@@ -143,12 +145,25 @@ def GenerateExportFilename( destination_directory, media, terms, append_number =
         filename = filename[ : - excess_chars ]
         
     
-    if append_number is not None:
+    if do_not_use_filenames is not None:
         
-        filename += ' ({})'.format( append_number )
+        i = 1
         
-    
-    filename += ext
+        possible_filename = '{}{}'.format( filename, ext )
+        
+        while possible_filename in do_not_use_filenames:
+            
+            possible_filename = '{} ({}){}'.format( filename, i, ext )
+            
+            i += 1
+            
+        
+        filename = possible_filename
+        
+    else:
+        
+        filename += ext
+        
     
     return filename
     
@@ -276,7 +291,9 @@ class ExportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         if file_search_context is None:
             
-            file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY )
+            default_location_context = HG.client_controller.new_options.GetDefaultLocalLocationContext()
+            
+            file_search_context = ClientSearch.FileSearchContext( location_context = default_location_context )
             
         
         if phrase is None:
@@ -377,7 +394,7 @@ class ExportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         while i < len( query_hash_ids ):
             
-            if HC.options[ 'pause_export_folders_sync' ] or HydrusThreading.IsThreadShuttingDown():
+            if HG.client_controller.new_options.GetBoolean( 'pause_export_folders_sync' ) or HydrusThreading.IsThreadShuttingDown():
                 
                 return
                 
@@ -413,7 +430,7 @@ class ExportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         for media_result in media_results:
             
-            if HC.options[ 'pause_export_folders_sync' ] or HydrusThreading.IsThreadShuttingDown():
+            if HG.client_controller.new_options.GetBoolean( 'pause_export_folders_sync' ) or HydrusThreading.IsThreadShuttingDown():
                 
                 return
                 
@@ -452,7 +469,7 @@ class ExportFolder( HydrusSerialisable.SerialisableBaseNamed ):
                     
                     num_copied += 1
                     
-                    HydrusPaths.MakeFileWriteable( dest_path )
+                    HydrusPaths.TryToGiveFileNicePermissionBits( dest_path )
                     
                 
             
@@ -510,17 +527,41 @@ class ExportFolder( HydrusSerialisable.SerialisableBaseNamed ):
         
         if self._delete_from_client_after_export:
             
-            deletee_hashes = { media_result.GetHash() for media_result in media_results }
+            local_file_service_keys = HG.client_controller.services_manager.GetServiceKeys( ( HC.LOCAL_FILE_DOMAIN, ) )
             
-            chunks_of_hashes = HydrusData.SplitListIntoChunks( deletee_hashes, 64 )
+            service_keys_to_deletee_hashes = collections.defaultdict( list )
+            
+            delete_lock_for_archived_files = HG.client_controller.new_options.GetBoolean( 'delete_lock_for_archived_files' )
+            
+            for media_result in media_results:
+                
+                if delete_lock_for_archived_files and not media_result.GetInbox():
+                    
+                    continue
+                    
+                
+                hash = media_result.GetHash()
+                
+                deletee_service_keys = media_result.GetLocationsManager().GetCurrent().intersection( local_file_service_keys )
+                
+                for deletee_service_key in deletee_service_keys:
+                    
+                    service_keys_to_deletee_hashes[ deletee_service_key ].append( hash )
+                    
+                
             
             reason = 'Deleted after export to Export Folder "{}".'.format( self._path )
             
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes, reason = reason ) for chunk_of_hashes in chunks_of_hashes ]
-            
-            for content_update in content_updates:
+            for ( service_key, deletee_hashes ) in service_keys_to_deletee_hashes.items():
                 
-                HG.client_controller.WriteSynchronous( 'content_updates', { CC.LOCAL_FILE_SERVICE_KEY : [ content_update ] } )
+                chunks_of_hashes = HydrusData.SplitListIntoChunks( deletee_hashes, 64 )
+                
+                for chunk_of_hashes in chunks_of_hashes:
+                    
+                    content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes, reason = reason )
+                    
+                    HG.client_controller.WriteSynchronous( 'content_updates', { service_key : [ content_update ] } )
+                    
                 
             
         
@@ -661,7 +702,7 @@ class SidecarExporter( HydrusSerialisable.SerialisableBase ):
             
             with open( txt_path, 'w', encoding = 'utf-8' ) as f:
                 
-                f.write( os.linesep.join( tags ) )
+                f.write( '\n'.join( tags ) )
                 
             
         

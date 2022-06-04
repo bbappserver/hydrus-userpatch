@@ -9,7 +9,7 @@ from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client.networking import ClientNetworkingContexts
-from hydrus.client.networking import ClientNetworkingDomain
+from hydrus.client.networking import ClientNetworkingFunctions
 
 try:
     
@@ -26,7 +26,7 @@ class NetworkSessionManagerSessionContainer( HydrusSerialisable.SerialisableBase
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_NETWORK_SESSION_MANAGER_SESSION_CONTAINER
     SERIALISABLE_NAME = 'Session Manager Session Container'
-    SERIALISABLE_VERSION = 1
+    SERIALISABLE_VERSION = 2
     
     def __init__( self, name, network_context = None, session = None ):
         
@@ -55,29 +55,56 @@ class NetworkSessionManagerSessionContainer( HydrusSerialisable.SerialisableBase
         
         serialisable_network_context = self.network_context.GetSerialisableTuple()
         
-        pickled_session_hex = pickle.dumps( self.session ).hex()
+        self.session.cookies.clear_session_cookies()
         
-        return ( serialisable_network_context, pickled_session_hex )
+        pickled_cookies_hex = pickle.dumps( self.session.cookies ).hex()
+        
+        return ( serialisable_network_context, pickled_cookies_hex )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( serialisable_network_context, pickled_session_hex ) = serialisable_info
+        ( serialisable_network_context, pickled_cookies_hex ) = serialisable_info
         
         self.network_context = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_network_context )
         
+        self._InitialiseEmptySession()
+        
         try:
             
-            self.session = pickle.loads( bytes.fromhex( pickled_session_hex ) )
+            cookies = pickle.loads( bytes.fromhex( pickled_cookies_hex ) )
+            
+            self.session.cookies = cookies
             
         except:
             
-            # a new version of requests messed this up lad, so reset
-            
-            self._InitialiseEmptySession()
+            HydrusData.Print( "Could not load and set cookies for session {}".format( self.network_context ) )
             
         
         self.session.cookies.clear_session_cookies()
+        
+    
+    def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
+        
+        if version == 1:
+            
+            ( serialisable_network_context, pickled_session_hex ) = old_serialisable_info
+            
+            try:
+                
+                session = pickle.loads( bytes.fromhex( pickled_session_hex ) )
+                
+            except:
+                
+                session = requests.Session()
+                
+            
+            pickled_cookies_hex = pickle.dumps( session.cookies ).hex()
+            
+            new_serialisable_info = ( serialisable_network_context, pickled_cookies_hex )
+            
+            return ( 2, new_serialisable_info )
+            
         
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_NETWORK_SESSION_MANAGER_SESSION_CONTAINER ] = NetworkSessionManagerSessionContainer
@@ -93,8 +120,6 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
     def __init__( self ):
         
         HydrusSerialisable.SerialisableBase.__init__( self )
-        
-        self.engine = None
         
         self._dirty = False
         self._dirty_session_container_names = set()
@@ -143,7 +168,7 @@ class NetworkSessionManager( HydrusSerialisable.SerialisableBase ):
         # just in case one of these slips through somehow
         if network_context.context_type == CC.NETWORK_CONTEXT_DOMAIN:
             
-            second_level_domain = ClientNetworkingDomain.ConvertDomainIntoSecondLevelDomain( network_context.context_data )
+            second_level_domain = ClientNetworkingFunctions.ConvertDomainIntoSecondLevelDomain( network_context.context_data )
             
             network_context = ClientNetworkingContexts.NetworkContext( CC.NETWORK_CONTEXT_DOMAIN, second_level_domain )
             

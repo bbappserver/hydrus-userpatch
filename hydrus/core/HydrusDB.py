@@ -6,6 +6,7 @@ import sqlite3
 import traceback
 import time
 
+from hydrus.core import HydrusDBBase
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusEncryption
@@ -27,15 +28,15 @@ def CheckCanVacuumCursor( db_path, c, stop_time = None ):
     ( page_count, ) = c.execute( 'PRAGMA page_count;' ).fetchone()
     ( freelist_count, ) = c.execute( 'PRAGMA freelist_count;' ).fetchone()
     
-    db_size = ( page_count - freelist_count ) * page_size
+    CheckCanVacuumData( db_path, page_size, page_count, freelist_count, stop_time = stop_time )
     
-    vacuum_estimate = int( db_size * 1.2 )
+def CheckCanVacuumData( db_path, page_size, page_count, freelist_count, stop_time = None ):
+    
+    db_size = ( page_count - freelist_count ) * page_size
     
     if stop_time is not None:
         
-        approx_vacuum_speed_mb_per_s = 1048576 * 1
-        
-        approx_vacuum_duration = vacuum_estimate // approx_vacuum_speed_mb_per_s
+        approx_vacuum_duration = GetApproxVacuumDuration( db_size )
         
         time_i_will_have_to_start = stop_time - approx_vacuum_duration
         
@@ -47,14 +48,17 @@ def CheckCanVacuumCursor( db_path, c, stop_time = None ):
     
     db_dir = os.path.dirname( db_path )
     
-    HydrusPaths.CheckHasSpaceForDBTransaction( db_dir, vacuum_estimate )
+    HydrusDBBase.CheckHasSpaceForDBTransaction( db_dir, db_size )
     
-def GetRowCount( c: sqlite3.Cursor ):
+def GetApproxVacuumDuration( db_size ):
     
-    row_count = c.rowcount
+    vacuum_estimate = int( db_size * 1.2 )
     
-    if row_count == -1: return 0
-    else: return row_count
+    approx_vacuum_speed_mb_per_s = 1048576 * 1
+    
+    approx_vacuum_duration = vacuum_estimate // approx_vacuum_speed_mb_per_s
+    
+    return approx_vacuum_duration
     
 def ReadFromCancellableCursor( cursor, largest_group_size, cancelled_hook = None ):
     
@@ -111,9 +115,7 @@ def ReadLargeIdQueryInSeparateChunks( cursor, select_statement, chunk_size ):
         
         i += len( chunk )
         
-        num_done = i + 1
-        
-        yield ( chunk, num_done, num_to_do )
+        yield ( chunk, i, num_to_do )
         
     
     cursor.execute( 'DROP TABLE ' + table_name + ';' )
@@ -154,115 +156,7 @@ def VacuumDB( db_path ):
     
     c.execute( 'PRAGMA journal_mode = {};'.format( HG.db_journal_mode ) )
     
-class DBCursorTransactionWrapper( object ):
-    
-    def __init__( self, c: sqlite3.Cursor, transaction_commit_period: int ):
-        
-        self._c = c
-        
-        self._transaction_commit_period = transaction_commit_period
-        
-        self._transaction_start_time = 0
-        self._in_transaction = False
-        self._transaction_contains_writes = False
-        
-        self._last_mem_refresh_time = HydrusData.GetNow()
-        self._last_wal_checkpoint_time = HydrusData.GetNow()
-        
-    
-    def BeginImmediate( self ):
-        
-        if not self._in_transaction:
-            
-            self._c.execute( 'BEGIN IMMEDIATE;' )
-            self._c.execute( 'SAVEPOINT hydrus_savepoint;' )
-            
-            self._transaction_start_time = HydrusData.GetNow()
-            self._in_transaction = True
-            self._transaction_contains_writes = False
-            
-        
-    
-    def Commit( self ):
-        
-        if self._in_transaction:
-            
-            self._c.execute( 'COMMIT;' )
-            
-            self._in_transaction = False
-            self._transaction_contains_writes = False
-            
-            if HG.db_journal_mode == 'WAL' and HydrusData.TimeHasPassed( self._last_wal_checkpoint_time + 1800 ):
-                
-                self._c.execute( 'PRAGMA wal_checkpoint(PASSIVE);' )
-                
-                self._last_wal_checkpoint_time = HydrusData.GetNow()
-                
-            
-            if HydrusData.TimeHasPassed( self._last_mem_refresh_time + 600 ):
-                
-                self._c.execute( 'DETACH mem;' )
-                self._c.execute( 'ATTACH ":memory:" AS mem;' )
-                
-                TemporaryIntegerTableNameCache.instance().Clear()
-                
-                self._last_mem_refresh_time = HydrusData.GetNow()
-                
-            
-        else:
-            
-            HydrusData.Print( 'Received a call to commit, but was not in a transaction!' )
-            
-        
-    
-    def CommitAndBegin( self ):
-        
-        if self._in_transaction:
-            
-            self.Commit()
-            
-            self.BeginImmediate()
-            
-        
-    
-    def InTransaction( self ):
-        
-        return self._in_transaction
-        
-    
-    def NotifyWriteOccuring( self ):
-        
-        self._transaction_contains_writes = True
-        
-    
-    def Rollback( self ):
-        
-        if self._in_transaction:
-            
-            self._c.execute( 'ROLLBACK TO hydrus_savepoint;' )
-            
-            # still in transaction
-            # transaction may no longer contain writes, but it isn't important to figure out that it doesn't
-            
-        else:
-            
-            HydrusData.Print( 'Received a call to rollback, but was not in a transaction!' )
-            
-        
-    
-    def Save( self ):
-        
-        self._c.execute( 'RELEASE hydrus_savepoint;' )
-        
-        self._c.execute( 'SAVEPOINT hydrus_savepoint;' )
-        
-    
-    def TimeToCommit( self ):
-        
-        return self._in_transaction and self._transaction_contains_writes and HydrusData.TimeHasPassed( self._transaction_start_time + self._transaction_commit_period )
-        
-    
-class HydrusDB( object ):
+class HydrusDB( HydrusDBBase.DBBase ):
     
     READ_WRITE_ACTIONS = []
     UPDATE_WAIT = 2
@@ -274,13 +168,15 @@ class HydrusDB( object ):
             raise Exception( 'Sorry, it looks like the db partition has less than 500MB, please free up some space.' )
             
         
+        HydrusDBBase.DBBase.__init__( self )
+        
         self._controller = controller
         self._db_dir = db_dir
         self._db_name = db_name
         
         self._modules = []
         
-        TemporaryIntegerTableNameCache()
+        HydrusDBBase.TemporaryIntegerTableNameCache()
         
         self._ssl_cert_filename = '{}.crt'.format( self._db_name )
         self._ssl_key_filename = '{}.key'.format( self._db_name )
@@ -301,6 +197,29 @@ class HydrusDB( object ):
         
         self._durable_temp_db_filename = db_name + '.temp.db'
         
+        durable_temp_db_path = os.path.join( self._db_dir, self._durable_temp_db_filename )
+        
+        if os.path.exists( durable_temp_db_path ):
+            
+            HydrusPaths.DeletePath( durable_temp_db_path )
+            
+            wal_lad = durable_temp_db_path + '-wal'
+            
+            if os.path.exists( wal_lad ):
+                
+                HydrusPaths.DeletePath( wal_lad )
+                
+            
+            shm_lad = durable_temp_db_path + '-shm'
+            
+            if os.path.exists( shm_lad ):
+                
+                HydrusPaths.DeletePath( shm_lad )
+                
+            
+            HydrusData.Print( 'Found and deleted the durable temporary database on boot. The last exit was probably not clean.' )
+            
+        
         self._InitExternalDatabases()
         
         self._is_first_start = False
@@ -312,14 +231,13 @@ class HydrusDB( object ):
         self._could_not_initialise = False
         
         self._jobs = queue.Queue()
-        self._pubsubs = []
         
         self._currently_doing_job = False
         self._current_status = ''
         self._current_job_name = ''
         
         self._db = None
-        self._c = None
+        self._is_connected = False
         
         self._cursor_transaction_wrapper = None
         
@@ -328,12 +246,12 @@ class HydrusDB( object ):
             # open and close to clean up in case last session didn't close well
             
             self._InitDB()
-            self._CloseDBCursor()
+            self._CloseDBConnection()
             
         
         self._InitDB()
         
-        ( version, ) = self._c.execute( 'SELECT version FROM version;' ).fetchone()
+        ( version, ) = self._Execute( 'SELECT version FROM version;' ).fetchone()
         
         if version > HC.SOFTWARE_VERSION:
             
@@ -350,7 +268,7 @@ class HydrusDB( object ):
             raise Exception( 'Your current database version of hydrus ' + str( version ) + ' is too old for this software version ' + str( HC.SOFTWARE_VERSION ) + ' to update. Please try updating with version ' + str( version + 45 ) + ' or earlier first.' )
             
         
-        self._RepairDB()
+        self._RepairDB( version )
         
         while version < HC.SOFTWARE_VERSION:
             
@@ -391,10 +309,10 @@ class HydrusDB( object ):
                 raise e
                 
             
-            ( version, ) = self._c.execute( 'SELECT version FROM version;' ).fetchone()
+            ( version, ) = self._Execute( 'SELECT version FROM version;' ).fetchone()
             
         
-        self._CloseDBCursor()
+        self._CloseDBConnection()
         
         self._controller.CallToThreadLongRunning( self.MainLoop )
         
@@ -413,13 +331,13 @@ class HydrusDB( object ):
         
         # this is useful to do after populating a temp table so the query planner can decide which index to use in a big join that uses it
         
-        self._c.execute( 'ANALYZE {};'.format( temp_table_name ) )
-        self._c.execute( 'ANALYZE mem.sqlite_master;' ) # this reloads the current stats into the query planner, may no longer be needed
+        self._Execute( 'ANALYZE {};'.format( temp_table_name ) )
+        self._Execute( 'ANALYZE mem.sqlite_master;' ) # this reloads the current stats into the query planner, may no longer be needed
         
     
     def _AttachExternalDatabases( self ):
         
-        for ( name, filename ) in list(self._db_filenames.items()):
+        for ( name, filename ) in self._db_filenames.items():
             
             if name == 'main':
                 
@@ -428,22 +346,27 @@ class HydrusDB( object ):
             
             db_path = os.path.join( self._db_dir, filename )
             
-            self._c.execute( 'ATTACH ? AS ' + name + ';', ( db_path, ) )
+            if os.path.exists( db_path ) and not HydrusPaths.FileisWriteable( db_path ):
+                
+                raise HydrusExceptions.DBAccessException( '"{}" seems to be read-only!'.format( db_path ) )
+                
+            
+            self._Execute( 'ATTACH ? AS ' + name + ';', ( db_path, ) )
             
         
         db_path = os.path.join( self._db_dir, self._durable_temp_db_filename )
         
-        self._c.execute( 'ATTACH ? AS durable_temp;', ( db_path, ) )
+        self._Execute( 'ATTACH ? AS durable_temp;', ( db_path, ) )
         
     
     def _CleanAfterJobWork( self ):
         
-        self._pubsubs = []
+        self._cursor_transaction_wrapper.CleanPubSubs()
         
     
-    def _CloseDBCursor( self ):
+    def _CloseDBConnection( self ):
         
-        TemporaryIntegerTableNameCache.instance().Clear()
+        HydrusDBBase.TemporaryIntegerTableNameCache.instance().Clear()
         
         if self._db is not None:
             
@@ -452,14 +375,15 @@ class HydrusDB( object ):
                 self._cursor_transaction_wrapper.Commit()
                 
             
-            self._c.close()
+            self._CloseCursor()
+            
             self._db.close()
             
-            del self._c
             del self._db
             
             self._db = None
-            self._c = None
+            
+            self._is_connected = False
             
             self._cursor_transaction_wrapper = None
             
@@ -470,35 +394,6 @@ class HydrusDB( object ):
     def _CreateDB( self ):
         
         raise NotImplementedError()
-        
-    
-    def _CreateIndex( self, table_name, columns, unique = False ):
-        
-        if '.' in table_name:
-            
-            table_name_simple = table_name.split( '.' )[1]
-            
-        else:
-            
-            table_name_simple = table_name
-            
-        
-        index_name = table_name + '_' + '_'.join( columns ) + '_index'
-        
-        if unique:
-            
-            create_phrase = 'CREATE UNIQUE INDEX IF NOT EXISTS '
-            
-        else:
-            
-            create_phrase = 'CREATE INDEX IF NOT EXISTS '
-            
-        
-        on_phrase = ' ON ' + table_name_simple + ' (' + ', '.join( columns ) + ');'
-        
-        statement = create_phrase + index_name + on_phrase
-        
-        self._c.execute( statement )
         
     
     def _DisplayCatastrophicError( self, text ):
@@ -512,34 +407,7 @@ class HydrusDB( object ):
     
     def _DoAfterJobWork( self ):
         
-        for ( topic, args, kwargs ) in self._pubsubs:
-            
-            self._controller.pub( topic, *args, **kwargs )
-            
-        
-    
-    def _ExecuteManySelectSingleParam( self, query, single_param_iterator ):
-        
-        select_args_iterator = ( ( param, ) for param in single_param_iterator )
-        
-        return self._ExecuteManySelect( query, select_args_iterator )
-        
-    
-    def _ExecuteManySelect( self, query, select_args_iterator ):
-        
-        # back in python 2, we did batches of 256 hash_ids/whatever at a time in big "hash_id IN (?,?,?,?,...)" predicates.
-        # this was useful to get over some 100,000 x fetchall() call overhead, but it would sometimes throw the SQLite query planner off and do non-optimal queries
-        # (basically, the "hash_id in (256)" would weight the hash_id index request x 256 vs another when comparing the sqlite_stat1 tables, which could lead to WEWLAD for some indices with low median very-high mean skewed distribution
-        # python 3 is better about call overhead, so we'll go back to what is pure
-        # cursor.executemany SELECT when
-        
-        for select_args in select_args_iterator:
-            
-            for result in self._c.execute( query, select_args ):
-                
-                yield result
-                
-            
+        self._cursor_transaction_wrapper.DoPubSubs()
         
     
     def _GenerateDBJob( self, job_type, synchronous, action, *args, **kwargs ):
@@ -581,9 +449,9 @@ class HydrusDB( object ):
                 
             
         
-        self._InitDBCursor()
+        self._InitDBConnection()
         
-        result = self._c.execute( 'SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?;', ( 'table', 'version' ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?;', ( 'table', 'version' ) ).fetchone()
         
         if result is None:
             
@@ -600,60 +468,78 @@ class HydrusDB( object ):
             
         
     
-    def _InitDBCursor( self ):
+    def _InitDBConnection( self ):
         
-        self._CloseDBCursor()
+        self._CloseDBConnection()
         
         db_path = os.path.join( self._db_dir, self._db_filenames[ 'main' ] )
         
         try:
             
+            if os.path.exists( db_path ) and not HydrusPaths.FileisWriteable( db_path ):
+                
+                raise HydrusExceptions.DBAccessException( '"{}" seems to be read-only!'.format( db_path ) )
+                
+            
             self._db = sqlite3.connect( db_path, isolation_level = None, detect_types = sqlite3.PARSE_DECLTYPES )
             
-            self._c = self._db.cursor()
+            c = self._db.cursor()
             
-            self._cursor_transaction_wrapper = DBCursorTransactionWrapper( self._c, HG.db_transaction_commit_period )
+            self._SetCursor( c )
             
-            self._LoadModules()
+            self._is_connected = True
+            
+            self._cursor_transaction_wrapper = HydrusDBBase.DBCursorTransactionWrapper( self._c, HG.db_transaction_commit_period )
             
             if HG.no_db_temp_files:
                 
-                self._c.execute( 'PRAGMA temp_store = 2;' ) # use memory for temp store exclusively
+                self._Execute( 'PRAGMA temp_store = 2;' ) # use memory for temp store exclusively
                 
             
             self._AttachExternalDatabases()
             
-            self._c.execute( 'ATTACH ":memory:" AS mem;' )
+            self._LoadModules()
+            
+            self._Execute( 'ATTACH ":memory:" AS mem;' )
+            
+        except HydrusExceptions.DBAccessException as e:
+            
+            raise
             
         except Exception as e:
             
-            raise HydrusExceptions.DBAccessException( 'Could not connect to database! This could be an issue related to WAL and network storage, or something else. If it is not obvious to you, please let hydrus dev know. Error follows:' + os.linesep * 2 + str( e ) )
+            raise HydrusExceptions.DBAccessException( 'Could not connect to database! If the answer is not obvious to you, please let hydrus dev know. Error follows:' + os.linesep * 2 + str( e ) )
             
         
-        TemporaryIntegerTableNameCache.instance().Clear()
+        HydrusDBBase.TemporaryIntegerTableNameCache.instance().Clear()
         
         # durable_temp is not excluded here
-        db_names = [ name for ( index, name, path ) in self._c.execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp' ) ]
+        db_names = [ name for ( index, name, path ) in self._Execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp' ) ]
         
         for db_name in db_names:
             
             # MB -> KB
             cache_size = HG.db_cache_size * 1024
             
-            self._c.execute( 'PRAGMA {}.cache_size = -{};'.format( db_name, cache_size ) )
+            self._Execute( 'PRAGMA {}.cache_size = -{};'.format( db_name, cache_size ) )
             
-            self._c.execute( 'PRAGMA {}.journal_mode = {};'.format( db_name, HG.db_journal_mode ) )
+            self._Execute( 'PRAGMA {}.journal_mode = {};'.format( db_name, HG.db_journal_mode ) )
             
             if HG.db_journal_mode in ( 'PERSIST', 'WAL' ):
                 
-                self._c.execute( 'PRAGMA {}.journal_size_limit = {};'.format( db_name, 1024 ** 3 ) ) # 1GB for now
+                # We tried 1GB here, but I have reports of larger ones that don't seem to truncate ever?
+                # Not sure what that is about, but I guess the db sometimes doesn't want to (expensively?) recover pages from the journal and just appends more data
+                # In any case, this pragma is not a 'don't allow it to grow larger than', it's a 'after commit, truncate back to this', so no need to make it so large
+                # default is -1, which means no limit
+                
+                self._Execute( 'PRAGMA {}.journal_size_limit = {};'.format( db_name, HydrusDBBase.JOURNAL_SIZE_LIMIT ) )
                 
             
-            self._c.execute( 'PRAGMA {}.synchronous = {};'.format( db_name, HG.db_synchronous ) )
+            self._Execute( 'PRAGMA {}.synchronous = {};'.format( db_name, HG.db_synchronous ) )
             
             try:
                 
-                self._c.execute( 'SELECT * FROM {}.sqlite_master;'.format( db_name ) ).fetchone()
+                self._Execute( 'SELECT * FROM {}.sqlite_master;'.format( db_name ) ).fetchone()
                 
             except sqlite3.OperationalError as e:
                 
@@ -673,6 +559,11 @@ class HydrusDB( object ):
             self._cursor_transaction_wrapper.BeginImmediate()
             
         except Exception as e:
+            
+            if 'locked' in str( e ):
+                
+                raise HydrusExceptions.DBAccessException( 'Database appeared to be locked. Please ensure there is not another client already running on this database, and then try restarting the client.' )
+                
             
             raise HydrusExceptions.DBAccessException( str( e ) )
             
@@ -723,6 +614,13 @@ class HydrusDB( object ):
                 result = self._Write( action, *args, **kwargs )
                 
             
+            if job.IsSynchronous():
+                
+                job.PutResult( result )
+                
+            
+            self._cursor_transaction_wrapper.Save()
+            
             if self._cursor_transaction_wrapper.TimeToCommit():
                 
                 self._current_status = 'db committing'
@@ -731,17 +629,8 @@ class HydrusDB( object ):
                 
                 self._cursor_transaction_wrapper.CommitAndBegin()
                 
-            else:
-                
-                self._cursor_transaction_wrapper.Save()
-                
             
             self._DoAfterJobWork()
-            
-            if job.IsSynchronous():
-                
-                job.PutResult( result )
-                
             
         except Exception as e:
             
@@ -755,9 +644,9 @@ class HydrusDB( object ):
                 
                 HydrusData.Print( 'When the transaction failed, attempting to rollback the database failed. Please restart the client as soon as is convenient.' )
                 
-                self._CloseDBCursor()
+                self._CloseDBConnection()
                 
-                self._InitDBCursor()
+                self._InitDBConnection()
                 
                 HydrusData.PrintException( rollback_e )
                 
@@ -777,9 +666,12 @@ class HydrusDB( object ):
         raise NotImplementedError()
         
     
-    def _RepairDB( self ):
+    def _RepairDB( self, version ):
         
-        pass
+        for module in self._modules:
+            
+            module.Repair( version, self._cursor_transaction_wrapper )
+            
         
     
     def _ReportOverupdatedDB( self, version ):
@@ -799,57 +691,12 @@ class HydrusDB( object ):
     
     def _ShrinkMemory( self ):
         
-        self._c.execute( 'PRAGMA shrink_memory;' )
-        
-    
-    def _STI( self, iterable_cursor ):
-        
-        # strip singleton tuples to an iterator
-        
-        return ( item for ( item, ) in iterable_cursor )
-        
-    
-    def _STL( self, iterable_cursor ):
-        
-        # strip singleton tuples to a list
-        
-        return [ item for ( item, ) in iterable_cursor ]
-        
-    
-    def _STS( self, iterable_cursor ):
-        
-        # strip singleton tuples to a set
-        
-        return { item for ( item, ) in iterable_cursor }
-        
-    
-    def _TableHasAtLeastRowCount( self, name, row_count ):
-        
-        cursor = self._c.execute( 'SELECT 1 FROM {};'.format( name ) )
-        
-        for i in range( row_count ):
-            
-            r = cursor.fetchone()
-            
-            if r is None:
-                
-                return False
-                
-            
-        
-        return True
-        
-    
-    def _TableIsEmpty( self, name ):
-        
-        result = self._c.execute( 'SELECT 1 FROM {};'.format( name ) )
-        
-        return result is None
+        self._Execute( 'PRAGMA shrink_memory;' )
         
     
     def _UnloadModules( self ):
         
-        pass
+        self._modules = []
         
     
     def _UpdateDB( self, version ):
@@ -860,19 +707,6 @@ class HydrusDB( object ):
     def _Write( self, action, *args, **kwargs ):
         
         raise NotImplementedError()
-        
-    
-    def pub_after_job( self, topic, *args, **kwargs ):
-        
-        if len( args ) == 0 and len( kwargs ) == 0:
-            
-            if ( topic, args, kwargs ) in self._pubsubs:
-                
-                return
-                
-            
-        
-        self._pubsubs.append( ( topic, args, kwargs ) )
         
     
     def publish_status_update( self ):
@@ -889,7 +723,7 @@ class HydrusDB( object ):
         
         total = 0
         
-        for filename in list(self._db_filenames.values()):
+        for filename in self._db_filenames.values():
             
             path = os.path.join( self._db_dir, filename )
             
@@ -930,6 +764,11 @@ class HydrusDB( object ):
         return ( self._current_status, self._current_job_name )
         
     
+    def IsConnected( self ):
+        
+        return self._is_connected
+        
+    
     def IsDBUpdated( self ):
         
         return self._is_db_updated
@@ -954,7 +793,7 @@ class HydrusDB( object ):
         
         try:
             
-            self._InitDBCursor() # have to reinitialise because the thread id has changed
+            self._InitDBConnection() # have to reinitialise because the thread id has changed
             
             self._InitCaches()
             
@@ -986,16 +825,16 @@ class HydrusDB( object ):
                     
                     if HG.db_report_mode:
                         
-                        summary = 'Running ' + job.ToString()
+                        summary = 'Running db job: ' + job.ToString()
                         
                         HydrusData.ShowText( summary )
                         
                     
-                    if HG.db_profile_mode:
+                    if HG.profile_mode:
                         
-                        summary = 'Profiling ' + job.ToString()
+                        summary = 'Profiling db job: ' + job.ToString()
                         
-                        HydrusData.Profile( summary, 'self._ProcessJob( job )', globals(), locals(), show_summary = True )
+                        HydrusData.Profile( summary, 'self._ProcessJob( job )', globals(), locals(), min_duration_ms = HG.db_profile_min_job_time_ms )
                         
                     else:
                         
@@ -1033,7 +872,7 @@ class HydrusDB( object ):
             
             if self._pause_and_disconnect:
                 
-                self._CloseDBCursor()
+                self._CloseDBConnection()
                 
                 while self._pause_and_disconnect:
                     
@@ -1045,11 +884,11 @@ class HydrusDB( object ):
                     time.sleep( 1 )
                     
                 
-                self._InitDBCursor()
+                self._InitDBConnection()
                 
             
         
-        self._CloseDBCursor()
+        self._CloseDBConnection()
         
         temp_path = os.path.join( self._db_dir, self._durable_temp_db_filename )
         
@@ -1112,102 +951,5 @@ class HydrusDB( object ):
         self._jobs.put( job )
         
         if synchronous: return job.GetResult()
-        
-    
-class TemporaryIntegerTableNameCache( object ):
-    
-    my_instance = None
-    
-    def __init__( self ):
-        
-        TemporaryIntegerTableNameCache.my_instance = self
-        
-        self._column_names_to_table_names = collections.defaultdict( collections.deque )
-        self._column_names_counter = collections.Counter()
-        
-    
-    @staticmethod
-    def instance() -> 'TemporaryIntegerTableNameCache':
-        
-        if TemporaryIntegerTableNameCache.my_instance is None:
-            
-            raise Exception( 'TemporaryIntegerTableNameCache is not yet initialised!' )
-            
-        else:
-            
-            return TemporaryIntegerTableNameCache.my_instance
-            
-        
-    
-    def Clear( self ):
-        
-        self._column_names_to_table_names = collections.defaultdict( collections.deque )
-        self._column_names_counter = collections.Counter()
-        
-    
-    def GetName( self, column_name ):
-        
-        table_names = self._column_names_to_table_names[ column_name ]
-        
-        initialised = True
-        
-        if len( table_names ) == 0:
-            
-            initialised = False
-            
-            i = self._column_names_counter[ column_name ]
-            
-            table_name = 'mem.temp_int_{}_{}'.format( column_name, i )
-            
-            table_names.append( table_name )
-            
-            self._column_names_counter[ column_name ] += 1
-            
-        
-        table_name = table_names.pop()
-        
-        return ( initialised, table_name )
-        
-    
-    def ReleaseName( self, column_name, table_name ):
-        
-        self._column_names_to_table_names[ column_name ].append( table_name )
-        
-    
-class TemporaryIntegerTable( object ):
-    
-    def __init__( self, cursor, integer_iterable, column_name ):
-        
-        if not isinstance( integer_iterable, set ):
-            
-            integer_iterable = set( integer_iterable )
-            
-        
-        self._cursor = cursor
-        self._integer_iterable = integer_iterable
-        self._column_name = column_name
-        
-        ( self._initialised, self._table_name ) = TemporaryIntegerTableNameCache.instance().GetName( self._column_name )
-        
-    
-    def __enter__( self ):
-        
-        if not self._initialised:
-            
-            self._cursor.execute( 'CREATE TABLE {} ( {} INTEGER PRIMARY KEY );'.format( self._table_name, self._column_name ) )
-            
-        
-        self._cursor.executemany( 'INSERT INTO {} ( {} ) VALUES ( ? );'.format( self._table_name, self._column_name ), ( ( i, ) for i in self._integer_iterable ) )
-        
-        return self._table_name
-        
-    
-    def __exit__( self, exc_type, exc_val, exc_tb ):
-        
-        self._cursor.execute( 'DELETE FROM {};'.format( self._table_name ) )
-        
-        TemporaryIntegerTableNameCache.instance().ReleaseName( self._column_name, self._table_name )
-        
-        return False
         
     

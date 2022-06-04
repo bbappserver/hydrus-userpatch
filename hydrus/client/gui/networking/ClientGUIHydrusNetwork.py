@@ -56,7 +56,7 @@ class EditAccountTypePanel( ClientGUIScrolledPanels.EditPanel ):
             
             for ( label, action ) in action_rows:
                 
-                choice_control.addItem( label, (content_type, action) )
+                choice_control.addItem( label, ( content_type, action ) )
                 
             
             if content_type in permissions:
@@ -262,9 +262,14 @@ class EditAccountTypesPanel( ClientGUIScrolledPanels.EditPanel ):
             
         
     
-    def _ConvertAccountTypeToTuples( self, account_type ):
+    def _ConvertAccountTypeToTuples( self, account_type: HydrusNetwork.AccountType ):
         
         title = account_type.GetTitle()
+        
+        if account_type.IsNullAccount():
+            
+            title = '{} (cannot be edited)'.format( title )
+            
         
         display_tuple = ( title, )
         sort_tuple = ( title, )
@@ -280,9 +285,16 @@ class EditAccountTypesPanel( ClientGUIScrolledPanels.EditPanel ):
             
             account_types_about_to_delete = self._account_types_listctrl.GetData( only_selected = True )
             
-            all_account_types = set( self._account_types_listctrl.GetData() )
+            if True in ( at.IsNullAccount() for at in account_types_about_to_delete ):
+                
+                QW.QMessageBox.critical( self, 'Error', 'You cannot delete the null account type!' )
+                
+                return
+                
             
-            account_types_can_move_to = all_account_types.difference( account_types_about_to_delete )
+            all_real_account_types = set( [ at for at in self._account_types_listctrl.GetData() if not at.IsNullAccount() ] )
+            
+            account_types_can_move_to = all_real_account_types.difference( account_types_about_to_delete )
             
             if len( account_types_can_move_to ) == 0:
                 
@@ -327,6 +339,13 @@ class EditAccountTypesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         datas = self._account_types_listctrl.GetData( only_selected = True )
         
+        if True in ( at.IsNullAccount() for at in datas ):
+            
+            QW.QMessageBox.critical( self, 'Error', 'You cannot edit the null account type!' )
+            
+            return
+            
+        
         for account_type in datas:
             
             with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit account type' ) as dlg_edit:
@@ -351,7 +370,9 @@ class EditAccountTypesPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def GetValue( self ):
         
-        account_types = self._account_types_listctrl.GetData()
+        account_types = [ at for at in self._original_account_types if at.IsNullAccount() ]
+        
+        account_types.extend( [ at for at in self._account_types_listctrl.GetData() if not at.IsNullAccount() ] )
         
         def key_transfer_not_collapsed():
             
@@ -484,7 +505,7 @@ class ReviewAccountsPanel( QW.QWidget ):
         
         self._status_st = ClientGUICommon.BetterStaticText( self._accounts_box )
         
-        self._account_list = QP.CheckListBox( self._accounts_box )
+        self._account_list = ClientGUICommon.BetterCheckBoxList( self._accounts_box )
         self._account_list.setSelectionMode( QW.QAbstractItemView.SingleSelection )
         
         ( min_width, min_height ) = ClientGUIFunctions.ConvertTextToPixels( self._account_list, ( 74, 6 ) )
@@ -498,7 +519,7 @@ class ReviewAccountsPanel( QW.QWidget ):
         
         self._account_info_box.setMinimumHeight( min_height )
         
-        self._copy_checked_account_keys_button = ClientGUICommon.BetterButton( self._accounts_box, 'copy checked account keys', self._CopyCheckedAccountKeys )
+        self._copy_checked_account_keys_button = ClientGUICommon.BetterButton( self._accounts_box, 'copy checked account ids', self._CopyCheckedAccountKeys )
         
         #
         
@@ -520,11 +541,11 @@ class ReviewAccountsPanel( QW.QWidget ):
     
     def _AccountClicked( self ):
         
-        selections = sorted( self._account_list.GetSelections() )
+        selected_indices = sorted( self._account_list.GetSelectedIndices() )
         
-        if len( selections ) > 0:
+        if len( selected_indices ) > 0:
             
-            item = self._account_list.item( selections[0] )
+            item = self._account_list.item( selected_indices[0] )
             
             account_info_components = []
             
@@ -667,7 +688,7 @@ class ReviewAccountsPanel( QW.QWidget ):
             
             if not self._done_first_fetch:
                 
-                # if we launched with CPU-expensive mapping identifiers, let's move to nice account keys for future refreshes
+                # if we launched with CPU-expensive mapping identifiers, let's move to nice account ids for future refreshes
                 
                 self._account_identifiers = [ HydrusNetwork.AccountIdentifier( account_key = account_key ) for account_key in self._account_keys_to_accounts.keys() ]
                 

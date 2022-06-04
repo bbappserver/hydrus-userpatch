@@ -1,6 +1,6 @@
 import collections
-import gc
 import os
+import queue
 import random
 import threading
 import time
@@ -28,87 +28,107 @@ REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL = 1
 REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL = 2
 REGENERATE_FILE_DATA_JOB_OTHER_HASHES = 3
 REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES = 4
-REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE = 5
-REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA = 6
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD = 5
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD = 6
 REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS = 7
 REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP = 8
 REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA = 9
 REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP = 10
-REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL = 11
-REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL = 12
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL = 11
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL = 12
 REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE = 13
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD = 14
+REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD = 15
+REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE = 16
+REGENERATE_FILE_DATA_JOB_PIXEL_HASH = 17
 
-regen_file_enum_to_str_lookup = {}
+regen_file_enum_to_str_lookup = {
+    REGENERATE_FILE_DATA_JOB_FILE_METADATA : 'regenerate file metadata',
+    REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL : 'regenerate thumbnail',
+    REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL : 'regenerate thumbnail if incorrect size',
+    REGENERATE_FILE_DATA_JOB_OTHER_HASHES : 'regenerate non-standard hashes',
+    REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES : 'delete duplicate neighbours with incorrect file extension',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD : 'if file is missing, remove record',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL : 'if file is missing, then if has URL try to redownload',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD : 'if file is missing, then if has URL try to redownload, else remove record',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD : 'if file is missing/incorrect, move file out and remove record',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL : 'if file is missing/incorrect, then move file out, and if has URL try to redownload',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD : 'if file is missing/incorrect, then move file out, and if has URL try to redownload, else remove record',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE : 'if file is incorrect, move file out',
+    REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS : 'fix file read/write permissions',
+    REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP : 'check for membership in the similar files search system',
+    REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA : 'regenerate similar files metadata',
+    REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP : 'regenerate file modified date',
+    REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE : 'determine if the file has an icc profile',
+    REGENERATE_FILE_DATA_JOB_PIXEL_HASH : 'regenerate pixel duplicate data'
+}
 
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_METADATA ] = 'regenerate file metadata'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL ] = 'regenerate thumbnail'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ] = 'regenerate thumbnail if incorrect size'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_OTHER_HASHES ] = 'regenerate non-standard hashes'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ] = 'delete duplicate neighbours with incorrect file extension'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE ] = 'if file is missing, remove record'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL ] = 'if file is missing and has url, try to redownload'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA ] = 'if file is missing/incorrect, move file out and remove record'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL ] = 'if file is missing/incorrect and has url, move file out and try to redownload'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ] = 'if file is incorrect, move file out'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS ] = 'fix file read/write permissions'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ] = 'check for membership in the similar files search system'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA ] = 'regenerate similar files metadata'
-regen_file_enum_to_str_lookup[ REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP ] = 'regenerate file modified date'
-
-regen_file_enum_to_description_lookup = {}
-
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_METADATA ] = 'This regenerates file metadata like resolution and duration, or even filetype (such as mkv->webm), which may have been misparsed in a previous version.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL ] = 'This forces a complete regeneration of the thumbnail from the source file.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ] = 'This looks for the existing thumbnail, and if it is not the correct resolution or is missing, will regenerate a new one for the source file.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_OTHER_HASHES ] = 'This regenerates hydrus\'s store of md5, sha1, and sha512 supplementary hashes, which it can use for various external (usually website) lookups.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ] = 'Sometimes, a file metadata regeneration will mean a new filetype and thus a new file extension. If the existing, incorrectly named file is in use, it must be copied rather than renamed, and so there is a spare duplicate left over after the operation. This jobs cleans up the duplicate at a later time.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE ] = 'This checks to see if the file is present in the file system as expected. If it is not, the internal file record in the database is removed, just as if the file were deleted. Use this if you have manually deleted or otherwise lost a number of files from your file structure and need hydrus to re-sync with what it actually has. Missing files will have their known URLs exported to your database directory.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL ] = 'This checks to see if the file is present in the file system as expected. If it is not, and it has known post/file urls, the URLs will be automatically added to a new URL downloader. Missing files will also have their known URLs exported to your database directory.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA ] = 'This does the same check as the \'file is missing\' job, and if the file is where it is expected, it ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect, it will be exported to your database directory along with their known URLs, and the file record deleted.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL ] = 'This does the same check as the \'file is missing\' job, and if the file is where it is expected, it ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect _and_ is has known post/file urls, the URLs will be automatically added to a new URL downloader. Incorrect files will also have their known URLs exported to your database directory.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ] = 'If the file is where it is expected, this ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect, it will be exported to your database directory along with its known URLs. The client\'s file record will not be deleted. This is useful if you have a valid backup and need to clear out invalid files from your live db so you can fill in gaps from your backup with a program like FreeFileSync.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS ] = 'This ensures that files in the file system are readable and writeable. For Linux/macOS users, it specifically sets 644. If you wish to run this job on Linux/macOS, ensure you are first the file owner of all your files.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ] = 'This checks to see if files should be in the similar files system, and if they are falsely in or falsely out, it will remove their record or queue them up for a search as appropriate. It is useful to repair database damage.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA ] = 'This forces a regeneration of the file\'s similar-files \'phashes\'. It is not useful unless you know there is missing data to repair.'
-regen_file_enum_to_description_lookup[ REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP ] = 'This rechecks the file\'s modified timestamp and saves it to the database.'
+regen_file_enum_to_description_lookup = {
+    REGENERATE_FILE_DATA_JOB_FILE_METADATA : 'This regenerates file metadata like resolution and duration, or even filetype (such as mkv->webm), which may have been misparsed in a previous version.',
+    REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL : 'This forces a complete regeneration of the thumbnail from the source file.',
+    REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL : 'This looks for the existing thumbnail, and if it is not the correct resolution or is missing, will regenerate a new one for the source file.',
+    REGENERATE_FILE_DATA_JOB_OTHER_HASHES : 'This regenerates hydrus\'s store of md5, sha1, and sha512 supplementary hashes, which it can use for various external (usually website) lookups.',
+    REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES : 'Sometimes, a file metadata regeneration will mean a new filetype and thus a new file extension. If the existing, incorrectly named file is in use, it must be copied rather than renamed, and so there is a spare duplicate left over after the operation. This jobs cleans up the duplicate at a later time.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD : 'This checks to see if the file is present in the file system as expected. If it is not, the internal file record in the database is removed, just as if the file were deleted. Use this if you have manually deleted or otherwise lost a number of files from your file structure and need hydrus to re-sync with what it actually has. Missing files will have their known URLs exported to your database directory.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL : 'This checks to see if the file is present in the file system as expected. If it is not, and it has known post/file URLs, the URLs will be automatically added to a new URL downloader. Missing files will also have their known URLs exported to your database directory.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD : 'THIS IS THE EASY AND QUICK ONE-SHOT WAY TO FIX A DATABASE WITH MISSING FILES. This checks to see if the file is present in the file system as expected. If it is not, then if it has known post/file URLs, the URLs will be automatically added to a new URL downloader. If it has no URLs, then the internal file record in the database is removed, just as if the file were deleted. Missing files will also have their known URLs exported to your database directory.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD : 'This does the same check as the \'file is missing\' job, and if the file is where it is expected, it ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect, it will be exported to your database directory along with their known URLs, and the file record deleted.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL : 'This does the same check as the \'file is missing\' job, and if the file is where it is expected, it ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect _and_ is has known post/file URLs, the URLs will be automatically added to a new URL downloader. Incorrect files will also have their known URLs exported to your database directory.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD : 'This does the same check as the \'file is missing\' job, and if the file is where it is expected, it ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect _and_ is has known post/file URLs, the URLs will be automatically added to a new URL downloader. If it has no URLs, then the internal file record in the database is removed, just as if the file were deleted. Incorrect files will also have their known URLs exported to your database directory.',
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE : 'If the file is where it is expected, this ensures its file content, byte-for-byte, is correct. This is a heavy job, so be wary. If the file is incorrect, it will be exported to your database directory along with its known URLs. The client\'s file record will not be deleted. This is useful if you have a valid backup and need to clear out invalid files from your live db so you can fill in gaps from your backup with a program like FreeFileSync.',
+    REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS : 'This ensures that files in the file system are readable and writeable. For Linux/macOS users, it specifically sets 644. If you wish to run this job on Linux/macOS, ensure you are first the file owner of all your files.',
+    REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP : 'This checks to see if files should be in the similar files system, and if they are falsely in or falsely out, it will remove their record or queue them up for a search as appropriate. It is useful to repair database damage.',
+    REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA : 'This forces a regeneration of the file\'s similar-files \'phashes\'. It is not useful unless you know there is missing data to repair.',
+    REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP : 'This rechecks the file\'s modified timestamp and saves it to the database.',
+    REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE : 'This loads the file to see if it has an ICC profile, which is used in "system:has icc profile" search.',
+    REGENERATE_FILE_DATA_JOB_PIXEL_HASH : 'This generates a fast unique identifier for the pixels in a still image, which is used in duplicate pixel searches.'
+}
 
 NORMALISED_BIG_JOB_WEIGHT = 100
 
-regen_file_enum_to_job_weight_lookup = {}
+regen_file_enum_to_job_weight_lookup = {
+    REGENERATE_FILE_DATA_JOB_FILE_METADATA : 100,
+    REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL : 50,
+    REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL : 25,
+    REGENERATE_FILE_DATA_JOB_OTHER_HASHES : 100,
+    REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES : 25,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD : 5,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL : 50,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD : 55,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD : 100,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL : 100,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD : 100,
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE : 100,
+    REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS : 25,
+    REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP : 50,
+    REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA : 100,
+    REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP : 10,
+    REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE : 100,
+    REGENERATE_FILE_DATA_JOB_PIXEL_HASH : 100
+}
 
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_METADATA ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL ] = 50
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ] = 25
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_OTHER_HASHES ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ] = 25
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE ] = 5
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL ] = 50
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS ] = 25
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ] = 50
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA ] = 100
-regen_file_enum_to_job_weight_lookup[ REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP ] = 10
+regen_file_enum_to_overruled_jobs = {
+    REGENERATE_FILE_DATA_JOB_FILE_METADATA : [],
+    REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL : [ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ],
+    REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL : [],
+    REGENERATE_FILE_DATA_JOB_OTHER_HASHES : [],
+    REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES : [],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD : [],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL : [],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD : [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD ],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD : [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD ],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL : [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL ],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD : [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD ],
+    REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE : [],
+    REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS : [],
+    REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP : [],
+    REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA : [ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ],
+    REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP : [],
+    REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE : [],
+    REGENERATE_FILE_DATA_JOB_PIXEL_HASH : []
+}
 
-regen_file_enum_to_overruled_jobs = {}
-
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_METADATA ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL ] = [ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ]
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_OTHER_HASHES ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA ] = [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE ]
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL ] = [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL ]
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ] = []
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA ] = [ REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP ]
-regen_file_enum_to_overruled_jobs[ REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP ] = []
-
-ALL_REGEN_JOBS_IN_PREFERRED_ORDER = [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE, REGENERATE_FILE_DATA_JOB_FILE_METADATA, REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL, REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL, REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA, REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP, REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS, REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP, REGENERATE_FILE_DATA_JOB_OTHER_HASHES, REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ]
+ALL_REGEN_JOBS_IN_PREFERRED_ORDER = [ REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE, REGENERATE_FILE_DATA_JOB_FILE_METADATA, REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL, REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL, REGENERATE_FILE_DATA_JOB_SIMILAR_FILES_METADATA, REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP, REGENERATE_FILE_DATA_JOB_FIX_PERMISSIONS, REGENERATE_FILE_DATA_JOB_FILE_MODIFIED_TIMESTAMP, REGENERATE_FILE_DATA_JOB_OTHER_HASHES, REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE, REGENERATE_FILE_DATA_JOB_PIXEL_HASH, REGENERATE_FILE_DATA_JOB_DELETE_NEIGHBOUR_DUPES ]
 
 def GetAllFilePaths( raw_paths, do_human_sort = True ):
     
@@ -122,14 +142,26 @@ def GetAllFilePaths( raw_paths, do_human_sort = True ):
         
         for path in paths_to_process:
             
-            if HG.view_shutdown:
+            if HG.started_shutdown:
                 
                 raise HydrusExceptions.ShutdownException()
                 
             
             if os.path.isdir( path ):
                 
-                subpaths = [ os.path.join( path, filename ) for filename in os.listdir( path ) ]
+                try:
+                    
+                    # on Windows, some network file paths return True on isdir(). maybe something to do with path length or number of subdirs
+                    path_listdir = os.listdir( path )
+                    
+                except NotADirectoryError:
+                    
+                    file_paths.append( path )
+                    
+                    continue
+                    
+                
+                subpaths = [ os.path.join( path, filename ) for filename in path_listdir ]
                 
                 next_paths_to_process.extend( subpaths )
                 
@@ -159,10 +191,69 @@ class ClientFilesManager( object ):
         
         self._prefixes_to_locations = {}
         
+        self._new_physical_file_deletes = threading.Event()
+        
+        self._locations_to_free_space = {}
+        
         self._bad_error_occurred = False
         self._missing_locations = set()
         
         self._Reinit()
+        
+        self._controller.sub( self, 'shutdown', 'shutdown' )
+        
+    
+    def _GetFileStorageFreeSpace( self, hash: bytes ) -> int:
+        
+        hash_encoded = hash.hex()
+        
+        prefix = 'f' + hash_encoded[:2]
+        
+        location = self._prefixes_to_locations[ prefix ]
+        
+        if location in self._locations_to_free_space:
+            
+            ( free_space, time_fetched ) = self._locations_to_free_space[ location ]
+            
+            if free_space > 100 * ( 1024 ** 3 ):
+                
+                check_period = 3600
+                
+            elif free_space > 15 * ( 1024 ** 3 ):
+                
+                check_period = 600
+                
+            else:
+                
+                check_period = 60
+                
+            
+            if HydrusData.TimeHasPassed( time_fetched + check_period ):
+                
+                free_space = HydrusPaths.GetFreeSpace( location )
+                
+                self._locations_to_free_space[ location ] = ( free_space, HydrusData.GetNow() )
+                
+            
+        else:
+            
+            free_space = HydrusPaths.GetFreeSpace( location )
+            
+            self._locations_to_free_space[ location ] = ( free_space, HydrusData.GetNow() )
+            
+        
+        return free_space
+        
+    
+    def _HandleCriticalDriveError( self ):
+        
+        self._controller.new_options.SetBoolean( 'pause_import_folders_sync', True )
+        self._controller.new_options.SetBoolean( 'pause_subs_sync', True )
+        self._controller.new_options.SetBoolean( 'pause_all_file_queues', True )
+        
+        HydrusData.ShowText( 'All paged file import queues, subscriptions, and import folders have been paused. Resume them after restart under the file and network menus!' )
+        
+        self._controller.pub( 'notify_refresh_network_menu' )
         
     
     def _AddFile( self, hash, mime, source_path ):
@@ -174,9 +265,30 @@ class ClientFilesManager( object ):
             HydrusData.ShowText( 'Adding file to client file structure: from {} to {}'.format( source_path, dest_path ) )
             
         
+        file_size = os.path.getsize( source_path )
+        
+        dest_free_space = self._GetFileStorageFreeSpace( hash )
+        
+        if dest_free_space < 100 * 1048576 or dest_free_space < file_size:
+            
+            message = 'The disk for path "{}" is almost full and cannot take the file "{}", which is {}! Shut the client down now and fix this!'.format( dest_path, hash.hex(), HydrusData.ToHumanBytes( file_size ) )
+            
+            HydrusData.ShowText( message )
+            
+            self._HandleCriticalDriveError()
+            
+            raise Exception( message )
+            
+        
         successful = HydrusPaths.MirrorFile( source_path, dest_path )
         
         if not successful:
+            
+            message = 'Copying the file from "{}" to "{}" failed! Details should be shown and other import queues should be paused. You should shut the client down now and fix this!'.format( source_path, dest_path )
+            
+            HydrusData.ShowText( message )
+            
+            self._HandleCriticalDriveError()
             
             raise Exception( 'There was a problem copying the file from ' + source_path + ' to ' + dest_path + '!' )
             
@@ -193,7 +305,7 @@ class ClientFilesManager( object ):
         
         try:
             
-            HydrusPaths.MakeFileWriteable( dest_path )
+            HydrusPaths.TryToGiveFileNicePermissionBits( dest_path )
             
             with open( dest_path, 'wb' ) as f:
                 
@@ -385,15 +497,16 @@ class ClientFilesManager( object ):
         duration = media.GetDuration()
         num_frames = media.GetNumFrames()
         
-        bounding_dimensions = HG.client_controller.options[ 'thumbnail_dimensions' ]
+        bounding_dimensions = self._controller.options[ 'thumbnail_dimensions' ]
+        thumbnail_scale_type = self._controller.new_options.GetInteger( 'thumbnail_scale_type' )
         
-        target_resolution = HydrusImageHandling.GetThumbnailResolution( ( width, height ), bounding_dimensions )
+        ( clip_rect, target_resolution ) = HydrusImageHandling.GetThumbnailResolutionAndClipRegion( ( width, height ), bounding_dimensions, thumbnail_scale_type )
         
         percentage_in = self._controller.new_options.GetInteger( 'video_thumbnail_percentage_in' )
         
         try:
             
-            thumbnail_bytes = HydrusFileHandling.GenerateThumbnailBytes( file_path, target_resolution, mime, duration, num_frames, percentage_in = percentage_in )
+            thumbnail_bytes = HydrusFileHandling.GenerateThumbnailBytes( file_path, target_resolution, mime, duration, num_frames, clip_rect = clip_rect, percentage_in = percentage_in )
             
         except Exception as e:
             
@@ -736,7 +849,7 @@ class ClientFilesManager( object ):
             HydrusData.ShowText( 'Adding file from string: ' + str( ( len( file_bytes ), dest_path ) ) )
             
         
-        HydrusPaths.MakeFileWriteable( dest_path )
+        HydrusPaths.TryToGiveFileNicePermissionBits( dest_path )
         
         with open( dest_path, 'wb' ) as f:
             
@@ -779,7 +892,7 @@ class ClientFilesManager( object ):
             
             job_key = ClientThreading.JobKey( cancellable = True )
             
-            job_key.SetVariable( 'popup_title', 'clearing orphans' )
+            job_key.SetStatusTitle( 'clearing orphans' )
             job_key.SetVariable( 'popup_text_1', 'preparing' )
             
             self._controller.pub( 'message', job_key )
@@ -953,67 +1066,6 @@ class ClientFilesManager( object ):
             
         
     
-    def DelayedDeleteFiles( self, hashes ):
-        
-        if HG.file_report_mode:
-            
-            HydrusData.ShowText( 'Delayed delete files call: ' + str( len( hashes ) ) )
-            
-        
-        time.sleep( 2 )
-        
-        big_pauser = HydrusData.BigJobPauser( period = 1 )
-        
-        for hashes_chunk in HydrusData.SplitIteratorIntoChunks( hashes, 10 ):
-            
-            with self._rwlock.write:
-                
-                for hash in hashes_chunk:
-                    
-                    try:
-                        
-                        ( path, mime ) = self._LookForFilePath( hash )
-                        
-                    except HydrusExceptions.FileMissingException:
-                        
-                        continue
-                        
-                    
-                    ClientPaths.DeletePath( path )
-                    
-                
-            
-            big_pauser.Pause()
-            
-        
-    
-    def DelayedDeleteThumbnails( self, hashes ):
-        
-        if HG.file_report_mode:
-            
-            HydrusData.ShowText( 'Delayed delete thumbs call: ' + str( len( hashes ) ) )
-            
-        
-        time.sleep( 2 )
-        
-        big_pauser = HydrusData.BigJobPauser( period = 1 )
-        
-        for hashes_chunk in HydrusData.SplitIteratorIntoChunks( hashes, 20 ):
-            
-            with self._rwlock.write:
-                
-                for hash in hashes_chunk:
-                    
-                    path = self._GenerateExpectedThumbnailPath( hash )
-                    
-                    ClientPaths.DeletePath( path, always_delete_fully = True )
-                    
-                
-            
-            big_pauser.Pause()
-            
-        
-    
     def DeleteNeighbourDupes( self, hash, true_mime ):
         
         with self._rwlock.write:
@@ -1049,6 +1101,71 @@ class ClientFilesManager( object ):
             
         
     
+    def DoDeferredPhysicalDeletes( self ):
+        
+        num_files_deleted = 0
+        num_thumbnails_deleted = 0
+        
+        pauser = HydrusData.BigJobPauser()
+        
+        while not HG.started_shutdown:
+            
+            with self._rwlock.write:
+                
+                ( file_hash, thumbnail_hash ) = self._controller.Read( 'deferred_physical_delete' )
+                
+                if file_hash is None and thumbnail_hash is None:
+                    
+                    break
+                    
+                
+                if file_hash is not None:
+                    
+                    try:
+                        
+                        ( path, mime ) = self._LookForFilePath( file_hash )
+                        
+                        ClientPaths.DeletePath( path )
+                        
+                        num_files_deleted += 1
+                        
+                    except HydrusExceptions.FileMissingException:
+                        
+                        pass
+                        
+                    
+                
+                if thumbnail_hash is not None:
+                    
+                    path = self._GenerateExpectedThumbnailPath( thumbnail_hash )
+                    
+                    if os.path.exists( path ):
+                        
+                        ClientPaths.DeletePath( path, always_delete_fully = True )
+                        
+                        num_thumbnails_deleted += 1
+                        
+                    
+                
+                self._controller.WriteSynchronous( 'clear_deferred_physical_delete', file_hash = file_hash, thumbnail_hash = thumbnail_hash )
+                
+                if num_files_deleted % 10 == 0 or num_thumbnails_deleted % 10 == 0:
+                    
+                    self._controller.pub( 'notify_new_physical_file_delete_numbers' )
+                    
+                
+            
+            pauser.Pause()
+            
+        
+        if num_files_deleted > 0 or num_thumbnails_deleted > 0:
+            
+            self._controller.pub( 'notify_new_physical_file_delete_numbers' )
+            
+            HydrusData.Print( 'Physically deleted {} files and {} thumbnails from file storage.'.format( HydrusData.ToHumanInt( num_files_deleted ), HydrusData.ToHumanInt( num_files_deleted ) ) )
+            
+        
+    
     def GetCurrentFileLocations( self ):
         
         with self._rwlock.read:
@@ -1071,50 +1188,45 @@ class ClientFilesManager( object ):
         
         with self._rwlock.read:
             
-            return self.LocklessGetFilePath( hash, mime = mime, check_file_exists = check_file_exists )
+            if HG.file_report_mode:
+                
+                HydrusData.ShowText( 'File path request: ' + str( ( hash, mime ) ) )
+                
+            
+            if mime is None:
+                
+                ( path, mime ) = self._LookForFilePath( hash )
+                
+            else:
+                
+                path = self._GenerateExpectedFilePath( hash, mime )
+                
+                if check_file_exists and not os.path.exists( path ):
+                    
+                    try:
+                        
+                        # let's see if the file exists, but with the wrong ext!
+                        
+                        ( actual_path, old_mime ) = self._LookForFilePath( hash )
+                        
+                    except HydrusExceptions.FileMissingException:
+                        
+                        raise HydrusExceptions.FileMissingException( 'No file found at path {}!'.format( path ) )
+                        
+                    
+                    self._ChangeFileExt( hash, old_mime, mime )
+                    
+                    # we have now fixed the path, it is good to return
+                    
+                
+            
+            return path
             
         
     
     def GetMissing( self ):
         
         return self._missing_locations
-        
-    
-    def LocklessGetFilePath( self, hash, mime = None, check_file_exists = True ):
-        
-        if HG.file_report_mode:
-            
-            HydrusData.ShowText( 'File path request: ' + str( ( hash, mime ) ) )
-            
-        
-        if mime is None:
-            
-            ( path, mime ) = self._LookForFilePath( hash )
-            
-        else:
-            
-            path = self._GenerateExpectedFilePath( hash, mime )
-            
-            if check_file_exists and not os.path.exists( path ):
-                
-                try:
-                    
-                    # let's see if the file exists, but with the wrong ext!
-                    
-                    ( actual_path, old_mime ) = self._LookForFilePath( hash )
-                    
-                except HydrusExceptions.FileMissingException:
-                    
-                    raise HydrusExceptions.FileMissingException( 'No file found at path {}!'.format( path ) )
-                    
-                
-                self._ChangeFileExt( hash, old_mime, mime )
-                
-                # we have now fixed the path, it is good to return
-                
-            
-        
-        return path
         
     
     def GetThumbnailPath( self, media ):
@@ -1152,6 +1264,11 @@ class ClientFilesManager( object ):
             
         
         return os.path.exists( path )
+        
+    
+    def NotifyNewPhysicalFileDeletes( self ):
+        
+        self._new_physical_file_deletes.set()
         
     
     def Rebalance( self, job_key ):
@@ -1291,8 +1408,9 @@ class ClientFilesManager( object ):
             ( current_width, current_height ) = HydrusImageHandling.GetResolutionNumPy( numpy_image )
             
             bounding_dimensions = self._controller.options[ 'thumbnail_dimensions' ]
+            thumbnail_scale_type = self._controller.new_options.GetInteger( 'thumbnail_scale_type' )
             
-            ( expected_width, expected_height ) = HydrusImageHandling.GetThumbnailResolution( ( media_width, media_height ), bounding_dimensions )
+            ( clip_rect, ( expected_width, expected_height ) ) = HydrusImageHandling.GetThumbnailResolutionAndClipRegion( ( media_width, media_height ), bounding_dimensions, thumbnail_scale_type )
             
             if current_width != expected_width or current_height != expected_height:
                 
@@ -1312,6 +1430,11 @@ class ClientFilesManager( object ):
         return do_it
         
     
+    def shutdown( self ):
+        
+        self._new_physical_file_deletes.set()
+        
+    
 class FilesMaintenanceManager( object ):
     
     def __init__( self, controller ):
@@ -1325,8 +1448,6 @@ class FilesMaintenanceManager( object ):
         
         self._idle_work_rules = HydrusNetworking.BandwidthRules()
         self._active_work_rules = HydrusNetworking.BandwidthRules()
-        
-        self._jobs_since_last_gc_collect = 0
         
         self._ReInitialiseWorkRules()
         
@@ -1342,6 +1463,8 @@ class FilesMaintenanceManager( object ):
         
     
     def _AbleToDoBackgroundMaintenance( self ):
+        
+        HG.client_controller.WaitUntilViewFree()
         
         if HG.client_controller.CurrentlyIdle():
             
@@ -1368,6 +1491,28 @@ class FilesMaintenanceManager( object ):
             
         
     
+    def _CanRegenThumbForMediaResult( self, media_result ):
+        
+        mime = media_result.GetMime()
+        
+        if mime not in HC.MIMES_WITH_THUMBNAILS:
+            
+            return False
+            
+        
+        ( width, height ) = media_result.GetResolution()
+        
+        if width is None or height is None:
+            
+            # this guy is probably pending a metadata regen but the user forced thumbnail regen now
+            # we'll wait for metadata regen to notice the new dimensions and schedule this job again
+            
+            return False
+            
+        
+        return True
+        
+    
     def _CheckFileIntegrity( self, media_result, job_type ):
         
         hash = media_result.GetHash()
@@ -1389,7 +1534,7 @@ class FilesMaintenanceManager( object ):
             HydrusData.DebugPrint( 'Missing file: {}!'.format( hash.hex() ) )
             
         
-        if not file_is_missing and job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ):
+        if not file_is_missing and job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ):
             
             actual_hash = HydrusFileHandling.GetHashFromPath( path )
             
@@ -1411,12 +1556,12 @@ class FilesMaintenanceManager( object ):
                 
                 HydrusPaths.MakeSureDirectoryExists( error_dir )
                 
-                with open( os.path.join( error_dir, hash.hex() + '.urls.txt' ), 'w', encoding = 'utf-8' ) as f:
+                with open( os.path.join( error_dir, '{}.urls.txt'.format( hash.hex() ) ), 'w', encoding = 'utf-8' ) as f:
                     
                     for url in urls:
                         
                         f.write( url )
-                        f.write( os.linesep )
+                        f.write( '\n' )
                         
                     
                 
@@ -1425,7 +1570,7 @@ class FilesMaintenanceManager( object ):
                     for url in urls:
                         
                         f.write( url )
-                        f.write( os.linesep )
+                        f.write( '\n' )
                         
                     
                 
@@ -1463,9 +1608,35 @@ class FilesMaintenanceManager( object ):
                     
                 
             
-            delete_record = job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA )
-            try_redownload = job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL ) and len( useful_urls ) > 0
-            do_export = file_is_invalid and ( job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ) or ( job_type == REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL and try_redownload ) )
+            if job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD ):
+                
+                try_redownload = len( useful_urls ) > 0
+                delete_record = not try_redownload
+                
+            else:
+                
+                try_redownload = job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL ) and len( useful_urls ) > 0
+                delete_record = job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD )
+                
+            
+            do_export = file_is_invalid and ( job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ) or ( job_type == REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL and try_redownload ) )
+            
+            if do_export or delete_record:
+                
+                HydrusPaths.MakeSureDirectoryExists( error_dir )
+                
+                pretty_timestamp = time.strftime( '%Y-%m-%d %H-%M-%S', time.localtime( self._controller.GetBootTime() ) )
+                
+                missing_hashes_filename = '{} missing hashes.txt'.format( pretty_timestamp )
+                
+                missing_hashes_path = os.path.join( error_dir, missing_hashes_filename )
+                
+                with open( missing_hashes_path, 'a', encoding = 'utf-8' ) as f:
+                    
+                    f.write( hash.hex() )
+                    f.write( '\n' )
+                    
+                
             
             if do_export:
                 
@@ -1487,35 +1658,6 @@ class FilesMaintenanceManager( object ):
                     
                 
             
-            if delete_record:
-                
-                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, ( hash, ), reason = 'Record deleted during File Integrity check.' )
-                
-                for service_key in [ CC.LOCAL_FILE_SERVICE_KEY, CC.LOCAL_UPDATE_SERVICE_KEY, CC.TRASH_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY ]:
-                    
-                    service_keys_to_content_updates = { service_key : [ content_update ] }
-                    
-                    self._controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
-                    
-                
-                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADVANCED, ( 'delete_deleted', ( hash, ) ) )
-                
-                service_keys_to_content_updates = { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] }
-                
-                self._controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
-                
-                if not self._pubbed_message_about_bad_file_record_delete:
-                    
-                    self._pubbed_message_about_bad_file_record_delete = True
-                    
-                    message = 'During file maintenance, a file was found to be missing or invalid. Its file record has been removed from the database without leaving a deletion record (so it can be easily reimported). Any known URLs for the file have been written to "{}".'.format( error_dir )
-                    message += os.linesep * 2
-                    message += 'More file records may have been removed, but this message will not appear again during this boot.'
-                    
-                    HydrusData.ShowText( message )
-                    
-                
-            
             if try_redownload:
                 
                 def qt_add_url( url ):
@@ -1532,6 +1674,32 @@ class FilesMaintenanceManager( object ):
                     
                 
             
+            if delete_record:
+                
+                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, ( hash, ), reason = 'Record deleted during File Integrity check.' )
+                
+                service_keys_to_content_updates = { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] }
+                
+                self._controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
+                
+                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADVANCED, ( 'delete_deleted', ( hash, ) ) )
+                
+                service_keys_to_content_updates = { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] }
+                
+                self._controller.WriteSynchronous( 'content_updates', service_keys_to_content_updates )
+                
+                if not self._pubbed_message_about_bad_file_record_delete:
+                    
+                    self._pubbed_message_about_bad_file_record_delete = True
+                    
+                    message = 'During file maintenance, a file was found to be missing or invalid. Its file record has been removed from the database without leaving a deletion record (so it can be easily reimported). Its file hash and any known URLs have been written to "{}".'.format( error_dir )
+                    message += os.linesep * 2
+                    message += 'This may happen to more files in the near future, but this message will not appear again during this boot.'
+                    
+                    HydrusData.ShowText( message )
+                    
+                
+            
         
         return file_was_bad
         
@@ -1540,7 +1708,7 @@ class FilesMaintenanceManager( object ):
         
         mime = media_result.GetMime()
         
-        return mime in HC.MIMES_WE_CAN_PHASH
+        return mime in HC.FILES_THAT_HAVE_PERCEPTUAL_HASH
         
     
     def _ClearJobs( self, hashes, job_type ):
@@ -1570,7 +1738,42 @@ class FilesMaintenanceManager( object ):
             
             path = self._controller.client_files_manager.GetFilePath( hash, mime )
             
-            HydrusPaths.MakeFileWriteable( path )
+            HydrusPaths.TryToGiveFileNicePermissionBits( path )
+            
+        except HydrusExceptions.FileMissingException:
+            
+            return None
+            
+        
+    
+    def _HasICCProfile( self, media_result ):
+        
+        hash = media_result.GetHash()
+        mime = media_result.GetMime()
+        
+        if mime not in HC.FILES_THAT_CAN_HAVE_ICC_PROFILE:
+            
+            return False
+            
+        
+        try:
+            
+            path = self._controller.client_files_manager.GetFilePath( hash, mime )
+            
+            try:
+                
+                pil_image = HydrusImageHandling.RawOpenPILImage( path )
+                
+            except:
+                
+                return None
+                
+            
+            has_icc_profile = HydrusImageHandling.HasICCProfile( pil_image )
+            
+            additional_data = has_icc_profile
+            
+            return additional_data
             
         except HydrusExceptions.FileMissingException:
             
@@ -1605,7 +1808,7 @@ class FilesMaintenanceManager( object ):
             
         except HydrusExceptions.UnsupportedFileException:
             
-            self._CheckFileIntegrity( media_result, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL )
+            self._CheckFileIntegrity( media_result, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD )
             
             return None
             
@@ -1667,37 +1870,11 @@ class FilesMaintenanceManager( object ):
             
         
     
-    def _RegenSimilarFilesMetadata( self, media_result ):
-        
-        hash = media_result.GetHash()
-        mime = media_result.GetMime()
-        
-        if mime not in HC.MIMES_WE_CAN_PHASH:
-            
-            self._controller.WriteSynchronous( 'file_maintenance_add_jobs_hashes', { hash }, REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP )
-            
-            return None
-            
-        
-        try:
-            
-            path = self._controller.client_files_manager.GetFilePath( hash, mime )
-            
-        except HydrusExceptions.FileMissingException:
-            
-            return None
-            
-        
-        phashes = ClientImageHandling.GenerateShapePerceptualHashes( path, mime )
-        
-        return phashes
-        
-    
     def _RegenFileThumbnailForce( self, media_result ):
         
-        mime = media_result.GetMime()
+        good_to_go = self._CanRegenThumbForMediaResult( media_result )
         
-        if mime not in HC.MIMES_WITH_THUMBNAILS:
+        if not good_to_go:
             
             return
             
@@ -1714,9 +1891,9 @@ class FilesMaintenanceManager( object ):
     
     def _RegenFileThumbnailRefit( self, media_result ):
         
-        mime = media_result.GetMime()
+        good_to_go = self._CanRegenThumbForMediaResult( media_result )
         
-        if mime not in HC.MIMES_WITH_THUMBNAILS:
+        if not good_to_go:
             
             return
             
@@ -1731,6 +1908,72 @@ class FilesMaintenanceManager( object ):
             
             pass
             
+        
+    
+    def _RegenPixelHash( self, media_result ):
+        
+        hash = media_result.GetHash()
+        mime = media_result.GetMime()
+        
+        if mime not in HC.FILES_THAT_CAN_HAVE_PIXEL_HASH:
+            
+            return None
+            
+        
+        duration = media_result.GetDuration()
+        
+        if duration is not None:
+            
+            return None
+            
+        
+        try:
+            
+            path = self._controller.client_files_manager.GetFilePath( hash, mime )
+            
+            try:
+                
+                pixel_hash = HydrusImageHandling.GetImagePixelHash( path, mime )
+                
+            except:
+                
+                return None
+                
+            
+            additional_data = pixel_hash
+            
+            return additional_data
+            
+        except HydrusExceptions.FileMissingException:
+            
+            return None
+            
+        
+    
+    def _RegenSimilarFilesMetadata( self, media_result ):
+        
+        hash = media_result.GetHash()
+        mime = media_result.GetMime()
+        
+        if mime not in HC.FILES_THAT_HAVE_PERCEPTUAL_HASH:
+            
+            self._controller.WriteSynchronous( 'file_maintenance_add_jobs_hashes', { hash }, REGENERATE_FILE_DATA_JOB_CHECK_SIMILAR_FILES_MEMBERSHIP )
+            
+            return None
+            
+        
+        try:
+            
+            path = self._controller.client_files_manager.GetFilePath( hash, mime )
+            
+        except HydrusExceptions.FileMissingException:
+            
+            return None
+            
+        
+        perceptual_hashes = ClientImageHandling.GenerateShapePerceptualHashes( path, mime )
+        
+        return perceptual_hashes
         
     
     def _ReInitialiseWorkRules( self ):
@@ -1752,13 +1995,13 @@ class FilesMaintenanceManager( object ):
     
     def _RunJob( self, media_results, job_type, job_key, job_done_hook = None ):
         
-        num_bad_files = 0
-        num_thumb_refits = 0
-        
         next_gc_collect = HydrusData.GetNow() + 10
         
         try:
             
+            big_pauser = HydrusData.BigJobPauser( wait_time = 0.8 )
+            
+            last_time_jobs_were_cleared = HydrusData.GetNow()
             cleared_jobs = []
             
             num_to_do = len( media_results )
@@ -1769,6 +2012,8 @@ class FilesMaintenanceManager( object ):
                 
             
             for ( i, media_result ) in enumerate( media_results ):
+                
+                big_pauser.Pause()
                 
                 hash = media_result.GetHash()
                 
@@ -1798,17 +2043,34 @@ class FilesMaintenanceManager( object ):
                         
                         additional_data = self._RegenFileOtherHashes( media_result )
                         
+                    elif job_type == REGENERATE_FILE_DATA_JOB_FILE_HAS_ICC_PROFILE:
+                        
+                        additional_data = self._HasICCProfile( media_result )
+                        
+                    elif job_type == REGENERATE_FILE_DATA_JOB_PIXEL_HASH:
+                        
+                        additional_data = self._RegenPixelHash( media_result )
+                        
                     elif job_type == REGENERATE_FILE_DATA_JOB_FORCE_THUMBNAIL:
                         
                         self._RegenFileThumbnailForce( media_result )
                         
                     elif job_type == REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL:
                         
+                        if not job_key.HasVariable( 'num_thumb_refits' ):
+                            
+                            job_key.SetVariable( 'num_thumb_refits', 0 ) 
+                            
+                        
+                        num_thumb_refits = job_key.GetIfHasVariable( 'num_thumb_refits' )
+                        
                         was_regenerated = self._RegenFileThumbnailRefit( media_result )
                         
                         if was_regenerated:
                             
                             num_thumb_refits += 1
+                            
+                            job_key.SetVariable( 'num_thumb_refits', num_thumb_refits )
                             
                         
                         job_key.SetVariable( 'popup_text_2', 'thumbs needing regen: {}'.format( HydrusData.ToHumanInt( num_thumb_refits ) ) )
@@ -1829,7 +2091,14 @@ class FilesMaintenanceManager( object ):
                         
                         self._FixFilePermissions( media_result )
                         
-                    elif job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ):
+                    elif job_type in ( REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_PRESENCE_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_TRY_URL_ELSE_REMOVE_RECORD, REGENERATE_FILE_DATA_JOB_FILE_INTEGRITY_DATA_SILENT_DELETE ):
+                        
+                        if not job_key.HasVariable( 'num_bad_files' ):
+                            
+                            job_key.SetVariable( 'num_bad_files', 0 ) 
+                            
+                        
+                        num_bad_files = job_key.GetIfHasVariable( 'num_bad_files' )
                         
                         file_was_bad = self._CheckFileIntegrity( media_result, job_type )
                         
@@ -1837,15 +2106,23 @@ class FilesMaintenanceManager( object ):
                             
                             num_bad_files += 1
                             
+                            job_key.SetVariable( 'num_bad_files', num_bad_files ) 
+                            
                         
                         job_key.SetVariable( 'popup_text_2', 'missing or invalid files: {}'.format( HydrusData.ToHumanInt( num_bad_files ) ) )
                         
+                    
+                except HydrusExceptions.ShutdownException:
+                    
+                    # no worries
+                    
+                    pass
                     
                 except Exception as e:
                     
                     HydrusData.PrintException( e )
                     
-                    message = 'There was a problem performing maintenance task {} on file {}! The job will not be reattempted. A full traceback of this error should be written to the log.'.format( regen_file_enum_to_str_lookup[ job_type ], hash.hex() )
+                    message = 'There was a problem performing maintenance task "{}" on file {}! The job will not be reattempted. A full traceback of this error should be written to the log.'.format( regen_file_enum_to_str_lookup[ job_type ], hash.hex() )
                     message += os.linesep * 2
                     message += str( e )
                     
@@ -1858,16 +2135,7 @@ class FilesMaintenanceManager( object ):
                     cleared_jobs.append( ( hash, job_type, additional_data ) )
                     
                 
-                self._jobs_since_last_gc_collect += 1
-                
-                if self._jobs_since_last_gc_collect > 100:
-                    
-                    gc.collect()
-                    
-                    self._jobs_since_last_gc_collect = 0
-                    
-                
-                if len( cleared_jobs ) > 100:
+                if HydrusData.TimeHasPassed( last_time_jobs_were_cleared + 10 ) or len( cleared_jobs ) > 256:
                     
                     self._controller.WriteSynchronous( 'file_maintenance_clear_jobs', cleared_jobs )
                     
@@ -1931,7 +2199,7 @@ class FilesMaintenanceManager( object ):
         
         self._reset_background_event.set()
         
-        job_key.SetVariable( 'popup_title', 'regenerating file data' )
+        job_key.SetStatusTitle( 'regenerating file data' )
         
         message_pubbed = False
         work_done = False
@@ -2160,7 +2428,7 @@ class FilesMaintenanceManager( object ):
             job_key.SetVariable( 'popup_gauge_1', ( num_jobs_done, total_num_jobs_to_do ) )
             
         
-        job_key.SetVariable( 'popup_title', 'regenerating file data' )
+        job_key.SetStatusTitle( 'regenerating file data' )
         
         if pub_job_key:
             
@@ -2221,3 +2489,4 @@ class FilesMaintenanceManager( object ):
         
         self._controller.CallToThreadLongRunning( self.MainLoopBackgroundWork )
         
+    

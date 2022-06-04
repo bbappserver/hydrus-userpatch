@@ -383,6 +383,33 @@ QTextEdit#HydrusValid
 	background-color: #80ff80;
 }
 
+QPlainTextEdit#HydrusValid
+{
+	background-color: #80ff80;
+}
+
+/* Duplicates 'middle' text colour */
+
+QLabel#HydrusIndeterminate
+{
+	color: #8080ff;
+}
+
+QLineEdit#HydrusIndeterminate
+{
+	background-color: #8080ff;
+}
+
+QTextEdit#HydrusIndeterminate
+{
+	background-color: #8080ff;
+}
+
+QPlainTextEdit#HydrusIndeterminate
+{
+	background-color: #8080ff;
+}
+
 /* Example: This regex is invalid */
 
 QLabel#HydrusInvalid
@@ -396,6 +423,11 @@ QLineEdit#HydrusInvalid
 }
 
 QTextEdit#HydrusInvalid
+{
+	background-color: #ff8080;
+}
+
+QPlainTextEdit#HydrusInvalid
 {
 	background-color: #ff8080;
 }
@@ -445,3 +477,14 @@ QPushButton#HydrusOnOffButton[hydrus_on=false]
 }
 
 /* You are permitted to use this theme however you want for the low, low price of your soul. :3 */
+
+/*
+
+Extra, hydev added this
+
+*/
+
+QLabel#HydrusHyperlink
+{
+	qproperty-link_color: #50fa7b;
+}

@@ -96,6 +96,7 @@ class VolumeControl( QW.QWidget ):
         self._global_mute = AudioMuteButton( self, AUDIO_GLOBAL )
         
         self._global_mute.setToolTip( 'Global mute/unmute' )
+        self._global_mute.setFocusPolicy( QC.Qt.NoFocus )
         
         vbox = QP.VBoxLayout( margin = 0, spacing = 0 )
         
@@ -130,6 +131,11 @@ class VolumeControl( QW.QWidget ):
         event.ignore()
         
     
+    def PopupIsVisible( self ):
+        
+        return self._popup_window.isVisible()
+        
+    
     class _PopupWindow( QW.QFrame ):
         
         def __init__( self, parent, canvas_type, direction = 'down' ):
@@ -144,7 +150,7 @@ class VolumeControl( QW.QWidget ):
             
             self.setAttribute( QC.Qt.WA_ShowWithoutActivating )
             
-            if self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
+            if self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
                 
                 option_to_use = 'media_viewer_uses_its_own_audio_volume'
                 volume_type = AUDIO_MEDIA_VIEWER
@@ -157,7 +163,7 @@ class VolumeControl( QW.QWidget ):
             
             self._specific_mute = AudioMuteButton( self, volume_type )
             
-            self._specific_mute.setToolTip( 'Mute/unmute: {}'.format( ClientGUICommon.canvas_str_lookup[ self._canvas_type ] ) )
+            self._specific_mute.setToolTip( 'Mute/unmute: {}'.format( CC.canvas_type_str_lookup[ self._canvas_type ] ) )
             
             if HG.client_controller.new_options.GetBoolean( option_to_use ):
                 
@@ -212,12 +218,8 @@ class VolumeControl( QW.QWidget ):
             
             self.move( pos )
             
-            # QWidget.underMouse() doesn't work on the border edge and hence gives flicker, so just do it manually
-            
-            cursor_pos = QG.QCursor.pos()
-            
-            over_parent = parent.rect().contains( parent.mapFromGlobal( cursor_pos ) )
-            over_me = self.rect().contains( self.mapFromGlobal( cursor_pos ) )
+            over_parent = ClientGUIFunctions.MouseIsOverWidget( parent )
+            over_me = ClientGUIFunctions.MouseIsOverWidget( self )
             
             should_show = over_parent or over_me
             

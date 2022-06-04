@@ -1,48 +1,64 @@
-import os
 import sqlite3
 import typing
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
-from hydrus.core import HydrusDB
-from hydrus.core import HydrusDBModule
 from hydrus.core import HydrusExceptions
-from hydrus.core import HydrusSerialisable
-from hydrus.core import HydrusTags
 
-from hydrus.client.db import ClientDBServices
-from hydrus.client.metadata import ClientTags
+from hydrus.client import ClientTime
+from hydrus.client.db import ClientDBModule
 
-class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
+class ClientDBFilesMetadataBasic( ClientDBModule.ClientDBModule ):
     
     def __init__( self, cursor: sqlite3.Cursor ):
         
-        HydrusDBModule.HydrusDBModule.__init__( self, 'client files metadata', cursor )
+        ClientDBModule.ClientDBModule.__init__( self, 'client files simple metadata', cursor )
         
         self.inbox_hash_ids = set()
         
         self._InitCaches()
         
     
-    def _GetInitialIndexGenerationTuples( self ):
+    def _GetInitialIndexGenerationDict( self ) -> dict:
         
-        index_generation_tuples = []
+        index_generation_dict = {}
         
-        index_generation_tuples.append( ( 'files_info', [ 'size' ], False ) )
-        index_generation_tuples.append( ( 'files_info', [ 'mime' ], False ) )
-        index_generation_tuples.append( ( 'files_info', [ 'width' ], False ) )
-        index_generation_tuples.append( ( 'files_info', [ 'height' ], False ) )
-        index_generation_tuples.append( ( 'files_info', [ 'duration' ], False ) )
-        index_generation_tuples.append( ( 'files_info', [ 'num_frames' ], False ) )
+        index_generation_dict[ 'main.files_info' ] = [
+            ( [ 'size' ], False, 400 ),
+            ( [ 'mime' ], False, 400 ),
+            ( [ 'width' ], False, 400 ),
+            ( [ 'height' ], False, 400 ),
+            ( [ 'duration' ], False, 400 ),
+            ( [ 'num_frames' ], False, 400 )
+        ]
         
-        return index_generation_tuples
+        index_generation_dict[ 'main.archive_timestamps' ] = [
+            ( [ 'archived_timestamp' ], False, 474 )
+        ]
+        
+        index_generation_dict[ 'main.file_domain_modified_timestamps' ] = [
+            ( [ 'file_modified_timestamp' ], False, 476 )
+        ]
+        
+        return index_generation_dict
+        
+    
+    def _GetInitialTableGenerationDict( self ) -> dict:
+        
+        return {
+            'main.file_inbox' : ( 'CREATE TABLE IF NOT EXISTS {} ( hash_id INTEGER PRIMARY KEY );', 400 ),
+            'main.files_info' : ( 'CREATE TABLE IF NOT EXISTS {} ( hash_id INTEGER PRIMARY KEY, size INTEGER, mime INTEGER, width INTEGER, height INTEGER, duration INTEGER, num_frames INTEGER, has_audio INTEGER_BOOLEAN, num_words INTEGER );', 400 ),
+            'main.has_icc_profile' : ( 'CREATE TABLE IF NOT EXISTS {} ( hash_id INTEGER PRIMARY KEY );', 465 ),
+            'main.archive_timestamps' : ( 'CREATE TABLE IF NOT EXISTS {} ( hash_id INTEGER PRIMARY KEY, archived_timestamp INTEGER );', 474 ),
+            'main.file_domain_modified_timestamps' : ( 'CREATE TABLE IF NOT EXISTS {} ( hash_id INTEGER, domain_id INTEGER, file_modified_timestamp INTEGER, PRIMARY KEY ( hash_id, domain_id ) );', 476 )
+        }
         
     
     def _InitCaches( self ):
         
-        if self._c.execute( 'SELECT 1 FROM sqlite_master WHERE name = ?;', ( 'file_inbox', ) ).fetchone() is not None:
+        if self._Execute( 'SELECT 1 FROM sqlite_master WHERE name = ?;', ( 'file_inbox', ) ).fetchone() is not None:
             
-            self.inbox_hash_ids = self._STS( self._c.execute( 'SELECT hash_id FROM file_inbox;' ) )
+            self.inbox_hash_ids = self._STS( self._Execute( 'SELECT hash_id FROM file_inbox;' ) )
             
         
     
@@ -58,7 +74,7 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
             
         
         # hash_id, size, mime, width, height, duration, num_frames, has_audio, num_words
-        self._c.executemany( insert_phrase + ' files_info ( hash_id, size, mime, width, height, duration, num_frames, has_audio, num_words ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? );', rows )
+        self._ExecuteMany( insert_phrase + ' files_info ( hash_id, size, mime, width, height, duration, num_frames, has_audio, num_words ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? );', rows )
         
     
     def ArchiveFiles( self, hash_ids: typing.Collection[ int ] ) -> typing.Set[ int ]:
@@ -72,33 +88,40 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
         
         if len( archiveable_hash_ids ) > 0:
             
-            self._c.executemany( 'DELETE FROM file_inbox WHERE hash_id = ?;', ( ( hash_id, ) for hash_id in archiveable_hash_ids ) )
+            self._ExecuteMany( 'DELETE FROM file_inbox WHERE hash_id = ?;', ( ( hash_id, ) for hash_id in archiveable_hash_ids ) )
             
             self.inbox_hash_ids.difference_update( archiveable_hash_ids )
+            
+            now = HydrusData.GetNow()
+            
+            self._ExecuteMany( 'REPLACE INTO archive_timestamps ( hash_id, archived_timestamp ) VALUES ( ?, ? );', ( ( hash_id, now ) for hash_id in archiveable_hash_ids ) )
             
         
         return archiveable_hash_ids
         
     
-    def CreateInitialTables( self ):
+    def ClearDomainModifiedTimestamp( self, hash_id: int, domain_id: int ):
         
-        self._c.execute( 'CREATE TABLE file_inbox ( hash_id INTEGER PRIMARY KEY );' )
-        self._c.execute( 'CREATE TABLE files_info ( hash_id INTEGER PRIMARY KEY, size INTEGER, mime INTEGER, width INTEGER, height INTEGER, duration INTEGER, num_frames INTEGER, has_audio INTEGER_BOOLEAN, num_words INTEGER );' )
+        self._Execute( 'DELETE FROM file_domain_modified_timestamps WHERE hash_id = ? AND domain_id = ?;', ( hash_id, domain_id ) )
         
     
-    def GetExpectedTableNames( self ) -> typing.Collection[ str ]:
+    def GetDomainModifiedTimestamp( self, hash_id: int, domain_id: int ) -> typing.Optional[ int ]:
         
-        expected_table_names = [
-            'file_inbox',
-            'files_info'
-        ]
+        result = self._Execute( 'SELECT file_modified_timestamp FROM file_domain_modified_timestamps WHERE hash_id = ? AND domain_id = ?;', ( hash_id, domain_id ) ).fetchone()
         
-        return expected_table_names
+        if result is None:
+            
+            return None
+            
+        
+        ( timestamp, ) = result
+        
+        return timestamp
         
     
     def GetMime( self, hash_id: int ) -> int:
         
-        result = self._c.execute( 'SELECT mime FROM files_info WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT mime FROM files_info WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -116,24 +139,41 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
             
             ( hash_id, ) = hash_ids
             
-            result = self._STL( self._c.execute( 'SELECT mime FROM files_info WHERE hash_id = ?;', ( hash_id, ) ) )
+            result = self._STL( self._Execute( 'SELECT mime FROM files_info WHERE hash_id = ?;', ( hash_id, ) ) )
             
         else:
             
-            with HydrusDB.TemporaryIntegerTable( self._c, hash_ids, 'hash_id' ) as temp_hash_ids_table_name:
+            with self._MakeTemporaryIntegerTable( hash_ids, 'hash_id' ) as temp_hash_ids_table_name:
                 
-                result = self._STL( self._c.execute( 'SELECT mime FROM {} CROSS JOIN files_info USING ( hash_id );'.format( temp_hash_ids_table_name ) ) )
+                result = self._STL( self._Execute( 'SELECT mime FROM {} CROSS JOIN files_info USING ( hash_id );'.format( temp_hash_ids_table_name ) ) )
                 
             
         
         return sum( ( 1 for mime in result if mime in HC.SEARCHABLE_MIMES ) )
         
     
+    def GetResolution( self, hash_id: int ):
+        
+        result = self._Execute( 'SELECT width, height FROM files_info WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
+        
+        if result is None:
+            
+            return ( None, None )
+            
+        
+        return result
+        
+    
     def GetTablesAndColumnsThatUseDefinitions( self, content_type: int ) -> typing.List[ typing.Tuple[ str, str ] ]:
         
-        if HC.CONTENT_TYPE_HASH:
+        if content_type == HC.CONTENT_TYPE_HASH:
             
-            return [ ( 'files_info', 'hash_id' ) ]
+            return [
+                ( 'file_inbox', 'hash_id' ),
+                ( 'files_info', 'hash_id' ),
+                ( 'has_icc_profile', 'hash_id' ),
+                ( 'archive_timestamps', 'hash_id' )
+            ]
             
         
         return []
@@ -145,13 +185,13 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
             
             ( hash_id, ) = hash_ids
             
-            result = self._c.execute( 'SELECT size FROM files_info WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
+            result = self._Execute( 'SELECT size FROM files_info WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
             
         else:
             
-            with HydrusDB.TemporaryIntegerTable( self._c, hash_ids, 'hash_id' ) as temp_hash_ids_table_name:
+            with self._MakeTemporaryIntegerTable( hash_ids, 'hash_id' ) as temp_hash_ids_table_name:
                 
-                result = self._c.execute( 'SELECT SUM( size ) FROM {} CROSS JOIN files_info USING ( hash_id );'.format( temp_hash_ids_table_name ) ).fetchone()
+                result = self._Execute( 'SELECT SUM( size ) FROM {} CROSS JOIN files_info USING ( hash_id );'.format( temp_hash_ids_table_name ) ).fetchone()
                 
             
         
@@ -165,6 +205,23 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
         return total_size
         
     
+    def GetHasICCProfile( self, hash_id: int ):
+        
+        result = self._Execute( 'SELECT hash_id FROM has_icc_profile WHERE hash_id = ?;', ( hash_id, ) ).fetchone()
+        
+        return result is not None
+        
+    
+    def GetHasICCProfileHashIds( self, hash_ids: typing.Collection[ int ] ) -> typing.Set[ int ]:
+        
+        with self._MakeTemporaryIntegerTable( hash_ids, 'hash_id' ) as temp_hash_ids_table_name:
+            
+            has_icc_profile_hash_ids = self._STS( self._Execute( 'SELECT hash_id FROM {} CROSS JOIN has_icc_profile USING ( hash_id );'.format( temp_hash_ids_table_name ) ) )
+            
+        
+        return has_icc_profile_hash_ids
+        
+    
     def InboxFiles( self, hash_ids: typing.Collection[ int ] ) -> typing.Set[ int ]:
         
         if not isinstance( hash_ids, set ):
@@ -176,11 +233,45 @@ class ClientDBFilesMetadataBasic( HydrusDBModule.HydrusDBModule ):
         
         if len( inboxable_hash_ids ) > 0:
             
-            self._c.executemany( 'INSERT OR IGNORE INTO file_inbox VALUES ( ? );', ( ( hash_id, ) for hash_id in inboxable_hash_ids ) )
+            self._ExecuteMany( 'INSERT OR IGNORE INTO file_inbox VALUES ( ? );', ( ( hash_id, ) for hash_id in inboxable_hash_ids ) )
             
             self.inbox_hash_ids.update( inboxable_hash_ids )
             
         
         return inboxable_hash_ids
+        
+    
+    def SetDomainModifiedTimestamp( self, hash_id: int, domain_id: int, timestamp: int ):
+        
+        self._Execute( 'REPLACE INTO file_domain_modified_timestamps ( hash_id, domain_id, file_modified_timestamp ) VALUES ( ?, ?, ? );', ( hash_id, domain_id, timestamp ) )
+        
+    
+    def SetHasICCProfile( self, hash_id: int, has_icc_profile: bool ):
+        
+        if has_icc_profile:
+            
+            self._Execute( 'INSERT OR IGNORE INTO has_icc_profile ( hash_id ) VALUES ( ? );', ( hash_id, ) )
+            
+        else:
+            
+            self._Execute( 'DELETE FROM has_icc_profile WHERE hash_id = ?;', ( hash_id, ) )
+            
+        
+    
+    def UpdateDomainModifiedTimestamp( self, hash_id: int, domain_id: int, timestamp: int ):
+        
+        should_update = True
+        
+        existing_timestamp = self.GetDomainModifiedTimestamp( hash_id, domain_id )
+        
+        if existing_timestamp is not None:
+            
+            should_update = ClientTime.ShouldUpdateDomainModifiedTime( existing_timestamp, timestamp )
+            
+        
+        if should_update:
+            
+            self.SetDomainModifiedTimestamp( hash_id, domain_id, timestamp )
+            
         
     

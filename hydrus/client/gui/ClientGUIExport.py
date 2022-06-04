@@ -1,3 +1,4 @@
+import collections
 import os
 import time
 import traceback
@@ -14,8 +15,11 @@ from hydrus.core import HydrusTags
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientExporting
+from hydrus.client import ClientLocation
 from hydrus.client import ClientSearch
+from hydrus.client import ClientThreading
 from hydrus.client.gui import ClientGUIDialogsQuick
+from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUIScrolledPanels
 from hydrus.client.gui import ClientGUITags
 from hydrus.client.gui import ClientGUITime
@@ -70,7 +74,11 @@ class EditExportFoldersPanel( ClientGUIScrolledPanels.EditPanel ):
         path = ''
         export_type = HC.EXPORT_FOLDER_TYPE_REGULAR
         delete_from_client_after_export = False
-        file_search_context = ClientSearch.FileSearchContext( file_service_key = CC.LOCAL_FILE_SERVICE_KEY )
+        
+        default_location_context = HG.client_controller.new_options.GetDefaultLocalLocationContext()
+        
+        file_search_context = ClientSearch.FileSearchContext( location_context = default_location_context )
+        
         period = 15 * 60
         
         export_folder = ClientExporting.ExportFolder( name, path, export_type = export_type, delete_from_client_after_export = delete_from_client_after_export, file_search_context = file_search_context, period = period, phrase = phrase )
@@ -150,6 +158,8 @@ class EditExportFoldersPanel( ClientGUIScrolledPanels.EditPanel ):
         
         export_folders = self._export_folders.GetData( only_selected = True )
         
+        edited_datas = []
+        
         for export_folder in export_folders:
             
             with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit export folder' ) as dlg:
@@ -168,12 +178,16 @@ class EditExportFoldersPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     self._export_folders.AddDatas( ( edited_export_folder, ) )
                     
+                    edited_datas.append( edited_export_folder )
+                    
                 else:
                     
                     return
                     
                 
             
+        
+        self._export_folders.SelectDatas( edited_datas )
         
     
     def _GetExistingNames( self ):
@@ -646,13 +660,13 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         self._UpdateTxtButton()
         
-        HG.client_controller.CallAfterQtSafe( self._export, self._export.setFocus, QC.Qt.OtherFocusReason)
+        ClientGUIFunctions.SetFocusLater( self._export )
         
         self._paths.itemSelectionChanged.connect( self._RefreshTags )
         
         if do_export_and_then_quit:
             
-            QP.CallAfter( self._DoExport, True )
+            HG.client_controller.CallAfterQtSafe( self, 'doing export before dialog quit', self._DoExport, True )
             
         
     
@@ -764,6 +778,8 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         to_do = self._paths.GetData()
         
+        to_do = [ ( ordering_index, media, self._GetPath( media ) ) for ( ordering_index, media ) in to_do ]
+        
         num_to_do = len( to_do )
         
         def qt_update_label( text ):
@@ -793,18 +809,32 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         def do_it( directory, neighbouring_txt_tag_service_keys, delete_afterwards, export_symlinks, quit_afterwards ):
             
+            job_key = ClientThreading.JobKey( cancellable = True )
+            
+            job_key.SetStatusTitle( 'file export' )
+            
+            HG.client_controller.pub( 'message', job_key )
+            
             pauser = HydrusData.BigJobPauser()
             
-            for ( index, ( ordering_index, media ) ) in enumerate( to_do ):
+            for ( index, ( ordering_index, media, path ) ) in enumerate( to_do ):
+                
+                if job_key.IsCancelled():
+                    
+                    break
+                    
                 
                 try:
                     
-                    QP.CallAfter( qt_update_label, HydrusData.ConvertValueRangeToPrettyString(index+1,num_to_do) )
+                    x_of_y = HydrusData.ConvertValueRangeToPrettyString( index + 1, num_to_do )
+                    
+                    job_key.SetVariable( 'popup_text_1', 'Done {}'.format( x_of_y ) )
+                    job_key.SetVariable( 'popup_gauge_1', ( index + 1, num_to_do ) )
+                    
+                    QP.CallAfter( qt_update_label, x_of_y )
                     
                     hash = media.GetHash()
                     mime = media.GetMime()
-                    
-                    path = self._GetPath( media )
                     
                     path = os.path.normpath( path )
                     
@@ -836,7 +866,7 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
                         
                         with open( txt_path, 'w', encoding = 'utf-8' ) as f:
                             
-                            f.write( os.linesep.join( tags ) )
+                            f.write( '\n'.join( tags ) )
                             
                         
                     
@@ -850,7 +880,7 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
                         
                         HydrusPaths.MirrorFile( source_path, path )
                         
-                        HydrusPaths.MakeFileWriteable( path )
+                        HydrusPaths.TryToGiveFileNicePermissionBits( path )
                         
                     
                 except:
@@ -863,23 +893,52 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
                 pauser.Pause()
                 
             
-            if delete_afterwards:
+            if not job_key.IsCancelled() and delete_afterwards:
                 
                 QP.CallAfter( qt_update_label, 'deleting' )
                 
-                deletee_hashes = { media.GetHash() for ( ordering_index, media ) in to_do }
+                delete_lock_for_archived_files = HG.client_controller.new_options.GetBoolean( 'delete_lock_for_archived_files' )
                 
-                chunks_of_hashes = HydrusData.SplitListIntoChunks( deletee_hashes, 64 )
-                
-                reason = 'Deleted after manual export to "{}".'.format( directory )
-                
-                content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes, reason = reason ) for chunk_of_hashes in chunks_of_hashes ]
-                
-                for content_update in content_updates:
+                if delete_lock_for_archived_files:
                     
-                    HG.client_controller.WriteSynchronous( 'content_updates', { CC.LOCAL_FILE_SERVICE_KEY : [ content_update ] } )
+                    deletee_medias = { media for ( ordering_index, media, path ) in to_do if not media.HasArchive() }
+                    
+                else:
+                    
+                    deletee_medias = { media for ( ordering_index, media, path ) in to_do }
                     
                 
+                chunks_of_deletee_medias = HydrusData.SplitListIntoChunks( list( deletee_medias ), 64 )
+                
+                for chunk_of_deletee_medias in chunks_of_deletee_medias:
+                    
+                    reason = 'Deleted after manual export to "{}".'.format( directory )
+                    
+                    service_keys_to_hashes = collections.defaultdict( set )
+                    
+                    for media in chunk_of_deletee_medias:
+                        
+                        for service_key in media.GetLocationsManager().GetCurrent():
+                            
+                            service_keys_to_hashes[ service_key ].add( media.GetHash() )
+                            
+                        
+                    
+                    for service_key in ClientLocation.ValidLocalDomainsFilter( service_keys_to_hashes.keys() ):
+                        
+                        content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, service_keys_to_hashes[ service_key ], reason = reason )
+                        
+                        HG.client_controller.WriteSynchronous( 'content_updates', { service_key : [ content_update ] } )
+                        
+                    
+                
+            
+            job_key.DeleteVariable( 'popup_gauge_1' )
+            job_key.SetVariable( 'popup_text_1', 'Done!' )
+            
+            job_key.Finish()
+            
+            job_key.Delete( 5 )
             
             QP.CallAfter( qt_update_label, 'done!' )
             
@@ -906,16 +965,7 @@ class ReviewExportFilesPanel( ClientGUIScrolledPanels.ReviewPanel ):
         
         terms = ClientExporting.ParseExportPhrase( pattern )
         
-        filename = ClientExporting.GenerateExportFilename( directory, media, terms )
-        
-        i = 1
-        
-        while filename in self._existing_filenames:
-            
-            filename = ClientExporting.GenerateExportFilename( directory, media, terms, append_number = i )
-            
-            i += 1
-            
+        filename = ClientExporting.GenerateExportFilename( directory, media, terms, do_not_use_filenames = self._existing_filenames )
         
         path = os.path.join( directory, filename )
         

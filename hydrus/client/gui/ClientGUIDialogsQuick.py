@@ -79,11 +79,11 @@ def GetYesNo( win, message, title = 'Are you sure?', yes_label = 'yes', no_label
             
             if auto_yes_time is not None:
                 
-                job = HG.client_controller.CallLaterQtSafe( dlg, auto_yes_time, dlg.done, QW.QDialog.Accepted )
+                job = HG.client_controller.CallLaterQtSafe( dlg, auto_yes_time, 'dialog auto-yes', dlg.done, QW.QDialog.Accepted )
                 
             elif auto_no_time is not None:
                 
-                job = HG.client_controller.CallLaterQtSafe( dlg, auto_no_time, dlg.done, QW.QDialog.Rejected )
+                job = HG.client_controller.CallLaterQtSafe( dlg, auto_no_time, 'dialog auto-no', dlg.done, QW.QDialog.Rejected )
                 
             
             try:
@@ -98,6 +98,13 @@ def GetYesNo( win, message, title = 'Are you sure?', yes_label = 'yes', no_label
         
     
 def SelectFromList( win, title, choice_tuples, value_to_select = None, sort_tuples = True ):
+    
+    if len( choice_tuples ) == 1:
+        
+        ( ( text, data ), ) = choice_tuples
+        
+        return data
+        
     
     with ClientGUITopLevelWindowsPanels.DialogEdit( win, title ) as dlg:
         
@@ -118,6 +125,13 @@ def SelectFromList( win, title, choice_tuples, value_to_select = None, sort_tupl
         
     
 def SelectFromListButtons( win, title, choice_tuples, message = '' ):
+    
+    if len( choice_tuples ) == 1:
+        
+        ( ( text, data, tooltip ), ) = choice_tuples
+        
+        return data
+        
     
     with ClientGUITopLevelWindowsPanels.DialogEdit( win, title, hide_buttons = True ) as dlg:
         
@@ -157,7 +171,7 @@ def SelectMultipleFromList( win, title, choice_tuples ):
             
         
     
-def SelectServiceKey( service_types = HC.ALL_SERVICES, service_keys = None, unallowed = None ):
+def SelectServiceKey( service_types = HC.ALL_SERVICES, service_keys = None, unallowed = None, message = 'select service' ):
     
     if service_keys is None:
         
@@ -191,7 +205,7 @@ def SelectServiceKey( service_types = HC.ALL_SERVICES, service_keys = None, unal
             
             tlw = HG.client_controller.GetMainTLW()
             
-            service_key = SelectFromList( tlw, 'select service', choice_tuples )
+            service_key = SelectFromList( tlw, message, choice_tuples )
             
             return service_key
             

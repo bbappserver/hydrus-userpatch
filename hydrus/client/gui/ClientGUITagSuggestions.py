@@ -71,7 +71,7 @@ class ListBoxTagsSuggestionsFavourites( ClientGUIListBoxes.ListBoxTagsStrings ):
             
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         if len( self._selected_terms ) > 0:
             
@@ -119,7 +119,7 @@ class ListBoxTagsSuggestionsRelated( ClientGUIListBoxes.ListBoxTagsPredicates ):
         self.setMinimumWidth( width )
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         if len( self._selected_terms ) > 0:
             
@@ -139,7 +139,7 @@ class ListBoxTagsSuggestionsRelated( ClientGUIListBoxes.ListBoxTagsPredicates ):
     
     def _GenerateTermFromPredicate( self, predicate: ClientSearch.Predicate ) -> ClientGUIListBoxesData.ListBoxItemPredicate:
         
-        predicate.ClearCounts()
+        predicate = predicate.GetCountlessCopy()
         
         return ClientGUIListBoxesData.ListBoxItemPredicate( predicate )
         

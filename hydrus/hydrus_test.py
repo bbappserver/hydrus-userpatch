@@ -2,7 +2,6 @@
 
 from hydrus.client.gui import QtPorting as QP
 from qtpy import QtWidgets as QW
-from qtpy import QtCore as QC
 
 import locale
 
@@ -67,6 +66,8 @@ def boot():
             
         finally:
             
+            HG.started_shutdown = True
+            
             HG.view_shutdown = True
             
             controller.pubimmediate( 'wake_daemons' )
@@ -88,6 +89,18 @@ def boot():
         
         print( 'This was version ' + str( HC.SOFTWARE_VERSION ) )
         
-        input()
+        if sys.stdin.isatty():
+            
+            input( 'Press any key to exit.' )
+            
+        
+        if controller.was_successful:
+            
+            sys.exit( 0 )
+            
+        else:
+            
+            sys.exit( 1 )
+            
         
     

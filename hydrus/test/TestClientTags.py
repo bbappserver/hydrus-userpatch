@@ -5,10 +5,14 @@ from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusTags
+from hydrus.core import HydrusText
+
+from hydrus.external import SystemPredicateParser
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientManagers
 from hydrus.client import ClientSearch
+from hydrus.client import ClientSearchParseSystemPredicates
 from hydrus.client.media import ClientMediaManagers
 from hydrus.client.metadata import ClientTags
 from hydrus.client.metadata import ClientTagsHandling
@@ -633,8 +637,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -693,8 +697,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -753,8 +757,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -813,8 +817,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -867,8 +871,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -912,8 +916,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -961,8 +965,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1024,8 +1028,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1079,8 +1083,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1143,8 +1147,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1197,8 +1201,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1250,8 +1254,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1304,8 +1308,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1357,8 +1361,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1411,8 +1415,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1464,8 +1468,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1518,8 +1522,8 @@ class TestTagObjects( unittest.TestCase ):
         
         tag_autocomplete_options.SetTuple(
             tag_autocomplete_options.GetWriteAutocompleteTagDomain(),
-            tag_autocomplete_options.OverridesWriteAutocompleteFileDomain(),
-            tag_autocomplete_options.GetWriteAutocompleteFileDomain(),
+            tag_autocomplete_options.OverridesWriteAutocompleteLocationContext(),
+            tag_autocomplete_options.GetWriteAutocompleteLocationContext(),
             search_namespaces_into_full_tags,
             namespace_bare_fetch_all_allowed,
             namespace_fetch_all_allowed,
@@ -1566,6 +1570,115 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( set( predicate_results_cache.FilterPredicates( CC.COMBINED_TAG_SERVICE_KEY, 'samus aran*' ) ), { samus_aran, character_samus_aran } )
         
     
+    def test_predicate_counts( self ):
+        
+        # quick test for counts and __hash__
+        
+        p_c = ClientSearch.PredicateCount( 1, 2, 3, 4 )
+        
+        self.assertEqual( p_c.min_current_count, 1 )
+        self.assertEqual( p_c.min_pending_count, 2 )
+        self.assertEqual( p_c.max_current_count, 3 )
+        self.assertEqual( p_c.max_pending_count, 4 )
+        
+        self.assertNotEqual( p_c, ClientSearch.PredicateCount( 1, 2, 3, 5 ) )
+        self.assertNotEqual( p_c, ClientSearch.PredicateCount( 1, 5, 3, 4 ) )
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 1, 2, 3, 4 ) )
+        
+        #
+        
+        null = ClientSearch.PredicateCount.STATICCreateNullCount()
+        
+        self.assertEqual( null, ClientSearch.PredicateCount( 0, 0, 0, 0 ) )
+        self.assertEqual( null.GetMinCount(), 0 )
+        self.assertEqual( null.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 0 )
+        self.assertEqual( null.GetMinCount( HC.CONTENT_STATUS_PENDING ), 0 )
+        self.assertEqual( null.HasZeroCount(), True )
+        self.assertEqual( null.HasNonZeroCount(), False )
+        self.assertEqual( null.GetSuffixString(), '' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 3, 0, 3, 0 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 3, 0, 3, 0 ) )
+        self.assertEqual( p_c.GetMinCount(), 3 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 3 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 0 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(3)' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 0, 5, 0, 5 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 0, 5, 0, 5 ) )
+        self.assertEqual( p_c.GetMinCount(), 5 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 0 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 5 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(+5)' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 100, 0, 150, 0 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 100, 0, 150, 0 ) )
+        self.assertEqual( p_c.GetMinCount(), 100 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 100 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 0 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(100-150)' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 0, 80, 0, 85 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 0, 80, 0, 85 ) )
+        self.assertEqual( p_c.GetMinCount(), 80 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 0 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 80 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(+80-85)' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 0, 0, 1500, 0 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 0, 0, 1500, 0 ) )
+        self.assertEqual( p_c.GetMinCount(), 0 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 0 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 0 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(0-1,500)' )
+        
+        #
+        
+        p_c = ClientSearch.PredicateCount( 1, 2, 3, 4 )
+        
+        self.assertEqual( p_c, ClientSearch.PredicateCount( 1, 2, 3, 4 ) )
+        self.assertEqual( p_c.GetMinCount(), 3 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_CURRENT ), 1 )
+        self.assertEqual( p_c.GetMinCount( HC.CONTENT_STATUS_PENDING ), 2 )
+        self.assertEqual( p_c.HasZeroCount(), False )
+        self.assertEqual( p_c.HasNonZeroCount(), True )
+        self.assertEqual( p_c.GetSuffixString(), '(1-3) (+2-4)' )
+        
+        #
+        
+        p_c_1 = ClientSearch.PredicateCount( 10, 2, 12, 4 )
+        p_c_2 = ClientSearch.PredicateCount( 1, 0, 2, 4 )
+        
+        p_c_1.AddCounts( p_c_2 )
+        
+        self.assertEqual( p_c_1, ClientSearch.PredicateCount( 10, 2, 14, 8 ) )
+        
+    
     def test_predicate_strings_and_namespaces( self ):
         
         render_for_user = False
@@ -1576,7 +1689,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), '' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_TAG, 'tag', min_current_count = 1, min_pending_count = 2 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_TAG, 'tag', True, count = ClientSearch.PredicateCount.STATICCreateStaticCount( 1, 2 ) )
         
         self.assertEqual( p.ToString( with_count = False ), 'tag' )
         self.assertEqual( p.ToString( with_count = True ), 'tag (1) (+2)' )
@@ -1589,7 +1702,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), '' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_TAG, 'tag', False, 1, 2 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_TAG, 'tag', False, count = ClientSearch.PredicateCount.STATICCreateStaticCount( 1, 2 ) )
         
         self.assertEqual( p.ToString( with_count = False ), '-tag' )
         self.assertEqual( p.ToString( with_count = True ), '-tag (1) (+2)' )
@@ -1600,23 +1713,23 @@ class TestTagObjects( unittest.TestCase ):
         
         p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_AGE, ( '<', 'delta', ( 1, 2, 3, 4 ) ) )
         
-        self.assertEqual( p.ToString(), 'system:time imported: since 1 year 2 months ago' )
+        self.assertEqual( p.ToString(), 'system:import time: since 1 year 2 months ago' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_AGE, ( '\u2248', 'delta', ( 1, 2, 3, 4 ) ) )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_AGE, ( CC.UNICODE_ALMOST_EQUAL_TO, 'delta', ( 1, 2, 3, 4 ) ) )
         
-        self.assertEqual( p.ToString(), 'system:time imported: around 1 year 2 months ago' )
+        self.assertEqual( p.ToString(), 'system:import time: around 1 year 2 months ago' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
         p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_AGE, ( '>', 'delta', ( 1, 2, 3, 4 ) ) )
         
-        self.assertEqual( p.ToString(), 'system:time imported: before 1 year 2 months ago' )
+        self.assertEqual( p.ToString(), 'system:import time: before 1 year 2 months ago' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_ARCHIVE, min_current_count = 1000 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_ARCHIVE, count = ClientSearch.PredicateCount.STATICCreateCurrentCount( 1000 ) )
         
         self.assertEqual( p.ToString(), 'system:archive (1,000)' )
         self.assertEqual( p.GetNamespace(), 'system' )
@@ -1628,7 +1741,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_EVERYTHING, min_current_count = 2000 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_EVERYTHING, count = ClientSearch.PredicateCount.STATICCreateCurrentCount( 2000 ) )
         
         self.assertEqual( p.ToString(), 'system:everything (2,000)' )
         self.assertEqual( p.GetNamespace(), 'system' )
@@ -1640,15 +1753,45 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_FILE_SERVICE, ( True, HC.CONTENT_STATUS_DELETED, CC.LOCAL_FILE_SERVICE_KEY ) )
+        
+        self.assertEqual( p.ToString(), 'system:is deleted from my files' )
+        self.assertEqual( p.GetNamespace(), 'system' )
+        self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
+        
         p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_FILE_SERVICE, ( False, HC.CONTENT_STATUS_PENDING, CC.LOCAL_FILE_SERVICE_KEY ) )
         
         self.assertEqual( p.ToString(), 'system:is not pending to my files' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_FILE_SERVICE, ( False, HC.CONTENT_STATUS_PETITIONED, CC.LOCAL_FILE_SERVICE_KEY ) )
+        
+        self.assertEqual( p.ToString(), 'system:is not petitioned from my files' )
+        self.assertEqual( p.GetNamespace(), 'system' )
+        self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
+        
         p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_HAS_AUDIO, True )
         
         self.assertEqual( p.ToString(), 'system:has audio' )
+        self.assertEqual( p.GetNamespace(), 'system' )
+        self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
+        
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_HAS_AUDIO, False )
+        
+        self.assertEqual( p.ToString(), 'system:no audio' )
+        self.assertEqual( p.GetNamespace(), 'system' )
+        self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
+        
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE, True )
+        
+        self.assertEqual( p.ToString(), 'system:has icc profile' )
+        self.assertEqual( p.GetNamespace(), 'system' )
+        self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
+        
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE, False )
+        
+        self.assertEqual( p.ToString(), 'system:no icc profile' )
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
@@ -1664,7 +1807,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_INBOX, min_current_count = 1000 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_INBOX, count = ClientSearch.PredicateCount.STATICCreateCurrentCount( 1000 ) )
         
         self.assertEqual( p.ToString(), 'system:inbox (1,000)' )
         self.assertEqual( p.GetNamespace(), 'system' )
@@ -1676,7 +1819,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_LOCAL, min_current_count = 100 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_LOCAL, count = ClientSearch.PredicateCount.STATICCreateCurrentCount( 100 ) )
         
         self.assertEqual( p.ToString(), 'system:local (100)' )
         self.assertEqual( p.GetNamespace(), 'system' )
@@ -1700,7 +1843,7 @@ class TestTagObjects( unittest.TestCase ):
         self.assertEqual( p.GetNamespace(), 'system' )
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), [ ( p.ToString(), p.GetNamespace() ) ] )
         
-        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_NOT_LOCAL, min_current_count = 100 )
+        p = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_SYSTEM_NOT_LOCAL, count = ClientSearch.PredicateCount.STATICCreateCurrentCount( 100 ) )
         
         self.assertEqual( p.ToString(), 'system:not local (100)' )
         self.assertEqual( p.GetNamespace(), 'system' )
@@ -1809,6 +1952,109 @@ class TestTagObjects( unittest.TestCase ):
         
         
         self.assertEqual( p.GetTextsAndNamespaces( render_for_user ), or_texts_and_namespaces )
+        
+    
+    def test_system_predicate_parsing( self ):
+        
+        for ( expected_result_text, sys_pred_text ) in [
+            ( 'system:everything', "system:everything" ),
+            ( 'system:inbox', "system:inbox  " ),
+            ( 'system:archive', "system:archive " ),
+            ( 'system:has duration', "system:has duration" ),
+            ( 'system:has duration', "system:has_duration" ),
+            ( 'system:no duration', "   system:no_duration" ),
+            ( 'system:no duration', "system:no duration" ),
+            ( 'system:is the best quality file of its duplicate group', "system:is the best quality file  of its group" ),
+            ( 'system:is not the best quality file of its duplicate group', "system:isn't the best quality file of its duplicate group" ),
+            ( 'system:is not the best quality file of its duplicate group', 'system:is not the best quality file of its duplicate group' ),
+            ( 'system:has audio', "system:has_audio" ),
+            ( 'system:no audio', "system:no audio" ),
+            ( 'system:has tags', "system:has tags" ),
+            ( 'system:untagged', "system:no tags" ),
+            ( 'system:untagged', "system:untagged" ),
+            ( 'system:number of tags > 5', "system:number of tags > 5" ),
+            ( 'system:number of tags \u2248 10', "system:number of tags ~= 10" ),
+            ( 'system:has tags', "system:number of tags > 0  " ),
+            ( 'system:number of words < 2', "system:number of words < 2" ),
+            ( 'system:height = 600', "system:height = 600px" ),
+            ( 'system:height = 800', "system:height is 800" ),
+            ( 'system:height > 900', "system:height > 900" ),
+            ( 'system:width < 200', "system:width < 200" ),
+            ( 'system:width > 1,000', "system:width > 1000 pixels" ),
+            ( 'system:filesize \u2248 50KB', "system:filesize ~= 50 kilobytes" ),
+            ( 'system:filesize > 10MB', "system:filesize > 10megabytes" ),
+            ( 'system:filesize < 1GB', "system:file size    < 1 GB" ),
+            ( 'system:filesize > 0B', "system:file size > 0 B" ),
+            ( 'system:similar to 4 files using max hamming of 3', "system:similar to abcdef01 abcdef02 abcdef03, abcdef04 with distance 3" ),
+            ( 'system:similar to 1 files using max hamming of 5', "system:similar to abcdef distance 5" ),
+            ( 'system:limit is 5,000', "system:limit is 5000" ),
+            ( 'system:limit is 100', "system:limit = 100" ),
+            ( 'system:filetype is jpeg', "system:filetype is jpeg" ),
+            ( 'system:filetype is jpeg, png, apng', "system:filetype =   image/jpg, image/png, apng" ),
+            ( 'system:sha256 hash is in 3 hashes', "system:hash = abcdef01 abcdef02 abcdef03" ),
+            ( 'system:md5 hash is in 3 hashes', "system:hash = abcdef01 abcdef, abcdef04 md5" ),
+            ( 'system:md5 hash is abcdef01', "system:hash = abcdef01 md5" ),
+            ( 'system:md5 hash is abcdef01', "system:Hash = Abcdef01 md5" ),
+            ( 'system:md5 hash is not abcdef01', "system:Hash != Abcdef01 md5" ),
+            ( 'system:md5 hash is not abcdef01', "system:Hash is not Abcdef01 md5" ),
+            ( 'system:sha256 hash is abcdef0102', "system:hash = abcdef0102" ),
+            ( 'system:modified time: since 7 years 1 month ago', "system:modified date < 7  years 45 days 70h" ),
+            ( 'system:modified time: since 2011-06-04', "system:modified date > 2011-06-04" ),
+            ( 'system:modified time: before 7 years 2 months ago', "system:date modified > 7 years 2    months" ),
+            ( 'system:modified time: since 1 day ago', "system:date modified < 1 day" ),
+            ( 'system:modified time: since 1 month 1 day ago', "system:date modified < 0 years 1 month 1 day 1 hour" ),
+            ( 'system:last view time: since 7 years 1 month ago', "system:last viewed time < 7 years 45 days 70h" ),
+            ( 'system:last view time: since 7 years 1 month ago', "system:last view time < 7 years 45 days 70h" ),
+            ( 'system:import time: since 7 years 1 month ago', "system:time_imported < 7 years 45 days 70h" ),
+            ( 'system:import time: since 2011-06-04', "system:time imported > 2011-06-04" ),
+            ( 'system:import time: before 7 years 2 months ago', "system:time imported > 7 years 2 months" ),
+            ( 'system:import time: since 1 day ago', "system:time imported < 1 day" ),
+            ( 'system:import time: since 1 month 1 day ago', "system:time imported < 0 years 1 month 1 day 1 hour" ),
+            ( 'system:import time: a month either side of 2011-01-03', " system:time imported ~= 2011-1-3 " ),
+            ( 'system:import time: a month either side of 1996-05-02', "system:time imported ~= 1996-05-2" ),
+            ( 'system:import time: since 7 years 1 month ago', "system:import_time < 7 years 45 days 70h" ),
+            ( 'system:import time: since 2011-06-04', "system:import time > 2011-06-04" ),
+            ( 'system:import time: before 7 years 2 months ago', "system:import time > 7 years 2 months" ),
+            ( 'system:import time: since 1 day ago', "system:import time < 1 day" ),
+            ( 'system:import time: since 1 month 1 day ago', "system:import time < 0 years 1 month 1 day 1 hour" ),
+            ( 'system:import time: a month either side of 2011-01-03', " system:import time ~= 2011-1-3 " ),
+            ( 'system:import time: a month either side of 1996-05-02', "system:import time ~= 1996-05-2" ),
+            ( 'system:duration < 5.0 seconds', "system:duration < 5 seconds" ),
+            ( 'system:duration \u2248 11.0 seconds', "system:duration ~= 5 sec 6000 msecs" ),
+            ( 'system:duration > 3 milliseconds', "system:duration > 3 milliseconds" ),
+            ( 'system:is pending to my files', "system:file service is pending to my files" ),
+            ( 'system:is currently in my files', "   system:file service currently in my files" ),
+            ( 'system:is not currently in my files', "system:file service isn't currently in my files" ),
+            ( 'system:is not pending to my files', "system:file service is not pending to my files" ),
+            ( 'system:num file relationships - has less than 3 alternates', "system:num file relationships < 3 alternates" ),
+            ( 'system:num file relationships - has more than 3 not related/false positive', "system:number of file relationships > 3 false positives" ),
+            ( 'system:ratio wider than 16:9', "system:ratio is wider than 16:9        " ),
+            ( 'system:ratio = 16:9', "system:ratio is 16:9" ),
+            ( 'system:ratio taller than 1:1', "system:ratio taller than 1:1" ),
+            ( 'system:number of pixels > 50 pixels', "system:num pixels > 50 px" ),
+            ( 'system:number of pixels < 1 megapixels', "system:num pixels < 1 megapixels " ),
+            ( 'system:number of pixels \u2248 5 kilopixels', "system:num pixels ~= 5 kilopixel" ),
+            ( 'system:media views \u2248 10', "system:media views ~= 10" ),
+            ( 'system:all views > 0', "system:all views > 0" ),
+            ( 'system:preview views < 10', "system:preview views < 10  " ),
+            ( 'system:media viewtime < 1 day 1 hour', "system:media viewtime < 1 days 1 hour 0 minutes" ),
+            ( 'system:all viewtime > 1 hour 1 minute', "system:all viewtime > 1 hours 100 seconds" ),
+            ( 'system:preview viewtime \u2248 2 days 7 hours', "system:preview viewtime ~= 1 day 30 hours 100 minutes 90s" ),
+            ( 'system:has a url matching regex: index\\.php', " system:has url matching regex index\\.php" ),
+            ( 'system:does not have a url matching regex: index\\.php', "system:does not have a url matching regex index\\.php" ),
+            ( 'system:has url: https://safebooru.donmai.us/posts/4695284', "system:has_url https://safebooru.donmai.us/posts/4695284" ),
+            ( 'system:does not have url: https://safebooru.donmai.us/posts/4695284', " system:doesn't have url https://safebooru.donmai.us/posts/4695284  " ),
+            ( 'system:has a url with domain: safebooru.com', "system:has domain safebooru.com" ),
+            ( 'system:does not have a url with domain: safebooru.com', "system:doesn't have domain safebooru.com" ),
+            ( 'system:has safebooru file page url', "system:has a url with class safebooru file page" ),
+            ( 'system:does not have safebooru file page url', "system:doesn't have a url with url class safebooru file page " ),
+            ( 'system:page less than 5', "system:tag as number page < 5" )
+        ]:
+            
+            ( sys_pred, ) = ClientSearchParseSystemPredicates.ParseSystemPredicateStringsToPredicates( ( sys_pred_text, ) )
+            
+            self.assertEqual( sys_pred.ToString(), expected_result_text )
+            
         
     
     def test_tag_import_options_simple( self ):

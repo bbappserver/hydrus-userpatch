@@ -11,7 +11,7 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.core.networking import HydrusNetworking
 
 from hydrus.client import ClientConstants as CC
-from hydrus.client import ClientParsing
+from hydrus.client import ClientStrings
 from hydrus.client import ClientServices
 from hydrus.client.networking import ClientNetworking
 from hydrus.client.networking import ClientNetworkingBandwidth
@@ -20,6 +20,7 @@ from hydrus.client.networking import ClientNetworkingDomain
 from hydrus.client.networking import ClientNetworkingJobs
 from hydrus.client.networking import ClientNetworkingLogin
 from hydrus.client.networking import ClientNetworkingSessions
+from hydrus.client.networking import ClientNetworkingURLClass
 
 from hydrus.test import TestController
 
@@ -240,15 +241,15 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         path_components = []
         
-        path_components.append( ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = 'post', example_string = 'post' ), None ) )
-        path_components.append( ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = 'page.php', example_string = 'page.php' ), None ) )
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'post', example_string = 'post' ), None ) )
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'page.php', example_string = 'page.php' ), None ) )
         
         parameters = {}
         
-        parameters[ 's' ] = ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = 'view', example_string = 'view' ), None )
-        parameters[ 'id' ] = ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FLEXIBLE, match_value = ClientParsing.NUMERIC, example_string = '123456' ), None )
+        parameters[ 's' ] = ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'view', example_string = 'view' ), None )
+        parameters[ 'id' ] = ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FLEXIBLE, match_value = ClientStrings.NUMERIC, example_string = '123456' ), None )
         
-        send_referral_url = ClientNetworkingDomain.SEND_REFERRAL_URL_ONLY_IF_PROVIDED
+        send_referral_url = ClientNetworkingURLClass.SEND_REFERRAL_URL_ONLY_IF_PROVIDED
         referral_url_converter = None
         gallery_index_type = None
         gallery_index_identifier = None
@@ -263,7 +264,7 @@ class TestNetworkingDomain( unittest.TestCase ):
         unnormalised_good_url_2 = 'https://testbooru.cx/post/page.php?s=view&id=123456'
         bad_url = 'https://wew.lad/123456'
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -280,7 +281,7 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         alphabetise_get_parameters = False
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -290,9 +291,9 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         #
         
-        send_referral_url = ClientNetworkingDomain.SEND_REFERRAL_URL_NEVER
+        send_referral_url = ClientNetworkingURLClass.SEND_REFERRAL_URL_NEVER
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -305,13 +306,13 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         conversions = []
         
-        conversions.append( ( ClientParsing.STRING_CONVERSION_REGEX_SUB, ( 'testbooru.cx', 'replace.com' ) ) )
+        conversions.append( ( ClientStrings.STRING_CONVERSION_REGEX_SUB, ( 'testbooru.cx', 'replace.com' ) ) )
         
-        referral_url_converter = ClientParsing.StringConverter( conversions, good_url )
+        referral_url_converter = ClientStrings.StringConverter( conversions, good_url )
         
-        send_referral_url = ClientNetworkingDomain.SEND_REFERRAL_URL_CONVERTER_IF_NONE_PROVIDED
+        send_referral_url = ClientNetworkingURLClass.SEND_REFERRAL_URL_CONVERTER_IF_NONE_PROVIDED
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -320,9 +321,9 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         #
         
-        send_referral_url = ClientNetworkingDomain.SEND_REFERRAL_URL_ONLY_CONVERTER
+        send_referral_url = ClientNetworkingURLClass.SEND_REFERRAL_URL_ONLY_CONVERTER
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -344,12 +345,12 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         path_components = []
         
-        path_components.append( ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = 'file', example_string = 'file' ), None ) )
-        path_components.append( ( ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_ANY ), None ) )
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'file', example_string = 'file' ), None ) )
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_ANY ), None ) )
         
         parameters = {}
         
-        send_referral_url = ClientNetworkingDomain.SEND_REFERRAL_URL_ONLY_IF_PROVIDED
+        send_referral_url = ClientNetworkingURLClass.SEND_REFERRAL_URL_ONLY_IF_PROVIDED
         referral_url_converter = None
         gallery_index_type = None
         gallery_index_identifier = None
@@ -358,7 +359,7 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         keep_fragment = False
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
@@ -366,11 +367,89 @@ class TestNetworkingDomain( unittest.TestCase ):
         
         keep_fragment = True
         
-        url_class = ClientNetworkingDomain.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
+        url_class = ClientNetworkingURLClass.URLClass( name, url_type = url_type, preferred_scheme = preferred_scheme, netloc = netloc, path_components = path_components, parameters = parameters, send_referral_url = send_referral_url, referral_url_converter = referral_url_converter, gallery_index_type = gallery_index_type, gallery_index_identifier = gallery_index_identifier, gallery_index_delta = gallery_index_delta, example_url = example_url )
         
         url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
         
         self.assertEqual( url_class.Normalise( example_url ), example_url )
+        
+        # single-value params test
+        
+        single_value_good_url = 'https://testbooru.cx/post/page.php?id=123456&token&s=view'
+        single_value_bad_url = 'https://testbooru.cx/post/page.php?id=123456&bad_token&s=view'
+        single_value_missing_url = 'https://testbooru.cx/post/page.php?id=123456&s=view'
+        single_value_good_url_multiple = 'https://testbooru.cx/post/page.php?id=123456&token1&token2&s=view&token0'
+        
+        single_value_good_url_alphabetical_normalised = 'https://testbooru.cx/post/page.php?id=123456&s=view&token'
+        single_value_good_url_multiple_alphabetical_normalised = 'https://testbooru.cx/post/page.php?id=123456&s=view&token0&token1&token2'
+        
+        name = 'single value lad'
+        url_type = HC.URL_TYPE_POST
+        preferred_scheme = 'https'
+        netloc = 'testbooru.cx'
+        
+        alphabetise_get_parameters = True
+        match_subdomains = False
+        keep_matched_subdomains = False
+        can_produce_multiple_files = False
+        should_be_associated_with_files = True
+        keep_fragment = False
+        
+        path_components = []
+        
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'post', example_string = 'post' ), None ) )
+        path_components.append( ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'page.php', example_string = 'page.php' ), None ) )
+        
+        parameters = {}
+        
+        parameters[ 's' ] = ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = 'view', example_string = 'view' ), None )
+        parameters[ 'id' ] = ( ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FLEXIBLE, match_value = ClientStrings.NUMERIC, example_string = '123456' ), None )
+        
+        has_single_value_parameters = True
+        single_value_parameters_string_match = ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_REGEX, match_value = '^token.*', example_string = 'token1' )
+        
+        example_url = single_value_good_url
+        
+        url_class = ClientNetworkingURLClass.URLClass(
+            name,
+            url_type = url_type,
+            preferred_scheme = preferred_scheme,
+            netloc = netloc,
+            path_components = path_components,
+            parameters = parameters,
+            has_single_value_parameters = has_single_value_parameters,
+            single_value_parameters_string_match = single_value_parameters_string_match,
+            send_referral_url = send_referral_url,
+            referral_url_converter = referral_url_converter,
+            gallery_index_type = gallery_index_type,
+            gallery_index_identifier = gallery_index_identifier,
+            gallery_index_delta = gallery_index_delta,
+            example_url = example_url
+        )
+        
+        url_class.SetURLBooleans( match_subdomains, keep_matched_subdomains, alphabetise_get_parameters, can_produce_multiple_files, should_be_associated_with_files, keep_fragment )
+        
+        self.assertEqual( url_class.Normalise( single_value_good_url ), single_value_good_url_alphabetical_normalised )
+        self.assertEqual( url_class.Normalise( single_value_good_url_multiple ), single_value_good_url_multiple_alphabetical_normalised )
+        
+        self.assertEqual( url_class.Matches( single_value_good_url ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_alphabetical_normalised ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_multiple ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_multiple_alphabetical_normalised ), True )
+        self.assertEqual( url_class.Matches( single_value_bad_url ), False )
+        self.assertEqual( url_class.Matches( single_value_missing_url ), False )
+        
+        url_class.SetAlphabetiseGetParameters( False )
+        
+        self.assertEqual( url_class.Normalise( single_value_good_url ), single_value_good_url )
+        self.assertEqual( url_class.Normalise( single_value_good_url_multiple ), single_value_good_url_multiple )
+        
+        self.assertEqual( url_class.Matches( single_value_good_url ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_alphabetical_normalised ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_multiple ), True )
+        self.assertEqual( url_class.Matches( single_value_good_url_multiple_alphabetical_normalised ), True )
+        self.assertEqual( url_class.Matches( single_value_bad_url ), False )
+        self.assertEqual( url_class.Matches( single_value_missing_url ), False )
         
     
 class TestNetworkingEngine( unittest.TestCase ):
@@ -528,7 +607,7 @@ class TestNetworkingJob( unittest.TestCase ):
         self.assertFalse( job.IsCancelled() )
         self.assertFalse( job.IsDone() )
         
-        HG.model_shutdown = True
+        HG.started_shutdown = True
         
         try:
             
@@ -537,7 +616,7 @@ class TestNetworkingJob( unittest.TestCase ):
             
         finally:
             
-            HG.model_shutdown = False
+            HG.started_shutdown = False
             
         
     
@@ -551,9 +630,9 @@ class TestNetworkingJob( unittest.TestCase ):
         
         self.assertTrue( job.IsAsleep() )
         
-        five_secs_from_now = HydrusData.GetNow() + 5
+        five_secs_from_now = HydrusData.GetNowFloat() + 5
         
-        with patch.object( HydrusData, 'GetNow', return_value = five_secs_from_now ):
+        with patch.object( HydrusData, 'GetNowFloat', return_value = five_secs_from_now ):
             
             self.assertFalse( job.IsAsleep() )
             

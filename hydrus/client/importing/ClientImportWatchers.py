@@ -9,9 +9,12 @@ from hydrus.core import HydrusSerialisable
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
 from hydrus.client.importing import ClientImporting
-from hydrus.client.importing import ClientImportOptions
 from hydrus.client.importing import ClientImportFileSeeds
 from hydrus.client.importing import ClientImportGallerySeeds
+from hydrus.client.importing.options import ClientImportOptions
+from hydrus.client.importing.options import FileImportOptions
+from hydrus.client.importing.options import PresentationImportOptions
+from hydrus.client.importing.options import TagImportOptions
 from hydrus.client.metadata import ClientTags
 from hydrus.client.networking import ClientNetworkingJobs
 
@@ -37,7 +40,7 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
         
         self._checker_options = HG.client_controller.new_options.GetDefaultWatcherCheckerOptions()
         self._file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
-        self._tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+        self._tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
         
         self._watcher_keys_to_watchers = {}
         
@@ -60,7 +63,11 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
             self._AddWatcher( watcher )
             
         
+        self._have_started = False
+        
         self._last_time_watchers_changed = HydrusData.GetNowPrecise()
+        
+        self._last_serialisable_change_timestamp = 0
         
         self._last_pubbed_value_range = ( 0, 0 )
         self._next_pub_value_check_time = 0
@@ -156,6 +163,11 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
         del self._watcher_keys_to_watchers[ watcher_key ]
         
     
+    def _SerialisableChangeMade( self ):
+        
+        self._last_serialisable_change_timestamp = HydrusData.GetNow()
+        
+    
     def _SetDirty( self ):
         
         self._status_dirty = True
@@ -171,13 +183,13 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
                 
                 checker_options = HG.client_controller.new_options.GetDefaultWatcherCheckerOptions()
                 file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
-                tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+                tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
                 
             except:
                 
                 checker_options = ClientImportOptions.CheckerOptions()
-                file_import_options = ClientImportOptions.FileImportOptions()
-                tag_import_options = ClientImportOptions.TagImportOptions()
+                file_import_options = FileImportOptions.FileImportOptions()
+                tag_import_options = TagImportOptions.TagImportOptions()
                 
             
             serialisable_checker_options = checker_options.GetSerialisableTuple()
@@ -237,7 +249,10 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
             
             publish_to_page = False
             
-            watcher.Start( self._page_key, publish_to_page )
+            if self._have_started:
+                
+                watcher.Start( self._page_key, publish_to_page )
+                
             
             self._AddWatcher( watcher )
             
@@ -252,6 +267,19 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
             self._AddWatcher( watcher )
             
             self._SetDirty()
+            
+        
+    
+    def ClearHighlightedWatcher( self ):
+        
+        with self._lock:
+            
+            if self._highlighted_watcher_url is not None:
+                
+                self._highlighted_watcher_url = None
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -275,6 +303,14 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
                 
             
             return d
+            
+        
+    
+    def GetFileImportOptions( self ) -> FileImportOptions.FileImportOptions:
+        
+        with self._lock:
+            
+            return self._file_import_options
             
         
     
@@ -420,6 +456,27 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
         return watcher.GetSimpleStatus()
         
     
+    def HasSerialisableChangesSince( self, since_timestamp ):
+        
+        with self._lock:
+            
+            if self._last_serialisable_change_timestamp > since_timestamp:
+                
+                return True
+                
+            
+            for watcher in self._watchers:
+                
+                if watcher.HasSerialisableChangesSince( since_timestamp ):
+                    
+                    return True
+                    
+                
+            
+            return False
+            
+        
+    
     def RemoveWatcher( self, watcher_key ):
         
         with self._lock:
@@ -428,19 +485,21 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
             
             self._SetDirty()
             
+            self._SerialisableChangeMade()
+            
         
     
     def SetHighlightedWatcher( self, highlighted_watcher ):
         
         with self._lock:
             
-            if highlighted_watcher is None:
+            highlighted_watcher_url = highlighted_watcher.GetURL()
+            
+            if highlighted_watcher_url != self._highlighted_watcher_url:
                 
-                self._highlighted_watcher_url = None
+                self._highlighted_watcher_url = highlighted_watcher_url
                 
-            else:
-                
-                self._highlighted_watcher_url = highlighted_watcher.GetURL()
+                self._SerialisableChangeMade()
                 
             
         
@@ -449,9 +508,26 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._checker_options = checker_options
-            self._file_import_options = file_import_options
-            self._tag_import_options = tag_import_options
+            if checker_options.DumpToString() != self._checker_options.DumpToString():
+                
+                self._checker_options = checker_options
+                
+                self._SerialisableChangeMade()
+                
+            
+            if file_import_options.DumpToString() != self._file_import_options.DumpToString():
+                
+                self._file_import_options = file_import_options
+                
+                self._SerialisableChangeMade()
+                
+            
+            if tag_import_options.DumpToString() != self._tag_import_options.DumpToString():
+                
+                self._tag_import_options = tag_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -459,22 +535,29 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
+            if self._have_started:
+                
+                return
+                
+            
             self._page_key = page_key
             
-        
-        # set a 2s period so the page value/range is breddy snappy
-        self._watchers_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), 2.0, self.REPEATINGWorkOnWatchers )
-        
-        for watcher in self._watchers:
+            # set a 2s period so the page value/range is breddy snappy
+            self._watchers_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), 2.0, self.REPEATINGWorkOnWatchers )
             
-            publish_to_page = False
-            
-            if self._highlighted_watcher_url is not None and watcher.GetURL() == self._highlighted_watcher_url:
+            for watcher in self._watchers:
                 
-                publish_to_page = True
+                publish_to_page = False
+                
+                if self._highlighted_watcher_url is not None and watcher.GetURL() == self._highlighted_watcher_url:
+                    
+                    publish_to_page = True
+                    
+                
+                watcher.Start( page_key, publish_to_page )
                 
             
-            watcher.Start( page_key, publish_to_page )
+            self._have_started = True
             
         
     
@@ -519,10 +602,6 @@ class MultipleWatcherImport( HydrusSerialisable.SerialisableBase ):
                 
             
         
-        # something like:
-            # if any are dead, do some stuff with them based on some options here
-            # might want to have this work on a 30s period or something
-        
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_MULTIPLE_WATCHER_IMPORT ] = MultipleWatcherImport
 
@@ -551,7 +630,7 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         
         self._checker_options = HG.client_controller.new_options.GetDefaultWatcherCheckerOptions()
         self._file_import_options = HG.client_controller.new_options.GetDefaultFileImportOptions( 'loud' )
-        self._tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+        self._tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
         self._last_check_time = 0
         self._checking_status = ClientImporting.CHECKER_STATUS_OK
         self._subject = 'unknown subject'
@@ -576,12 +655,16 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         
         self._watcher_key = HydrusData.GenerateKey()
         
+        self._have_started = False
+        
         self._lock = threading.Lock()
         
         self._last_pubbed_page_name = ''
         
         self._files_repeating_job = None
         self._checker_repeating_job = None
+        
+        self._last_serialisable_change_timestamp = 0
         
         HG.client_controller.sub( self, 'NotifyFileSeedsUpdated', 'file_seed_cache_file_seeds_updated' )
         
@@ -695,8 +778,10 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             HydrusData.PrintException( e )
             
-        
-        self._gallery_seed_log.NotifyGallerySeedsUpdated( ( gallery_seed, ) )
+        finally:
+            
+            self._gallery_seed_log.NotifyGallerySeedsUpdated( ( gallery_seed, ) )
+            
         
         with self._lock:
             
@@ -827,6 +912,11 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         self._checker_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_checker_options )
         self._file_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_file_import_options )
         self._tag_import_options = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_import_options )
+        
+    
+    def _SerialisableChangeMade( self ):
+        
+        self._last_serialisable_change_timestamp = HydrusData.GetNow()
         
     
     def _UpdateFileVelocityStatus( self ):
@@ -989,7 +1079,7 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            should_present = self._publish_to_page and file_seed.ShouldPresent( self._file_import_options )
+            should_present = self._publish_to_page and file_seed.ShouldPresent( self._file_import_options.GetPresentationImportOptions() )
             
             page_key = self._page_key
             
@@ -1075,6 +1165,8 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._checker_repeating_job )
             
+            self._SerialisableChangeMade()
+            
         
     
     def CurrentlyAlive( self ):
@@ -1108,6 +1200,14 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         with self._lock:
             
             return self._checker_options
+            
+        
+    
+    def GetCheckingStatus( self ):
+        
+        with self._lock:
+            
+            return self._checking_status
             
         
     
@@ -1161,18 +1261,12 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetNewHashes( self ):
+    def GetNextCheckTime( self ):
         
         with self._lock:
             
-            fsc = self._file_seed_cache
+            return self._next_check_time
             
-        
-        file_import_options = ClientImportOptions.FileImportOptions()
-        
-        file_import_options.SetPresentationOptions( True, False, False )
-        
-        return fsc.GetPresentedHashes( file_import_options )
         
     
     def GetNumSeeds( self ):
@@ -1191,15 +1285,19 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def GetPresentedHashes( self ):
+    def GetPresentedHashes( self, presentation_import_options = None ):
         
         with self._lock:
             
             fsc = self._file_seed_cache
-            fio = self._file_import_options
+            
+            if presentation_import_options is None:
+                
+                presentation_import_options = self._file_import_options.GetPresentationImportOptions()
+                
             
         
-        return fsc.GetPresentedHashes( fio )
+        return fsc.GetPresentedHashes( presentation_import_options )
         
     
     def GetSimpleStatus( self ):
@@ -1346,6 +1444,11 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
         
     
+    def HasSerialisableChangesSince( self, since_timestamp ):
+        
+        return self._last_serialisable_change_timestamp > since_timestamp
+        
+    
     def HasURL( self ):
         
         with self._lock:
@@ -1373,6 +1476,8 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
             
+            self._SerialisableChangeMade()
+            
         
     
     def PausePlayChecking( self ):
@@ -1389,6 +1494,8 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
                 
                 ClientImporting.WakeRepeatingJob( self._checker_repeating_job )
                 
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -1399,6 +1506,8 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             self._files_paused = not self._files_paused
             
             ClientImporting.WakeRepeatingJob( self._files_repeating_job )
+            
+            self._SerialisableChangeMade()
             
         
     
@@ -1424,35 +1533,49 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             self._file_seed_cache.RetryFailed()
             
-        
-    
-    def RetryIgnored( self ):
-        
-        with self._lock:
-            
-            self._file_seed_cache.RetryIgnored()
+            self._SerialisableChangeMade()
             
         
     
-    def SetCheckerOptions( self, checker_options ):
+    def RetryIgnored( self, ignored_regex = None ):
         
         with self._lock:
             
-            self._checker_options = checker_options
+            self._file_seed_cache.RetryIgnored( ignored_regex = ignored_regex )
             
-            self._UpdateNextCheckTime()
-            
-            self._UpdateFileVelocityStatus()
-            
-            ClientImporting.WakeRepeatingJob( self._checker_repeating_job )
+            self._SerialisableChangeMade()
             
         
     
-    def SetFileImportOptions( self, file_import_options ):
+    def SetCheckerOptions( self, checker_options: ClientImportOptions.CheckerOptions ):
         
         with self._lock:
             
-            self._file_import_options = file_import_options
+            if checker_options.DumpToString() != self._checker_options.DumpToString():
+                
+                self._checker_options = checker_options
+                
+                self._UpdateNextCheckTime()
+                
+                self._UpdateFileVelocityStatus()
+                
+                ClientImporting.WakeRepeatingJob( self._checker_repeating_job )
+                
+                self._SerialisableChangeMade()
+                
+            
+        
+    
+    def SetFileImportOptions( self, file_import_options: FileImportOptions.FileImportOptions ):
+        
+        with self._lock:
+            
+            if file_import_options.DumpToString() != self._file_import_options.DumpToString():
+                
+                self._file_import_options = file_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -1460,7 +1583,14 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._external_additional_service_keys_to_tags = ClientTags.ServiceKeysToTags( service_keys_to_tags )
+            external_additional_service_keys_to_tags = ClientTags.ServiceKeysToTags( service_keys_to_tags )
+            
+            if external_additional_service_keys_to_tags.DumpToString() != self._external_additional_service_keys_to_tags.DumpToString():
+                
+                self._external_additional_service_keys_to_tags = external_additional_service_keys_to_tags
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -1468,15 +1598,27 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
         
         with self._lock:
             
-            self._external_filterable_tags = set( tags )
+            tags_set = set( tags )
+            
+            if tags_set != self._external_filterable_tags:
+                
+                self._external_filterable_tags = tags_set
+                
+                self._SerialisableChangeMade()
+                
             
         
     
-    def SetTagImportOptions( self, tag_import_options ):
+    def SetTagImportOptions( self, tag_import_options: TagImportOptions.TagImportOptions ):
         
         with self._lock:
             
-            self._tag_import_options = tag_import_options
+            if tag_import_options.DumpToString() != self._tag_import_options.DumpToString():
+                
+                self._tag_import_options = tag_import_options
+                
+                self._SerialisableChangeMade()
+                
             
         
     
@@ -1505,25 +1647,37 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             ClientImporting.WakeRepeatingJob( self._checker_repeating_job )
             
+            self._SerialisableChangeMade()
+            
         
     
     def Start( self, page_key, publish_to_page ):
         
-        self._page_key = page_key
-        self._publish_to_page = publish_to_page
-        
-        self._UpdateNextCheckTime()
-        
-        self._UpdateFileVelocityStatus()
-        
-        self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles )
-        self._checker_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnChecker )
-        
-        self._files_repeating_job.SetThreadSlotType( 'watcher_files' )
-        self._checker_repeating_job.SetThreadSlotType( 'watcher_check' )
+        with self._lock:
+            
+            if self._have_started:
+                
+                return
+                
+            
+            self._page_key = page_key
+            self._publish_to_page = publish_to_page
+            
+            self._UpdateNextCheckTime()
+            
+            self._UpdateFileVelocityStatus()
+            
+            self._files_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnFiles )
+            self._checker_repeating_job = HG.client_controller.CallRepeating( ClientImporting.GetRepeatingJobInitialDelay(), ClientImporting.REPEATING_JOB_TYPICAL_PERIOD, self.REPEATINGWorkOnChecker )
+            
+            self._files_repeating_job.SetThreadSlotType( 'watcher_files' )
+            self._checker_repeating_job.SetThreadSlotType( 'watcher_check' )
+            
+            self._have_started = True
+            
         
     
-    def REPEATINGWorkOnFiles( self ):
+    def CanDoFileWork( self ):
         
         with self._lock:
             
@@ -1535,15 +1689,68 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
                 
             
             files_paused = self._files_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
-            work_pending = self._file_seed_cache.WorkToDo() and not files_paused
-            no_delays = HydrusData.TimeHasPassed( self._no_work_until )
-            page_shown = not HG.client_controller.PageClosedButNotDestroyed( self._page_key )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
             
-            ok_to_work = work_pending and no_delays and page_shown and network_engine_good
+            if files_paused:
+                
+                return False
+                
+            
+            try:
+                
+                self._file_import_options.CheckReadyToImport()
+                
+            except Exception as e:
+                
+                self._file_status = str( e )
+                
+                HydrusData.ShowText( str( e ) )
+                
+                return False
+                
+            
+            work_to_do = self._file_seed_cache.WorkToDo()
+            
+            if not work_to_do:
+                
+                return False
+                
             
         
-        while ok_to_work:
+        return self.CanDoNetworkWork()
+        
+    
+    def CanDoNetworkWork( self ):
+        
+        with self._lock:
+            
+            no_delays = HydrusData.TimeHasPassed( self._no_work_until )
+            
+            if not no_delays:
+                
+                return False
+                
+            
+            page_shown = not HG.client_controller.PageClosedButNotDestroyed( self._page_key )
+            
+            if not page_shown:
+                
+                return False
+                
+            
+            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            
+            if not network_engine_good:
+                
+                return False
+                
+            
+        
+        return True
+        
+    
+    def REPEATINGWorkOnFiles( self ):
+        
+        while self.CanDoFileWork():
             
             try:
                 
@@ -1551,32 +1758,16 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
                 
                 HG.client_controller.WaitUntilViewFree()
                 
+                self._SerialisableChangeMade()
+                
             except Exception as e:
                 
                 HydrusData.ShowException( e )
                 
             
-            with self._lock:
-                
-                if ClientImporting.PageImporterShouldStopWorking( self._page_key ):
-                    
-                    self._files_repeating_job.Cancel()
-                    
-                    return
-                    
-                
-                files_paused = self._files_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_file_queues' )
-                work_pending = self._file_seed_cache.WorkToDo() and not files_paused
-                no_delays = HydrusData.TimeHasPassed( self._no_work_until )
-                page_shown = not HG.client_controller.PageClosedButNotDestroyed( self._page_key )
-                network_engine_good = not HG.client_controller.network_engine.IsBusy()
-                
-                ok_to_work = work_pending and no_delays and page_shown and network_engine_good
-                
-            
         
     
-    def REPEATINGWorkOnChecker( self ):
+    def CanDoCheckerWork( self ):
         
         with self._lock:
             
@@ -1599,20 +1790,38 @@ class WatcherImport( HydrusSerialisable.SerialisableBase ):
             
             checking_paused = self._checking_paused or HG.client_controller.new_options.GetBoolean( 'pause_all_watcher_checkers' )
             
-            able_to_check = self._checking_status == ClientImporting.CHECKER_STATUS_OK and self._HasURL() and not checking_paused
-            check_due = HydrusData.TimeHasPassed( self._next_check_time )
-            no_delays = HydrusData.TimeHasPassed( self._no_work_until )
-            page_shown = not HG.client_controller.PageClosedButNotDestroyed( self._page_key )
-            network_engine_good = not HG.client_controller.network_engine.IsBusy()
+            if checking_paused:
+                
+                return False
+                
             
-            time_to_check = able_to_check and check_due and no_delays and page_shown and network_engine_good
+            able_to_check = self._checking_status == ClientImporting.CHECKER_STATUS_OK and self._HasURL()
+            
+            if not able_to_check:
+                
+                return False
+                
+            
+            check_due = HydrusData.TimeHasPassed( self._next_check_time )
+            
+            if not check_due:
+                
+                return False
+                
             
         
-        if time_to_check:
+        return self.CanDoNetworkWork()
+        
+    
+    def REPEATINGWorkOnChecker( self ):
+        
+        if self.CanDoCheckerWork():
             
             try:
                 
                 self._CheckWatchableURL()
+                
+                self._SerialisableChangeMade()
                 
             except Exception as e:
                 

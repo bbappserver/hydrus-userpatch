@@ -21,12 +21,16 @@ except:
 from PIL import _imaging
 from PIL import ImageFile as PILImageFile
 from PIL import Image as PILImage
+from PIL import ImageCms as PILImageCms
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusPaths
+from hydrus.core import HydrusTemp
+
+PIL_SRGB_PROFILE = PILImageCms.createProfile( 'sRGB' )
 
 def EnableLoadTruncatedImages():
     
@@ -79,19 +83,21 @@ try:
     
     if cv2.__version__.startswith( '2' ):
         
-        CV_IMREAD_FLAGS_SUPPORTS_ALPHA = cv2.CV_LOAD_IMAGE_UNCHANGED
-        CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = CV_IMREAD_FLAGS_SUPPORTS_ALPHA
-        
-        # there's something wrong with these, but I don't have an easy test env for it atm
-        # CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = cv2.CV_LOAD_IMAGE_ANYDEPTH | cv2.CV_LOAD_IMAGE_ANYCOLOR
+        CV_IMREAD_FLAGS_PNG = cv2.CV_LOAD_IMAGE_UNCHANGED
+        CV_IMREAD_FLAGS_JPEG = CV_IMREAD_FLAGS_PNG
+        CV_IMREAD_FLAGS_WEIRD = CV_IMREAD_FLAGS_PNG
         
         CV_JPEG_THUMBNAIL_ENCODE_PARAMS = []
         CV_PNG_THUMBNAIL_ENCODE_PARAMS = []
         
     else:
         
-        CV_IMREAD_FLAGS_SUPPORTS_ALPHA = cv2.IMREAD_UNCHANGED
-        CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION = cv2.IMREAD_ANYDEPTH | cv2.IMREAD_ANYCOLOR # this preserves colour info but does EXIF reorientation and flipping
+        # allows alpha channel
+        CV_IMREAD_FLAGS_PNG = cv2.IMREAD_UNCHANGED
+        # this preserves colour info but does EXIF reorientation and flipping
+        CV_IMREAD_FLAGS_JPEG = cv2.IMREAD_ANYDEPTH | cv2.IMREAD_ANYCOLOR
+        # this seems to allow weirdass tiffs to load as non greyscale, although the LAB conversion 'whitepoint' or whatever can be wrong
+        CV_IMREAD_FLAGS_WEIRD = CV_IMREAD_FLAGS_PNG
         
         CV_JPEG_THUMBNAIL_ENCODE_PARAMS = [ cv2.IMWRITE_JPEG_QUALITY, 92 ]
         CV_PNG_THUMBNAIL_ENCODE_PARAMS = [ cv2.IMWRITE_PNG_COMPRESSION, 9 ]
@@ -103,6 +109,50 @@ except:
     
     OPENCV_OK = False
     
+def MakeClipRectFit( image_resolution, clip_rect ):
+    
+    ( im_width, im_height ) = image_resolution
+    ( x, y, clip_width, clip_height ) = clip_rect
+    
+    x = max( 0, x )
+    y = max( 0, y )
+    
+    clip_width = min( clip_width, im_width )
+    clip_height = min( clip_height, im_height )
+    
+    if x + clip_width > im_width:
+        
+        x = im_width - clip_width
+        
+    
+    if y + clip_height > im_height:
+        
+        y = im_height - clip_height
+        
+    
+    return ( x, y, clip_width, clip_height )
+    
+def ClipNumPyImage( numpy_image: numpy.array, clip_rect ):
+    
+    if len( numpy_image.shape ) == 3:
+        
+        ( im_height, im_width, depth ) = numpy_image.shape
+        
+    else:
+        
+        ( im_height, im_width ) = numpy_image.shape
+        
+    
+    ( x, y, clip_width, clip_height ) = MakeClipRectFit( ( im_width, im_height ), clip_rect )
+    
+    return numpy_image[ y : y + clip_height, x : x + clip_width ]
+    
+def ClipPILImage( pil_image: PILImage.Image, clip_rect ):
+    
+    ( x, y, clip_width, clip_height ) = MakeClipRectFit( pil_image.size, clip_rect )
+    
+    return pil_image.crop( box = ( x, y, x + clip_width, y + clip_height ) )
+    
 def ConvertToPNGIfBMP( path ):
     
     with open( path, 'rb' ) as f:
@@ -112,7 +162,7 @@ def ConvertToPNGIfBMP( path ):
     
     if header == b'BM':
         
-        ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
+        ( os_file_handle, temp_path ) = HydrusTemp.GetTempPath()
         
         try:
             
@@ -130,27 +180,66 @@ def ConvertToPNGIfBMP( path ):
             
         finally:
             
-            HydrusPaths.CleanUpTempPath( os_file_handle, temp_path )
+            HydrusTemp.CleanUpTempPath( os_file_handle, temp_path )
             
         
     
-def Dequantize( pil_image ):
+def DequantizeNumPyImage( numpy_image: numpy.array ) -> numpy.array:
     
-    if pil_image.mode not in ( 'RGBA', 'RGB' ):
+    # OpenCV loads images in BGR, and we want to normalise to RGB in general
+    
+    if numpy_image.dtype == 'uint16':
         
-        if pil_image.mode == 'LA' or ( pil_image.mode == 'P' and 'transparency' in pil_image.info ):
+        numpy_image = numpy.array( numpy_image // 256, dtype = 'uint8' )
+        
+    
+    shape = numpy_image.shape
+    
+    if len( shape ) == 2:
+        
+        # monochrome image
+        
+        convert = cv2.COLOR_GRAY2RGB
+        
+    else:
+        
+        ( im_y, im_x, depth ) = shape
+        
+        if depth == 4:
             
-            pil_image = pil_image.convert( 'RGBA' )
+            convert = cv2.COLOR_BGRA2RGBA
             
         else:
             
-            pil_image = pil_image.convert( 'RGB' )
+            convert = cv2.COLOR_BGR2RGB
             
         
     
+    numpy_image = cv2.cvtColor( numpy_image, convert )
+    
+    return numpy_image
+    
+def DequantizePILImage( pil_image: PILImage.Image ) -> PILImage.Image:
+    
+    if HasICCProfile( pil_image ):
+        
+        try:
+            
+            pil_image = NormaliseICCProfilePILImageToSRGB( pil_image )
+            
+        except Exception as e:
+            
+            HydrusData.ShowException( e )
+            
+            HydrusData.ShowText( 'Failed to normalise image ICC profile.' )
+            
+        
+    
+    pil_image = NormalisePILImageToRGB( pil_image )
+    
     return pil_image
     
-def GenerateNumPyImage( path, mime, force_pil = False ):
+def GenerateNumPyImage( path, mime, force_pil = False ) -> numpy.array:
     
     if HG.media_load_report_mode:
         
@@ -160,6 +249,47 @@ def GenerateNumPyImage( path, mime, force_pil = False ):
     if not OPENCV_OK:
         
         force_pil = True
+        
+    
+    if not force_pil:
+        
+        try:
+            
+            pil_image = RawOpenPILImage( path )
+            
+            try:
+                
+                pil_image.verify()
+                
+            except:
+                
+                raise HydrusExceptions.UnsupportedFileException()
+                
+            
+            # I and F are some sort of 32-bit monochrome or whatever, doesn't seem to work in PIL well, with or without ICC
+            if pil_image.mode not in ( 'I', 'F' ):
+                
+                if pil_image.mode == 'LAB':
+                    
+                    force_pil = True
+                    
+                
+                if HasICCProfile( pil_image ):
+                    
+                    if HG.media_load_report_mode:
+                        
+                        HydrusData.ShowText( 'Image has ICC, so switching to PIL' )
+                        
+                    
+                    force_pil = True
+                    
+                
+            
+        except HydrusExceptions.UnsupportedFileException:
+            
+            # pil had trouble, let's cross our fingers cv can do it
+            pass
+            
         
     
     if mime in PIL_ONLY_MIMETYPES or force_pil:
@@ -180,18 +310,22 @@ def GenerateNumPyImage( path, mime, force_pil = False ):
             HydrusData.ShowText( 'Loading with OpenCV' )
             
         
-        if mime == HC.IMAGE_JPEG:
+        if mime in ( HC.IMAGE_JPEG, HC.IMAGE_TIFF ):
             
-            flags = CV_IMREAD_FLAGS_SUPPORTS_EXIF_REORIENTATION
+            flags = CV_IMREAD_FLAGS_JPEG
+            
+        elif mime == HC.IMAGE_PNG:
+            
+            flags = CV_IMREAD_FLAGS_PNG
             
         else:
             
-            flags = CV_IMREAD_FLAGS_SUPPORTS_ALPHA
+            flags = CV_IMREAD_FLAGS_WEIRD
             
         
         numpy_image = cv2.imread( path, flags = flags )
         
-        if numpy_image is None: # doesn't support static gifs and some random other stuff
+        if numpy_image is None: # doesn't support some random stuff
             
             if HG.media_load_report_mode:
                 
@@ -204,162 +338,101 @@ def GenerateNumPyImage( path, mime, force_pil = False ):
             
         else:
             
-            if numpy_image.dtype == 'uint16':
-                
-                numpy_image //= 256
-                
-                numpy_image = numpy.array( numpy_image, dtype = 'uint8' )
-                
+            numpy_image = DequantizeNumPyImage( numpy_image )
             
-            shape = numpy_image.shape
-            
-            if len( shape ) == 2:
-                
-                # monochrome image
-                
-                convert = cv2.COLOR_GRAY2RGB
-                
-            else:
-                
-                ( im_y, im_x, depth ) = shape
-                
-                if depth == 4:
-                    
-                    convert = cv2.COLOR_BGRA2RGBA
-                    
-                else:
-                    
-                    convert = cv2.COLOR_BGR2RGB
-                    
-                
-            
-            numpy_image = cv2.cvtColor( numpy_image, convert )
-            
+        
+    
+    if NumPyImageHasOpaqueAlphaChannel( numpy_image ):
+        
+        convert = cv2.COLOR_RGBA2RGB
+        
+        numpy_image = cv2.cvtColor( numpy_image, convert )
         
     
     return numpy_image
     
-def GenerateNumPyImageFromPILImage( pil_image ):
-    
-    pil_image = Dequantize( pil_image )
+def GenerateNumPyImageFromPILImage( pil_image: PILImage.Image ) -> numpy.array:
     
     ( w, h ) = pil_image.size
     
-    s = pil_image.tobytes()
-    
-    return numpy.fromstring( s, dtype = 'uint8' ).reshape( ( h, w, len( s ) // ( w * h ) ) )
-    
-def GeneratePILImage( path ):
-    
     try:
         
-        pil_image = PILImage.open( path )
+        s = pil_image.tobytes()
         
-    except Exception as e:
+    except OSError as e: # e.g. OSError: unrecognized data stream contents when reading image file
         
-        raise HydrusExceptions.DamagedOrUnusualFileException( 'Could not load the image--it was likely malformed!' )
+        raise HydrusExceptions.UnsupportedFileException( str( e ) )
         
     
-    if pil_image.format == 'JPEG' and hasattr( pil_image, '_getexif' ):
-        
-        try:
-            
-            exif_dict = pil_image._getexif()
-            
-        except:
-            
-            exif_dict = None
-            
-        
-        if exif_dict is not None:
-            
-            EXIF_ORIENTATION = 274
-            
-            if EXIF_ORIENTATION in exif_dict:
-                
-                orientation = exif_dict[ EXIF_ORIENTATION ]
-                
-                if orientation == 1:
-                    
-                    pass # normal
-                    
-                elif orientation == 2:
-                    
-                    # mirrored horizontal
-                    
-                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT )
-                    
-                elif orientation == 3:
-                    
-                    # 180
-                    
-                    pil_image = pil_image.transpose( PILImage.ROTATE_180 )
-                    
-                elif orientation == 4:
-                    
-                    # mirrored vertical
-                    
-                    pil_image = pil_image.transpose( PILImage.FLIP_TOP_BOTTOM )
-                    
-                elif orientation == 5:
-                    
-                    # seems like these 90 degree rotations are wrong, but fliping them works for my posh example images, so I guess the PIL constants are odd
-                    
-                    # mirrored horizontal, then 90 CCW
-                    
-                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT ).transpose( PILImage.ROTATE_90 )
-                    
-                elif orientation == 6:
-                    
-                    # 90 CW
-                    
-                    pil_image = pil_image.transpose( PILImage.ROTATE_270 )
-                    
-                elif orientation == 7:
-                    
-                    # mirrored horizontal, then 90 CCW
-                    
-                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT ).transpose( PILImage.ROTATE_270 )
-                    
-                elif orientation == 8:
-                    
-                    # 90 CCW
-                    
-                    pil_image = pil_image.transpose( PILImage.ROTATE_90 )
-                    
-                
-            
-        
+    depth = len( s ) // ( w * h )
+    
+    return numpy.fromstring( s, dtype = 'uint8' ).reshape( ( h, w, depth ) )
+    
+def GeneratePILImage( path, dequantize = True ) -> PILImage.Image:
+    
+    pil_image = RawOpenPILImage( path )
     
     if pil_image is None:
         
-        raise Exception( 'The file at ' + path + ' could not be rendered!' )
+        raise Exception( 'The file at {} could not be rendered!'.format( path ) )
+        
+    
+    pil_image = RotateEXIFPILImage( pil_image )
+    
+    if dequantize:
+        
+        # note this destroys animated gifs atm, it collapses down to one frame
+        pil_image = DequantizePILImage( pil_image )
         
     
     return pil_image
     
-def GeneratePILImageFromNumPyImage( numpy_image ):
+def GeneratePILImageFromNumPyImage( numpy_image: numpy.array ) -> PILImage.Image:
     
-    ( h, w, depth ) = numpy_image.shape
+    # I'll leave this here as a neat artifact, but I really shouldn't ever be making a PIL from a cv2 image. the only PIL benefits are the .info dict, which this won't generate
     
-    if depth == 3:
+    if len( numpy_image.shape ) == 2:
         
-        format = 'RGB'
+        ( h, w ) = numpy_image.shape
         
-    elif depth == 4:
+        format = 'L'
         
-        format = 'RGBA'
+    else:
+        
+        ( h, w, depth ) = numpy_image.shape
+        
+        if depth == 1:
+            
+            format = 'L'
+            
+        elif depth == 2:
+            
+            format = 'LA'
+            
+        elif depth == 3:
+            
+            format = 'RGB'
+            
+        elif depth == 4:
+            
+            format = 'RGBA'
+            
         
     
     pil_image = PILImage.frombytes( format, ( w, h ), numpy_image.data.tobytes() )
     
     return pil_image
     
-def GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime ):
+def GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime, clip_rect = None ) -> bytes:
     
     if OPENCV_OK:
         
         numpy_image = GenerateNumPyImage( path, mime )
+        
+        if clip_rect is not None:
+            
+            numpy_image = ClipNumPyImage( numpy_image, clip_rect )
+            
         
         thumbnail_numpy_image = ResizeNumPyImage( numpy_image, target_resolution )
         
@@ -371,13 +444,16 @@ def GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime ):
             
         except HydrusExceptions.CantRenderWithCVException:
             
-            pass # fall back to pil
+            pass # fallback to PIL
             
         
     
     pil_image = GeneratePILImage( path )
     
-    pil_image = Dequantize( pil_image )
+    if clip_rect is not None:
+        
+        pil_image = ClipPILImage( pil_image, clip_rect )
+        
     
     thumbnail_pil_image = pil_image.resize( target_resolution, PILImage.ANTIALIAS )
     
@@ -385,20 +461,20 @@ def GenerateThumbnailBytesFromStaticImagePath( path, target_resolution, mime ):
     
     return thumbnail_bytes
     
-def GenerateThumbnailBytesNumPy( numpy_image, mime ):
+def GenerateThumbnailBytesNumPy( numpy_image, mime ) -> bytes:
     
-    if not OPENCV_OK:
-        
-        pil_image = GeneratePILImageFromNumPyImage( numpy_image )
-        
-        return GenerateThumbnailBytesPIL( pil_image, mime )
-        
-    
-    ( im_y, im_x, depth ) = numpy_image.shape
+    ( im_height, im_width, depth ) = numpy_image.shape
     
     if depth == 4:
         
-        convert = cv2.COLOR_RGBA2BGRA
+        if NumPyImageHasOpaqueAlphaChannel( numpy_image ):
+            
+            convert = cv2.COLOR_RGBA2BGR
+            
+        else:
+            
+            convert = cv2.COLOR_RGBA2BGRA
+            
         
     else:
         
@@ -407,17 +483,19 @@ def GenerateThumbnailBytesNumPy( numpy_image, mime ):
     
     numpy_image = cv2.cvtColor( numpy_image, convert )
     
-    if mime == HC.IMAGE_JPEG:
-        
-        ext = '.jpg'
-        
-        params = CV_JPEG_THUMBNAIL_ENCODE_PARAMS
-        
-    else:
+    ( im_height, im_width, depth ) = numpy_image.shape
+    
+    if depth == 4:
         
         ext = '.png'
         
         params = CV_PNG_THUMBNAIL_ENCODE_PARAMS
+        
+    else:
+        
+        ext = '.jpg'
+        
+        params = CV_JPEG_THUMBNAIL_ENCODE_PARAMS
         
     
     ( result_success, result_byte_array ) = cv2.imencode( ext, numpy_image, params )
@@ -433,11 +511,9 @@ def GenerateThumbnailBytesNumPy( numpy_image, mime ):
         raise HydrusExceptions.CantRenderWithCVException( 'Thumb failed to encode!' )
         
     
-def GenerateThumbnailBytesPIL( pil_image, mime ):
+def GenerateThumbnailBytesPIL( pil_image: PILImage.Image, mime ) -> bytes:
     
     f = io.BytesIO()
-    
-    pil_image = Dequantize( pil_image )
     
     if mime == HC.IMAGE_PNG or pil_image.mode == 'RGBA':
         
@@ -458,7 +534,7 @@ def GenerateThumbnailBytesPIL( pil_image, mime ):
     
 def GetGIFFrameDurations( path ):
     
-    pil_image = GeneratePILImage( path )
+    pil_image = RawOpenPILImage( path )
     
     times_to_play_gif = GetTimesToPlayGIFFromPIL( pil_image )
     
@@ -499,7 +575,16 @@ def GetGIFFrameDurations( path ):
     
     return ( frame_durations, times_to_play_gif )
     
-def GetImagePixelHash( path, mime ):
+def GetICCProfileBytes( pil_image: PILImage.Image ) -> bytes:
+    
+    if HasICCProfile( pil_image ):
+        
+        return pil_image.info[ 'icc_profile' ]
+        
+    
+    raise HydrusExceptions.DataMissing( 'This image has no ICC profile!' )
+    
+def GetImagePixelHash( path, mime ) -> bytes:
     
     numpy_image = GenerateNumPyImage( path, mime )
     
@@ -533,13 +618,23 @@ def GetImageProperties( path, mime ):
             
         
     
+    width = max( width, 1 )
+    height = max( height, 1 )
+    
     return ( ( width, height ), duration, num_frames )
     
 # bigger number is worse quality
 # this is very rough and misses some finesse
 def GetJPEGQuantizationQualityEstimate( path ):
     
-    pil_image = GeneratePILImage( path )
+    try:
+        
+        pil_image = RawOpenPILImage( path )
+        
+    except HydrusExceptions.UnsupportedFileException:
+        
+        return ( 'unknown', None )
+        
     
     if hasattr( pil_image, 'quantization' ):
         
@@ -615,7 +710,7 @@ def GetResolutionNumPy( numpy_image ):
     
 def GetResolutionAndNumFramesPIL( path, mime ):
     
-    pil_image = GeneratePILImage( path )
+    pil_image = GeneratePILImage( path, dequantize = False )
     
     ( x, y ) = pil_image.size
     
@@ -635,7 +730,10 @@ def GetResolutionAndNumFramesPIL( path, mime ):
                     pil_image.seek( pil_image.tell() + 1 )
                     num_frames += 1
                     
-                except: break
+                except:
+                    
+                    break
+                    
                 
             
         except:
@@ -650,14 +748,29 @@ def GetResolutionAndNumFramesPIL( path, mime ):
     
     return ( ( x, y ), num_frames )
     
-def GetThumbnailResolution( image_resolution, bounding_dimensions ):
+THUMBNAIL_SCALE_DOWN_ONLY = 0
+THUMBNAIL_SCALE_TO_FIT = 1
+THUMBNAIL_SCALE_TO_FILL = 2
+
+thumbnail_scale_str_lookup = {
+    THUMBNAIL_SCALE_DOWN_ONLY : 'scale down only',
+    THUMBNAIL_SCALE_TO_FIT : 'scale to fit',
+    THUMBNAIL_SCALE_TO_FILL : 'scale to fill'
+}
+
+def GetThumbnailResolutionAndClipRegion( image_resolution, bounding_dimensions, thumbnail_scale_type: int ):
+    
+    clip_rect = None
     
     ( im_width, im_height ) = image_resolution
     ( bounding_width, bounding_height ) = bounding_dimensions
     
-    if bounding_width >= im_width and bounding_height >= im_height:
+    if thumbnail_scale_type == THUMBNAIL_SCALE_DOWN_ONLY:
         
-        return ( im_width, im_height )
+        if bounding_width >= im_width and bounding_height >= im_height:
+            
+            return ( clip_rect, ( im_width, im_height ) )
+            
         
     
     width_ratio = im_width / bounding_width
@@ -666,27 +779,66 @@ def GetThumbnailResolution( image_resolution, bounding_dimensions ):
     thumbnail_width = bounding_width
     thumbnail_height = bounding_height
     
-    if width_ratio > height_ratio:
+    if thumbnail_scale_type in ( THUMBNAIL_SCALE_DOWN_ONLY, THUMBNAIL_SCALE_TO_FIT ):
         
-        thumbnail_height = im_height / width_ratio
+        if width_ratio > height_ratio:
+            
+            thumbnail_height = im_height / width_ratio
+            
+        elif height_ratio > width_ratio:
+            
+            thumbnail_width = im_width / height_ratio
+            
         
-    elif height_ratio > width_ratio:
+    elif thumbnail_scale_type == THUMBNAIL_SCALE_TO_FILL:
         
-        thumbnail_width = im_width / height_ratio
+        if width_ratio == height_ratio:
+            
+            # we have something that fits bounding region perfectly, no clip region required
+            
+            pass
+            
+        else:
+            
+            clip_x = 0
+            clip_y = 0
+            clip_width = im_width
+            clip_height = im_height
+            
+            if width_ratio > height_ratio:
+                
+                clip_width = max( int( im_width * height_ratio / width_ratio ), 1 )
+                clip_x = ( im_width - clip_width ) // 2
+                
+            elif height_ratio > width_ratio:
+                
+                clip_height = max( int( im_height * width_ratio / height_ratio ), 1 )
+                clip_y = ( im_height - clip_height ) // 2
+                
+            
+            clip_rect = ( clip_x, clip_y, clip_width, clip_height )
+            
         
     
     thumbnail_width = max( int( thumbnail_width ), 1 )
     thumbnail_height = max( int( thumbnail_height ), 1 )
     
-    return ( thumbnail_width, thumbnail_height )
+    return ( clip_rect, ( thumbnail_width, thumbnail_height ) )
     
-def GetTimesToPlayGIF( path ):
+def GetTimesToPlayGIF( path ) -> int:
     
-    pil_image = GeneratePILImage( path )
+    try:
+        
+        pil_image = RawOpenPILImage( path )
+        
+    except HydrusExceptions.UnsupportedFileException:
+        
+        return 1
+        
     
     return GetTimesToPlayGIFFromPIL( pil_image )
     
-def GetTimesToPlayGIFFromPIL( pil_image ):
+def GetTimesToPlayGIFFromPIL( pil_image: PILImage.Image ) -> int:
     
     if 'loop' in pil_image.info:
         
@@ -699,19 +851,33 @@ def GetTimesToPlayGIFFromPIL( pil_image ):
     
     return times_to_play_gif
     
-def IsDecompressionBomb( path ):
+def HasICCProfile( pil_image: PILImage.Image ) -> bool:
+    
+    if 'icc_profile' in pil_image.info:
+        
+        icc_profile = pil_image.info[ 'icc_profile' ]
+        
+        if isinstance( icc_profile, bytes ) and len( icc_profile ) > 0:
+            
+            return True
+            
+        
+    
+    return False
+    
+def IsDecompressionBomb( path ) -> bool:
     
     # there are two errors here, the 'Warning' and the 'Error', which atm is just a test vs a test x 2 for number of pixels
     # 256MB bmp by default, ( 1024 ** 3 ) // 4 // 3
     # we'll set it at 512MB, and now catching error should be about 1GB
     
-    PILImage.MAX_IMAGE_PIXELS = ( 1024 ** 3 ) // 2 // 3
+    PILImage.MAX_IMAGE_PIXELS = ( 512 * ( 1024 ** 2 ) ) // 3
     
     warnings.simplefilter( 'error', PILImage.DecompressionBombError )
     
     try:
         
-        GeneratePILImage( path )
+        RawOpenPILImage( path )
         
     except ( PILImage.DecompressionBombError ):
         
@@ -731,7 +897,130 @@ def IsDecompressionBomb( path ):
     
     return False
     
-def ResizeNumPyImage( numpy_image, target_resolution ):
+def NormaliseICCProfilePILImageToSRGB( pil_image: PILImage.Image ):
+    
+    try:
+        
+        icc_profile_bytes = GetICCProfileBytes( pil_image )
+        
+    except HydrusExceptions.DataMissing:
+        
+        return pil_image
+        
+    
+    try:
+        
+        f = io.BytesIO( icc_profile_bytes )
+        
+        src_profile = PILImageCms.ImageCmsProfile( f )
+        
+        if pil_image.mode in ( 'L', 'LA' ):
+            
+            # had a bunch of LA pngs that turned pure white on RGBA ICC conversion
+            # but seem to work fine if keep colourspace the same for now
+            # it is a mystery, I guess a PIL bug, but presumably L and LA are technically sRGB so it is still ok to this
+            
+            outputMode = pil_image.mode
+            
+        else:
+            
+            if PILImageHasAlpha( pil_image ):
+                
+                outputMode = 'RGBA'
+                
+            else:
+                
+                outputMode = 'RGB'
+                
+            
+        
+        pil_image = PILImageCms.profileToProfile( pil_image, src_profile, PIL_SRGB_PROFILE, outputMode = outputMode )
+        
+    except ( PILImageCms.PyCMSError, OSError ):
+        
+        # 'cannot build transform' and presumably some other fun errors
+        # way more advanced than we can deal with, so we'll just no-op
+        
+        # OSError is due to a "OSError: cannot open profile from string" a user got
+        # no idea, but that seems to be an ImageCms issue doing byte handling and ending up with an odd OSError?
+        # or maybe somehow my PIL reader or bytesIO sending string for some reason?
+        # in any case, nuke it for now
+        
+        pass
+        
+    
+    pil_image = NormalisePILImageToRGB( pil_image )
+    
+    return pil_image
+    
+def NormalisePILImageToRGB( pil_image: PILImage.Image ):
+    
+    if PILImageHasAlpha( pil_image ):
+        
+        desired_mode = 'RGBA'
+        
+    else:
+        
+        desired_mode = 'RGB'
+        
+    
+    if pil_image.mode != desired_mode:
+        
+        if pil_image.mode == 'LAB':
+            
+            pil_image = PILImageCms.profileToProfile( pil_image, PILImageCms.createProfile( 'LAB' ), PIL_SRGB_PROFILE, outputMode = 'RGB' )
+            
+        else:
+            
+            pil_image = pil_image.convert( desired_mode )
+            
+        
+    
+    return pil_image
+    
+def NumPyImageHasOpaqueAlphaChannel( numpy_image: numpy.array ):
+    
+    shape = numpy_image.shape
+    
+    if len( shape ) == 2:
+        
+        return False
+        
+    
+    if shape[2] == 4:
+        
+        # RGBA image
+        # if the alpha channel is all opaque, there is no use storing that info in our pixel hash
+        # opaque means 255
+        
+        alpha_channel = numpy_image[:,:,3]
+        
+        if ( alpha_channel == numpy.full( ( shape[0], shape[1] ), 255, dtype = 'uint8' ) ).all():
+            
+            return True
+            
+        
+    
+    return False
+    
+def PILImageHasAlpha( pil_image: PILImage.Image ):
+    
+    return pil_image.mode in ( 'LA', 'RGBA' ) or ( pil_image.mode == 'P' and 'transparency' in pil_image.info )
+    
+def RawOpenPILImage( path ) -> PILImage.Image:
+    
+    try:
+        
+        pil_image = PILImage.open( path )
+        
+    except Exception as e:
+        
+        raise HydrusExceptions.DamagedOrUnusualFileException( 'Could not load the image--it was likely malformed!' )
+        
+    
+    return pil_image
+    
+def ResizeNumPyImage( numpy_image: numpy.array, target_resolution ) -> numpy.array:
     
     ( target_width, target_height ) = target_resolution
     ( image_width, image_height ) = GetResolutionNumPy( numpy_image )
@@ -750,4 +1039,79 @@ def ResizeNumPyImage( numpy_image, target_resolution ):
         
     
     return cv2.resize( numpy_image, ( target_width, target_height ), interpolation = interpolation )
+    
+def RotateEXIFPILImage( pil_image: PILImage.Image ):
+    
+    if pil_image.format == 'JPEG' and hasattr( pil_image, '_getexif' ):
+        
+        try:
+            
+            exif_dict = pil_image._getexif()
+            
+        except:
+            
+            exif_dict = None
+            
+        
+        if exif_dict is not None:
+            
+            EXIF_ORIENTATION = 274
+            
+            if EXIF_ORIENTATION in exif_dict:
+                
+                orientation = exif_dict[ EXIF_ORIENTATION ]
+                
+                if orientation == 1:
+                    
+                    pass # normal
+                    
+                elif orientation == 2:
+                    
+                    # mirrored horizontal
+                    
+                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT )
+                    
+                elif orientation == 3:
+                    
+                    # 180
+                    
+                    pil_image = pil_image.transpose( PILImage.ROTATE_180 )
+                    
+                elif orientation == 4:
+                    
+                    # mirrored vertical
+                    
+                    pil_image = pil_image.transpose( PILImage.FLIP_TOP_BOTTOM )
+                    
+                elif orientation == 5:
+                    
+                    # seems like these 90 degree rotations are wrong, but fliping them works for my posh example images, so I guess the PIL constants are odd
+                    
+                    # mirrored horizontal, then 90 CCW
+                    
+                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT ).transpose( PILImage.ROTATE_90 )
+                    
+                elif orientation == 6:
+                    
+                    # 90 CW
+                    
+                    pil_image = pil_image.transpose( PILImage.ROTATE_270 )
+                    
+                elif orientation == 7:
+                    
+                    # mirrored horizontal, then 90 CCW
+                    
+                    pil_image = pil_image.transpose( PILImage.FLIP_LEFT_RIGHT ).transpose( PILImage.ROTATE_270 )
+                    
+                elif orientation == 8:
+                    
+                    # 90 CCW
+                    
+                    pil_image = pil_image.transpose( PILImage.ROTATE_90 )
+                    
+                
+            
+        
+    
+    return pil_image
     

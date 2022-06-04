@@ -1,5 +1,6 @@
 import collections
 import threading
+import typing
 
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusSerialisable
@@ -12,6 +13,14 @@ TAG_DISPLAY_ACTUAL = 1
 TAG_DISPLAY_SINGLE_MEDIA = 2
 TAG_DISPLAY_SELECTION_LIST = 3
 TAG_DISPLAY_IDEAL = 4
+
+tag_display_str_lookup = {
+    TAG_DISPLAY_STORAGE : 'stored tags',
+    TAG_DISPLAY_ACTUAL : 'display tags',
+    TAG_DISPLAY_SINGLE_MEDIA : 'single media views',
+    TAG_DISPLAY_SELECTION_LIST : 'multiple media views',
+    TAG_DISPLAY_IDEAL : 'ideal display tags'
+}
 
 have_shown_invalid_tag_warning = False
 
@@ -48,7 +57,7 @@ def RenderTag( tag, render_for_user: bool ):
         
         if render_for_user:
             
-            if new_options.GetBoolean( 'show_namespaces' ):
+            if new_options.GetBoolean( 'show_namespaces' ) or ( new_options.GetBoolean( 'show_number_namespaces' ) and namespace.isdecimal() ):
                 
                 connector = new_options.GetString( 'namespace_connector' )
                 
@@ -88,6 +97,11 @@ class ServiceKeysToTags( HydrusSerialisable.SerialisableBase, collections.defaul
             
             self[ bytes.fromhex( service_key_hex ) ] = set( tags_list )
             
+        
+    
+    def Duplicate( self ) -> "ServiceKeysToTags":
+        
+        return ServiceKeysToTags( { service_key : set( tags ) for ( service_key, tags ) in self.items() } )
         
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_SERVICE_KEYS_TO_TAGS ] = ServiceKeysToTags

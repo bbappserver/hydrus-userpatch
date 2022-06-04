@@ -7,9 +7,11 @@ from qtpy import QtWidgets as QW
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
+from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientParsing
+from hydrus.client import ClientStrings
 from hydrus.client.gui import ClientGUIDialogsQuick
 from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import ClientGUIScrolledPanels
@@ -26,7 +28,7 @@ class MultilineStringConversionTestPanel( QW.QWidget ):
     
     textSelected = QC.Signal( str )
     
-    def __init__( self, parent: QW.QWidget, string_processor: ClientParsing.StringProcessor ):
+    def __init__( self, parent: QW.QWidget, string_processor: ClientStrings.StringProcessor ):
         
         QW.QWidget.__init__( self, parent )
         
@@ -121,7 +123,7 @@ class MultilineStringConversionTestPanel( QW.QWidget ):
         return results
         
     
-    def SetStringProcessor( self, string_processor: ClientParsing.StringProcessor ):
+    def SetStringProcessor( self, string_processor: ClientStrings.StringProcessor ):
         
         self._string_processor = string_processor
         
@@ -155,7 +157,7 @@ class MultilineStringConversionTestPanel( QW.QWidget ):
     
 class SingleStringConversionTestPanel( QW.QWidget ):
     
-    def __init__( self, parent: QW.QWidget, string_processor: ClientParsing.StringProcessor ):
+    def __init__( self, parent: QW.QWidget, string_processor: ClientStrings.StringProcessor ):
         
         QW.QWidget.__init__( self, parent )
         
@@ -193,7 +195,7 @@ class SingleStringConversionTestPanel( QW.QWidget ):
         
         for i in range( len( processing_steps ) ):
             
-            if isinstance( processing_steps[i], ClientParsing.StringSlicer ):
+            if isinstance( processing_steps[i], ClientStrings.StringSlicer ):
                 
                 continue
                 
@@ -276,11 +278,11 @@ class SingleStringConversionTestPanel( QW.QWidget ):
         return self._example_string.text()
         
     
-    def SetStringProcessor( self, string_processor: ClientParsing.StringProcessor ):
+    def SetStringProcessor( self, string_processor: ClientStrings.StringProcessor ):
         
         self._string_processor = string_processor
         
-        if True in ( isinstance( processing_step, ClientParsing.StringSlicer ) for processing_step in self._string_processor.GetProcessingSteps() ):
+        if True in ( isinstance( processing_step, ClientStrings.StringSlicer ) for processing_step in self._string_processor.GetProcessingSteps() ):
             
             self.setToolTip( 'String Slicing is ignored here.' )
             
@@ -301,7 +303,7 @@ class SingleStringConversionTestPanel( QW.QWidget ):
     
 class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, string_converter: ClientParsing.StringConverter, example_string_override = None ):
+    def __init__( self, parent: QW.QWidget, string_converter: ClientStrings.StringConverter, example_string_override = None ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -361,8 +363,22 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _AddConversion( self ):
         
-        conversion_type = ClientParsing.STRING_CONVERSION_APPEND_TEXT
-        data = 'extra text'
+        try:
+            
+            default_string_converter = HG.client_controller.new_options.GetRawSerialisable( 'last_used_string_conversion_step' )
+            
+            default_conversions = default_string_converter.GetConversions()
+            
+            if len( default_conversions ) > 0:
+                
+                ( conversion_type, data ) = default_conversions[0]
+                
+            
+        except:
+            
+            conversion_type = ClientStrings.STRING_CONVERSION_APPEND_TEXT
+            data = 'extra text'
+            
         
         try:
             
@@ -386,6 +402,10 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 number = self._conversions.topLevelItemCount() + 1
                 
                 ( conversion_type, data ) = panel.GetValue()
+                
+                new_default_string_converter = ClientStrings.StringConverter( conversions = [ ( conversion_type, data ) ] )
+                
+                HG.client_controller.new_options.SetRawSerialisable( 'last_used_string_conversion_step', new_default_string_converter )
                 
                 enumerated_conversion = ( number, conversion_type, data )
                 
@@ -437,7 +457,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
         ( number, conversion_type, data ) = conversion
         
         pretty_number = HydrusData.ToHumanInt( number )
-        pretty_conversion = ClientParsing.StringConverter.ConversionToString( ( conversion_type, data ) )
+        pretty_conversion = ClientStrings.StringConverter.ConversionToString( ( conversion_type, data ) )
         
         string_converter = self._GetValue()
         
@@ -510,6 +530,8 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _EditConversion( self ):
         
+        edited_datas = []
+        
         selected_data = self._conversions.GetData( only_selected = True )
         
         for enumerated_conversion in selected_data:
@@ -539,9 +561,15 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     ( conversion_type, data ) = panel.GetValue()
                     
+                    new_default_string_converter = ClientStrings.StringConverter( conversions = [ ( conversion_type, data ) ] )
+                    
+                    HG.client_controller.new_options.SetRawSerialisable( 'last_used_string_conversion_step', new_default_string_converter )
+                    
                     enumerated_conversion = ( number, conversion_type, data )
                     
                     self._conversions.AddDatas( ( enumerated_conversion, ) )
+                    
+                    edited_datas.append( enumerated_conversion )
                     
                 else:
                     
@@ -549,6 +577,8 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                 
             
+        
+        self._conversions.SelectDatas( edited_datas )
         
         self._conversions.UpdateDatas()
         
@@ -578,7 +608,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
         
         example_string = self._example_string.text()
         
-        string_converter = ClientParsing.StringConverter( conversions, example_string )
+        string_converter = ClientStrings.StringConverter( conversions, example_string )
         
         return string_converter
         
@@ -672,20 +702,20 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
             
             self._conversion_type = ClientGUICommon.BetterChoice( self._control_panel )
             
-            for t_type in ( ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_PREPEND_TEXT, ClientParsing.STRING_CONVERSION_APPEND_TEXT, ClientParsing.STRING_CONVERSION_ENCODE, ClientParsing.STRING_CONVERSION_DECODE, ClientParsing.STRING_CONVERSION_REVERSE, ClientParsing.STRING_CONVERSION_REGEX_SUB, ClientParsing.STRING_CONVERSION_DATE_DECODE, ClientParsing.STRING_CONVERSION_DATE_ENCODE, ClientParsing.STRING_CONVERSION_INTEGER_ADDITION ):
+            for t_type in ( ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_PREPEND_TEXT, ClientStrings.STRING_CONVERSION_APPEND_TEXT, ClientStrings.STRING_CONVERSION_ENCODE, ClientStrings.STRING_CONVERSION_DECODE, ClientStrings.STRING_CONVERSION_REVERSE, ClientStrings.STRING_CONVERSION_REGEX_SUB, ClientStrings.STRING_CONVERSION_DATE_DECODE, ClientStrings.STRING_CONVERSION_DATE_ENCODE, ClientStrings.STRING_CONVERSION_INTEGER_ADDITION ):
                 
-                self._conversion_type.addItem( ClientParsing.conversion_type_str_lookup[ t_type ], t_type )
+                self._conversion_type.addItem( ClientStrings.conversion_type_str_lookup[ t_type ], t_type )
                 
             
             self._data_text = QW.QLineEdit( self._control_panel )
-            self._data_number = QP.MakeQSpinBox( self._control_panel, min=0, max=65535 )
+            self._data_number = ClientGUICommon.BetterSpinBox( self._control_panel, min=0, max=65535 )
             self._data_encoding = ClientGUICommon.BetterChoice( self._control_panel )
             self._data_decoding = ClientGUICommon.BetterChoice( self._control_panel )
             self._data_regex_repl = QW.QLineEdit( self._control_panel )
             self._data_date_link = ClientGUICommon.BetterHyperLink( self._control_panel, 'link to date info', 'https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior' )
             self._data_timezone_decode = ClientGUICommon.BetterChoice( self._control_panel )
             self._data_timezone_encode = ClientGUICommon.BetterChoice( self._control_panel )
-            self._data_timezone_offset = QP.MakeQSpinBox( self._control_panel, min=-86400, max=86400 )
+            self._data_timezone_offset = ClientGUICommon.BetterSpinBox( self._control_panel, min=-86400, max=86400 )
             
             for e in ( 'hex', 'base64', 'url percent encoding', 'unicode escape characters', 'html entities' ):
                 
@@ -738,22 +768,22 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
             
             #
             
-            if conversion_type == ClientParsing.STRING_CONVERSION_ENCODE:
+            if conversion_type == ClientStrings.STRING_CONVERSION_ENCODE:
                 
                 self._data_encoding.SetValue( data )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DECODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DECODE:
                 
                 self._data_decoding.SetValue( data )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_REGEX_SUB:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_REGEX_SUB:
                 
                 ( pattern, repl ) = data
                 
                 self._data_text.setText( pattern )
                 self._data_regex_repl.setText( repl )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DATE_DECODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DATE_DECODE:
                 
                 ( phrase, timezone_type, timezone_offset ) = data
                 
@@ -761,7 +791,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 self._data_timezone_decode.SetValue( timezone_type )
                 self._data_timezone_offset.setValue( timezone_offset )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DATE_ENCODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DATE_ENCODE:
                 
                 ( phrase, timezone_type ) = data
                 
@@ -878,37 +908,37 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
             
             conversion_type = self._conversion_type.GetValue()
             
-            if conversion_type == ClientParsing.STRING_CONVERSION_ENCODE:
+            if conversion_type == ClientStrings.STRING_CONVERSION_ENCODE:
                 
                 self._data_encoding_label.setVisible( True )
                 self._data_encoding.setVisible( True )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DECODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DECODE:
                 
                 self._data_decoding_label.setVisible( True )
                 self._data_decoding.setVisible( True )
                 
-            elif conversion_type in ( ClientParsing.STRING_CONVERSION_PREPEND_TEXT, ClientParsing.STRING_CONVERSION_APPEND_TEXT, ClientParsing.STRING_CONVERSION_DATE_DECODE, ClientParsing.STRING_CONVERSION_DATE_ENCODE, ClientParsing.STRING_CONVERSION_REGEX_SUB ):
+            elif conversion_type in ( ClientStrings.STRING_CONVERSION_PREPEND_TEXT, ClientStrings.STRING_CONVERSION_APPEND_TEXT, ClientStrings.STRING_CONVERSION_DATE_DECODE, ClientStrings.STRING_CONVERSION_DATE_ENCODE, ClientStrings.STRING_CONVERSION_REGEX_SUB ):
                 
                 self._data_text_label.setVisible( True )
                 self._data_text.setVisible( True )
                 
                 data_text_label = 'string data: '
                 
-                if conversion_type == ClientParsing.STRING_CONVERSION_PREPEND_TEXT:
+                if conversion_type == ClientStrings.STRING_CONVERSION_PREPEND_TEXT:
                     
                     data_text_label = 'text to prepend: '
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_APPEND_TEXT:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_APPEND_TEXT:
                     
                     data_text_label = 'text to append: '
                     
-                elif conversion_type in ( ClientParsing.STRING_CONVERSION_DATE_DECODE, ClientParsing.STRING_CONVERSION_DATE_ENCODE ):
+                elif conversion_type in ( ClientStrings.STRING_CONVERSION_DATE_DECODE, ClientStrings.STRING_CONVERSION_DATE_ENCODE ):
                     
                     self._data_date_link_label.setVisible( True )
                     self._data_date_link.setVisible( True )
                     
-                    if conversion_type == ClientParsing.STRING_CONVERSION_DATE_DECODE:
+                    if conversion_type == ClientStrings.STRING_CONVERSION_DATE_DECODE:
                         
                         data_text_label = 'date decode phrase: '
                         
@@ -921,7 +951,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                             self._data_timezone_offset.setVisible( True )
                             
                         
-                    elif conversion_type == ClientParsing.STRING_CONVERSION_DATE_ENCODE:
+                    elif conversion_type == ClientStrings.STRING_CONVERSION_DATE_ENCODE:
                         
                         data_text_label = 'date encode phrase: '
                         
@@ -929,7 +959,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                         self._data_timezone_encode.setVisible( True )
                         
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_REGEX_SUB:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_REGEX_SUB:
                     
                     data_text_label = 'regex pattern: '
                     
@@ -939,12 +969,12 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 self._data_text_label.setText( data_text_label )
                 
-            elif conversion_type in ( ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_INTEGER_ADDITION ):
+            elif conversion_type in ( ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_INTEGER_ADDITION ):
                 
                 self._data_number_label.setVisible( True )
                 self._data_number.setVisible( True )
                 
-                if conversion_type == ClientParsing.STRING_CONVERSION_INTEGER_ADDITION:
+                if conversion_type == ClientStrings.STRING_CONVERSION_INTEGER_ADDITION:
                     
                     self._data_number.setMinimum( -65535 )
                     
@@ -955,23 +985,23 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 data_number_label = 'number data: '
                 
-                if conversion_type == ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING:
+                if conversion_type == ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING:
                     
                     data_number_label = 'characters to remove: '
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_END:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_END:
                     
                     data_number_label = 'characters to remove: '
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING:
                     
                     data_number_label = 'characters to take: '
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_END:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_END:
                     
                     data_number_label = 'characters to take: '
                     
-                elif conversion_type == ClientParsing.STRING_CONVERSION_INTEGER_ADDITION:
+                elif conversion_type == ClientStrings.STRING_CONVERSION_INTEGER_ADDITION:
                     
                     data_number_label = 'number to add: '
                     
@@ -986,7 +1016,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 conversions = [ self.GetValue() ]
                 
-                string_converter = ClientParsing.StringConverter( conversions, self._example_text )
+                string_converter = ClientStrings.StringConverter( conversions, self._example_text )
                 
                 example_conversion = string_converter.Convert( self._example_text )
                 
@@ -1009,30 +1039,30 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
             
             conversion_type = self._conversion_type.GetValue()
             
-            if conversion_type == ClientParsing.STRING_CONVERSION_ENCODE:
+            if conversion_type == ClientStrings.STRING_CONVERSION_ENCODE:
                 
                 data = self._data_encoding.GetValue()
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DECODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DECODE:
                 
                 data = self._data_decoding.GetValue()
                 
-            elif conversion_type in ( ClientParsing.STRING_CONVERSION_PREPEND_TEXT, ClientParsing.STRING_CONVERSION_APPEND_TEXT ):
+            elif conversion_type in ( ClientStrings.STRING_CONVERSION_PREPEND_TEXT, ClientStrings.STRING_CONVERSION_APPEND_TEXT ):
                 
                 data = self._data_text.text()
                 
-            elif conversion_type in ( ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientParsing.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientParsing.STRING_CONVERSION_INTEGER_ADDITION ):
+            elif conversion_type in ( ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_REMOVE_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_BEGINNING, ClientStrings.STRING_CONVERSION_CLIP_TEXT_FROM_END, ClientStrings.STRING_CONVERSION_INTEGER_ADDITION ):
                 
                 data = self._data_number.value()
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_REGEX_SUB:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_REGEX_SUB:
                 
                 pattern = self._data_text.text()
                 repl = self._data_regex_repl.text()
                 
                 data = ( pattern, repl )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DATE_DECODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DATE_DECODE:
                 
                 phrase = self._data_text.text()
                 timezone_time = self._data_timezone_decode.GetValue()
@@ -1040,7 +1070,7 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 data = ( phrase, timezone_time, timezone_offset )
                 
-            elif conversion_type == ClientParsing.STRING_CONVERSION_DATE_ENCODE:
+            elif conversion_type == ClientStrings.STRING_CONVERSION_DATE_ENCODE:
                 
                 phrase = self._data_text.text()
                 timezone_time = self._data_timezone_encode.GetValue()
@@ -1058,25 +1088,25 @@ class EditStringConverterPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, string_match: ClientParsing.StringMatch, test_data = typing.Optional[ ClientParsing.ParsingTestData ] ):
+    def __init__( self, parent: QW.QWidget, string_match: ClientStrings.StringMatch, test_data = typing.Optional[ ClientParsing.ParsingTestData ] ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
         self._match_type = ClientGUICommon.BetterChoice( self )
         
-        self._match_type.addItem( 'any characters', ClientParsing.STRING_MATCH_ANY )
-        self._match_type.addItem( 'fixed characters', ClientParsing.STRING_MATCH_FIXED )
-        self._match_type.addItem( 'character set', ClientParsing.STRING_MATCH_FLEXIBLE )
-        self._match_type.addItem( 'regex', ClientParsing.STRING_MATCH_REGEX )
+        self._match_type.addItem( 'any characters', ClientStrings.STRING_MATCH_ANY )
+        self._match_type.addItem( 'fixed characters', ClientStrings.STRING_MATCH_FIXED )
+        self._match_type.addItem( 'character set', ClientStrings.STRING_MATCH_FLEXIBLE )
+        self._match_type.addItem( 'regex', ClientStrings.STRING_MATCH_REGEX )
         
         self._match_value_fixed_input = QW.QLineEdit( self )
         self._match_value_regex_input = QW.QLineEdit( self )
         
         self._match_value_flexible_input = ClientGUICommon.BetterChoice( self )
         
-        self._match_value_flexible_input.addItem( 'alphabetic characters (a-zA-Z)', ClientParsing.ALPHA )
-        self._match_value_flexible_input.addItem( 'alphanumeric characters (a-zA-Z0-9)', ClientParsing.ALPHANUMERIC )
-        self._match_value_flexible_input.addItem( 'numeric characters (0-9)', ClientParsing.NUMERIC )
+        self._match_value_flexible_input.addItem( 'alphabetic characters (a-zA-Z)', ClientStrings.ALPHA )
+        self._match_value_flexible_input.addItem( 'alphanumeric characters (a-zA-Z0-9)', ClientStrings.ALPHANUMERIC )
+        self._match_value_flexible_input.addItem( 'numeric characters (0-9)', ClientStrings.NUMERIC )
         
         self._min_chars = ClientGUICommon.NoneableSpinCtrl( self, min = 1, max = 65535, unit = 'characters', none_phrase = 'no limit' )
         self._max_chars = ClientGUICommon.NoneableSpinCtrl( self, min = 1, max = 65535, unit = 'characters', none_phrase = 'no limit' )
@@ -1132,24 +1162,24 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
         
         match_type = self._match_type.GetValue()
         
-        if match_type == ClientParsing.STRING_MATCH_ANY:
+        if match_type == ClientStrings.STRING_MATCH_ANY:
             
             match_value = ''
             
-        elif match_type == ClientParsing.STRING_MATCH_FLEXIBLE:
+        elif match_type == ClientStrings.STRING_MATCH_FLEXIBLE:
             
             match_value = self._match_value_flexible_input.GetValue()
             
-        elif match_type == ClientParsing.STRING_MATCH_FIXED:
+        elif match_type == ClientStrings.STRING_MATCH_FIXED:
             
             match_value = self._match_value_fixed_input.text()
             
-        elif match_type == ClientParsing.STRING_MATCH_REGEX:
+        elif match_type == ClientStrings.STRING_MATCH_REGEX:
             
             match_value = self._match_value_regex_input.text()
             
         
-        if match_type == ClientParsing.STRING_MATCH_FIXED:
+        if match_type == ClientStrings.STRING_MATCH_FIXED:
             
             min_chars = None
             max_chars = None
@@ -1162,7 +1192,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
             example_string = self._example_string.text()
             
         
-        string_match = ClientParsing.StringMatch( match_type = match_type, match_value = match_value, min_chars = min_chars, max_chars = max_chars, example_string = example_string )
+        string_match = ClientStrings.StringMatch( match_type = match_type, match_value = match_value, min_chars = min_chars, max_chars = max_chars, example_string = example_string )
         
         return string_match
         
@@ -1185,7 +1215,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
         self._max_chars.setVisible( False )
         self._example_string.setVisible( False )
         
-        if match_type == ClientParsing.STRING_MATCH_FIXED:
+        if match_type == ClientStrings.STRING_MATCH_FIXED:
             
             self._match_value_fixed_input_label.setVisible( True )
             self._match_value_fixed_input.setVisible( True )
@@ -1200,12 +1230,12 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
             self._max_chars.setVisible( True )
             self._example_string.setVisible( True )
             
-            if match_type == ClientParsing.STRING_MATCH_FLEXIBLE:
+            if match_type == ClientStrings.STRING_MATCH_FLEXIBLE:
                 
                 self._match_value_flexible_input_label.setVisible( True )
                 self._match_value_flexible_input.setVisible( True )
                 
-            elif match_type == ClientParsing.STRING_MATCH_REGEX:
+            elif match_type == ClientStrings.STRING_MATCH_REGEX:
                 
                 self._match_value_regex_input_label.setVisible( True )
                 self._match_value_regex_input.setVisible( True )
@@ -1219,7 +1249,7 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
         
         match_type = self._match_type.GetValue()
         
-        if match_type == ClientParsing.STRING_MATCH_FIXED:
+        if match_type == ClientStrings.STRING_MATCH_FIXED:
             
             self._example_string_matches.clear()
             
@@ -1262,23 +1292,23 @@ class EditStringMatchPanel( ClientGUIScrolledPanels.EditPanel ):
         return string_match
         
     
-    def SetValue( self, string_match: ClientParsing.StringMatch ):
+    def SetValue( self, string_match: ClientStrings.StringMatch ):
         
         ( match_type, match_value, min_chars, max_chars, example_string ) = string_match.ToTuple()
         
         self._match_type.SetValue( match_type )
         
-        self._match_value_flexible_input.SetValue( ClientParsing.ALPHA )
+        self._match_value_flexible_input.SetValue( ClientStrings.ALPHA )
         
-        if match_type == ClientParsing.STRING_MATCH_FIXED:
+        if match_type == ClientStrings.STRING_MATCH_FIXED:
             
             self._match_value_fixed_input.setText( match_value )
             
-        elif match_type == ClientParsing.STRING_MATCH_FLEXIBLE:
+        elif match_type == ClientStrings.STRING_MATCH_FLEXIBLE:
             
             self._match_value_flexible_input.SetValue( match_value )
             
-        elif match_type == ClientParsing.STRING_MATCH_REGEX:
+        elif match_type == ClientStrings.STRING_MATCH_REGEX:
             
             self._match_value_regex_input.setText( match_value )
             
@@ -1296,7 +1326,7 @@ SELECT_RANGE = 1
 
 class EditStringSlicerPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent, string_slicer: ClientParsing.StringSlicer, test_data: typing.Sequence[ str ] = [] ):
+    def __init__( self, parent, string_slicer: ClientStrings.StringSlicer, test_data: typing.Sequence[ str ] = [] ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -1311,7 +1341,7 @@ class EditStringSlicerPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._single_panel = QW.QWidget( self._controls_panel )
         
-        self._index_single = QP.MakeQSpinBox( self._single_panel, min = -65536, max = 65536 )
+        self._index_single = ClientGUICommon.BetterSpinBox( self._single_panel, min = -65536, max = 65536 )
         
         self._range_panel = QW.QWidget( self._controls_panel )
         
@@ -1416,7 +1446,7 @@ class EditStringSlicerPanel( ClientGUIScrolledPanels.EditPanel ):
             index_end = self._index_end.GetValue()
             
         
-        string_slicer = ClientParsing.StringSlicer( index_start = index_start, index_end = index_end )
+        string_slicer = ClientStrings.StringSlicer( index_start = index_start, index_end = index_end )
         
         return string_slicer
         
@@ -1463,7 +1493,7 @@ class EditStringSlicerPanel( ClientGUIScrolledPanels.EditPanel ):
         return string_slicer
         
     
-    def SetValue( self, string_slicer: ClientParsing.StringSlicer ):
+    def SetValue( self, string_slicer: ClientStrings.StringSlicer ):
         
         ( index_start, index_end ) = string_slicer.GetIndexStartEnd()
         
@@ -1486,7 +1516,7 @@ class EditStringSlicerPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditStringSorterPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent, string_sorter: ClientParsing.StringSorter, test_data: typing.Sequence[ str ] = [] ):
+    def __init__( self, parent, string_sorter: ClientStrings.StringSorter, test_data: typing.Sequence[ str ] = [] ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -1496,9 +1526,9 @@ class EditStringSorterPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._sort_type = ClientGUICommon.BetterChoice( self._controls_panel )
         
-        self._sort_type.addItem( ClientParsing.sort_str_enum[ ClientParsing.CONTENT_PARSER_SORT_TYPE_HUMAN_SORT ], ClientParsing.CONTENT_PARSER_SORT_TYPE_HUMAN_SORT )
-        self._sort_type.addItem( ClientParsing.sort_str_enum[ ClientParsing.CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC ], ClientParsing.CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC )
-        self._sort_type.addItem( ClientParsing.sort_str_enum[ ClientParsing.CONTENT_PARSER_SORT_TYPE_REVERSE ], ClientParsing.CONTENT_PARSER_SORT_TYPE_REVERSE )
+        self._sort_type.addItem( ClientStrings.sort_str_enum[ ClientStrings.CONTENT_PARSER_SORT_TYPE_HUMAN_SORT ], ClientStrings.CONTENT_PARSER_SORT_TYPE_HUMAN_SORT )
+        self._sort_type.addItem( ClientStrings.sort_str_enum[ ClientStrings.CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC ], ClientStrings.CONTENT_PARSER_SORT_TYPE_LEXICOGRAPHIC )
+        self._sort_type.addItem( ClientStrings.sort_str_enum[ ClientStrings.CONTENT_PARSER_SORT_TYPE_REVERSE ], ClientStrings.CONTENT_PARSER_SORT_TYPE_REVERSE )
         
         tt = 'Human sort sorts numbers as you understand them. "image 2" comes before "image 10". Lexicographic compares each character in turn. "image 02" comes before "image 10", which comes before "image 2".'
         
@@ -1568,7 +1598,7 @@ class EditStringSorterPanel( ClientGUIScrolledPanels.EditPanel ):
         asc = self._asc.isChecked()
         regex = self._regex.GetValue()
         
-        string_sorter = ClientParsing.StringSorter( sort_type = sort_type, asc = asc, regex = regex )
+        string_sorter = ClientStrings.StringSorter( sort_type = sort_type, asc = asc, regex = regex )
         
         return string_sorter
         
@@ -1626,7 +1656,7 @@ class EditStringSorterPanel( ClientGUIScrolledPanels.EditPanel ):
         return string_sorter
         
     
-    def SetValue( self, string_sorter: ClientParsing.StringSorter ):
+    def SetValue( self, string_sorter: ClientStrings.StringSorter ):
         
         sort_type = string_sorter.GetSortType()
         asc = string_sorter.GetAscending()
@@ -1641,7 +1671,7 @@ class EditStringSorterPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditStringSplitterPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent, string_splitter: ClientParsing.StringSplitter, example_string: str = '' ):
+    def __init__( self, parent, string_splitter: ClientStrings.StringSplitter, example_string: str = '' ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -1707,16 +1737,27 @@ class EditStringSplitterPanel( ClientGUIScrolledPanels.EditPanel ):
         separator = self._separator.text()
         max_splits = self._max_splits.GetValue()
         
-        string_splitter = ClientParsing.StringSplitter( separator = separator, max_splits = max_splits )
+        string_splitter = ClientStrings.StringSplitter( separator = separator, max_splits = max_splits )
         
         return string_splitter
         
     
     def _UpdateControls( self ):
         
-        string_splitter = self._GetValue()
-        
-        results = string_splitter.Split( self._example_string.text() )
+        if self._separator.text() == '':
+            
+            self._separator.setObjectName( 'HydrusInvalid' )
+            
+            results = []
+            
+        else:
+            
+            self._separator.setObjectName( '' )
+            
+            string_splitter = self._GetValue()
+            
+            results = string_splitter.Split( self._example_string.text() )
+            
         
         self._example_string_splits.clear()
         
@@ -1725,15 +1766,22 @@ class EditStringSplitterPanel( ClientGUIScrolledPanels.EditPanel ):
             self._example_string_splits.addItem( result )
             
         
+        self._separator.style().polish( self._separator )
+        
     
     def GetValue( self ):
+        
+        if self._separator.text() == '':
+            
+            raise HydrusExceptions.VetoException( 'Sorry, you have to have a value in the separator field!' )
+            
         
         string_splitter = self._GetValue()
         
         return string_splitter
         
     
-    def SetValue( self, string_splitter: ClientParsing.StringSplitter ):
+    def SetValue( self, string_splitter: ClientStrings.StringSplitter ):
         
         separator = string_splitter.GetSeparator()
         max_splits = string_splitter.GetMaxSplits()
@@ -1746,7 +1794,7 @@ class EditStringSplitterPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent, string_processor: ClientParsing.StringProcessor, test_data: ClientParsing.ParsingTestData ):
+    def __init__( self, parent, string_processor: ClientStrings.StringProcessor, test_data: ClientParsing.ParsingTestData ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -1804,11 +1852,11 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
     def _Add( self ):
         
         choice_tuples = [
-            ( 'String Match', ClientParsing.StringMatch, 'An object that filters strings.' ),
-            ( 'String Converter', ClientParsing.StringConverter, 'An object that converts strings from one thing to another.' ),
-            ( 'String Splitter', ClientParsing.StringSplitter, 'An object that breaks strings into smaller strings.' ),
-            ( 'String Sorter', ClientParsing.StringSorter, 'An object that sorts strings.' ),
-            ( 'String Selector/Slicer', ClientParsing.StringSlicer, 'An object that filter-selects from the list of strings. Either absolute index position or a range.' )
+            ( 'String Match', ClientStrings.StringMatch, 'An object that filters strings.' ),
+            ( 'String Converter', ClientStrings.StringConverter, 'An object that converts strings from one thing to another.' ),
+            ( 'String Splitter', ClientStrings.StringSplitter, 'An object that breaks strings into smaller strings.' ),
+            ( 'String Sorter', ClientStrings.StringSorter, 'An object that sorts strings.' ),
+            ( 'String Selector/Slicer', ClientStrings.StringSlicer, 'An object that filter-selects from the list of strings. Either absolute index position or a range.' )
         ]
         
         try:
@@ -1820,15 +1868,15 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
             raise HydrusExceptions.VetoException()
             
         
-        if string_processing_step_type == ClientParsing.StringMatch:
+        if string_processing_step_type == ClientStrings.StringMatch:
             
             example_text = self._single_test_panel.GetStartingText()
             
-            string_processing_step = ClientParsing.StringMatch( example_string = example_text )
+            string_processing_step = ClientStrings.StringMatch( example_string = example_text )
             
             example_text = self._GetExampleTextForStringProcessingStep( string_processing_step )
             
-            string_processing_step = ClientParsing.StringMatch( example_string = example_text )
+            string_processing_step = ClientStrings.StringMatch( example_string = example_text )
             
         else:
             
@@ -1838,33 +1886,33 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
         return self._Edit( string_processing_step )
         
     
-    def _Edit( self, string_processing_step: ClientParsing.StringProcessingStep ):
+    def _Edit( self, string_processing_step: ClientStrings.StringProcessingStep ):
         
         example_text = self._GetExampleTextForStringProcessingStep( string_processing_step )
         
         with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit processing step' ) as dlg:
             
-            if isinstance( string_processing_step, ClientParsing.StringMatch ):
+            if isinstance( string_processing_step, ClientStrings.StringMatch ):
                 
                 test_data = ClientParsing.ParsingTestData( {}, ( example_text, ) )
                 
                 panel = EditStringMatchPanel( dlg, string_processing_step, test_data = test_data )
                 
-            elif isinstance( string_processing_step, ClientParsing.StringConverter ):
+            elif isinstance( string_processing_step, ClientStrings.StringConverter ):
                 
                 panel = EditStringConverterPanel( dlg, string_processing_step, example_string_override = example_text )
                 
-            elif isinstance( string_processing_step, ClientParsing.StringSplitter ):
+            elif isinstance( string_processing_step, ClientStrings.StringSplitter ):
                 
                 panel = EditStringSplitterPanel( dlg, string_processing_step, example_string = example_text )
                 
-            elif isinstance( string_processing_step, ClientParsing.StringSorter ):
+            elif isinstance( string_processing_step, ClientStrings.StringSorter ):
                 
                 test_data = self._GetExampleTextsForStringSorter( string_processing_step )
                 
                 panel = EditStringSorterPanel( dlg, string_processing_step, test_data = test_data )
                 
-            elif isinstance( string_processing_step, ClientParsing.StringSlicer ):
+            elif isinstance( string_processing_step, ClientStrings.StringSlicer ):
                 
                 test_data = self._GetExampleTextsForStringSorter( string_processing_step )
                 
@@ -1886,12 +1934,12 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
             
         
     
-    def _ConvertDataToListBoxString( self, string_processing_step: ClientParsing.StringProcessingStep ):
+    def _ConvertDataToListBoxString( self, string_processing_step: ClientStrings.StringProcessingStep ):
         
         return string_processing_step.ToString( with_type = True )
         
     
-    def _GetExampleTextForStringProcessingStep( self, string_processing_step: ClientParsing.StringProcessingStep ):
+    def _GetExampleTextForStringProcessingStep( self, string_processing_step: ClientStrings.StringProcessingStep ):
         
         # ultimately rework this to multiline test_data m8, but the panels need it first
         
@@ -1913,7 +1961,7 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
         return example_text
         
     
-    def _GetExampleTextsForStringSorter( self, string_processing_step: ClientParsing.StringProcessingStep ):
+    def _GetExampleTextsForStringSorter( self, string_processing_step: ClientStrings.StringProcessingStep ):
         
         # ultimately rework this to multiline test_data m8
         
@@ -1939,7 +1987,7 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
         
         processing_steps = self._processing_steps.GetData()
         
-        string_processor = ClientParsing.StringProcessor()
+        string_processor = ClientStrings.StringProcessor()
         
         string_processor.SetProcessingSteps( processing_steps )
         
@@ -1961,7 +2009,7 @@ class EditStringProcessorPanel( ClientGUIScrolledPanels.EditPanel ):
         return string_processor
         
     
-    def SetValue( self, string_processor: ClientParsing.StringProcessor ):
+    def SetValue( self, string_processor: ClientStrings.StringProcessor ):
         
         processing_steps = string_processor.GetProcessingSteps()
         

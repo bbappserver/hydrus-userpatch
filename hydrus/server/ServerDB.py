@@ -1,13 +1,11 @@
 import collections
 import hashlib
-import json
 import os
 import random
 import sqlite3
 import sys
 import time
 import traceback
-import typing
 
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
@@ -87,12 +85,37 @@ class DB( HydrusDB.HydrusDB ):
         
         self._files_dir = os.path.join( db_dir, 'server_files' )
         
+        self._read_commands_to_methods = {
+            'access_key' : self._GetAccessKey,
+            'account' : self._GetAccountFromAccountKey,
+            'account_from_content' : self._GetAccountFromContent,
+            'account_info' : self._GetAccountInfo,
+            'account_key_from_access_key' : self._GetAccountKeyFromAccessKey,
+            'account_types' : self._GetAccountTypes,
+            'auto_create_account_types' : self._GetAutoCreateAccountTypes,
+            'auto_create_registration_key' : self._GetAutoCreateRegistrationKey,
+            'all_accounts' : self._GetAllAccounts,
+            'deferred_physical_delete' : self._GetDeferredPhysicalDelete,
+            'immediate_update' : self._RepositoryGenerateImmediateUpdate,
+            'ip' : self._RepositoryGetIPTimestamp,
+            'is_an_orphan' : self._IsAnOrphan,
+            'num_petitions' : self._RepositoryGetNumPetitions,
+            'petition' : self._RepositoryGetPetition,
+            'registration_keys' : self._GenerateRegistrationKeysFromAccount,
+            'service_has_file' : self._RepositoryHasFile,
+            'service_keys' : self._GetServiceKeys,
+            'services' : self._GetServices,
+            'services_from_account' : self._GetServicesFromAccount,
+            'sessions' : self._GetSessions,
+            'verify_access_key' : self._VerifyAccessKey
+        }
+        
         self._write_commands_to_methods = {
             'account_types' : self._ModifyAccountTypes,
             'analyze' : self._Analyze,
             'backup' : self._Backup,
+            'clear_deferred_physical_delete' : self._ClearDeferredPhysicalDelete,
             'create_update' : self._RepositoryCreateUpdate,
-            'delete_orphans' : self._DeleteOrphans,
             'dirty_accounts' : self._SaveDirtyAccounts,
             'dirty_services' : self._SaveDirtyServices,
             'file' : self._RepositoryProcessAddFile,
@@ -101,6 +124,7 @@ class DB( HydrusDB.HydrusDB ):
             'modify_account_expires' : self._ModifyAccountExpires,
             'modify_account_set_message' : self._ModifyAccountSetMessage,
             'modify_account_unban' : self._ModifyAccountUnban,
+            'nullify_history' : self._RepositoryNullifyHistory,
             'services' : self._ModifyServices,
             'session' : self._AddSession,
             'update' : self._RepositoryProcessClientToServerUpdate,
@@ -108,6 +132,7 @@ class DB( HydrusDB.HydrusDB ):
         }
         
         self._service_ids_to_account_type_ids = collections.defaultdict( set )
+        self._service_ids_to_null_account_ids = {}
         self._account_type_ids_to_account_types = {}
         self._service_ids_to_account_type_keys_to_account_type_ids = collections.defaultdict( dict )
         
@@ -120,9 +145,9 @@ class DB( HydrusDB.HydrusDB ):
         
         dump = account_type.DumpToString()
         
-        self._c.execute( 'INSERT INTO account_types ( service_id, dump ) VALUES ( ?, ? );', ( service_id, dump ) )
+        self._Execute( 'INSERT INTO account_types ( service_id, dump ) VALUES ( ?, ? );', ( service_id, dump ) )
         
-        account_type_id = self._c.lastrowid
+        account_type_id = self._GetLastRowId()
         
         return account_type_id
         
@@ -133,7 +158,7 @@ class DB( HydrusDB.HydrusDB ):
         
         master_hash_id = self._GetMasterHashId( hash )
         
-        result = self._c.execute( 'SELECT 1 FROM files_info WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM files_info WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -155,15 +180,23 @@ class DB( HydrusDB.HydrusDB ):
             if 'num_words' in file_dict: num_words = file_dict[ 'num_words' ]
             else: num_words = None
             
-            source_path = file_dict[ 'path' ]
+            self._Execute( 'INSERT OR IGNORE INTO files_info ( master_hash_id, size, mime, width, height, duration, num_frames, num_words ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ? );', ( master_hash_id, size, mime, width, height, duration, num_frames, num_words ) )
             
-            dest_path = ServerFiles.GetExpectedFilePath( hash )
+        
+        dest_path = ServerFiles.GetExpectedFilePath( hash )
+        
+        if not os.path.exists( dest_path ):
+            
+            source_path = file_dict[ 'path' ]
             
             HydrusPaths.MirrorFile( source_path, dest_path )
             
-            if 'thumbnail' in file_dict:
-                
-                thumbnail_dest_path = ServerFiles.GetExpectedThumbnailPath( hash )
+        
+        if 'thumbnail' in file_dict:
+            
+            thumbnail_dest_path = ServerFiles.GetExpectedThumbnailPath( hash )
+            
+            if not os.path.exists( thumbnail_dest_path ):
                 
                 thumbnail_bytes = file_dict[ 'thumbnail' ]
                 
@@ -172,8 +205,6 @@ class DB( HydrusDB.HydrusDB ):
                     f.write( thumbnail_bytes )
                     
                 
-            
-            self._c.execute( 'INSERT OR IGNORE INTO files_info ( master_hash_id, size, mime, width, height, duration, num_frames, num_words ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ? );', ( master_hash_id, size, mime, width, height, duration, num_frames, num_words ) )
             
         
         return master_hash_id
@@ -185,15 +216,37 @@ class DB( HydrusDB.HydrusDB ):
         
         dictionary_string = dictionary.DumpToString()
         
-        self._c.execute( 'INSERT INTO services ( service_key, service_type, name, port, dictionary_string ) VALUES ( ?, ?, ?, ?, ? );', ( sqlite3.Binary( service_key ), service_type, name, port, dictionary_string ) )
+        self._Execute( 'INSERT INTO services ( service_key, service_type, name, port, dictionary_string ) VALUES ( ?, ?, ?, ?, ? );', ( sqlite3.Binary( service_key ), service_type, name, port, dictionary_string ) )
         
-        service_id = self._c.lastrowid
+        service_id = self._GetLastRowId()
+        
+        #
+        
+        service_null_account_type = HydrusNetwork.AccountType.GenerateNullAccountType()
+        
+        service_null_account_type_id = self._AddAccountType( service_id, service_null_account_type )
+        
+        self._RefreshAccountInfoCache()
+        
+        expires = None
+        
+        [ registration_key ] = self._GenerateRegistrationKeys( service_id, 1, service_null_account_type_id, expires )
+        
+        null_access_key = self._GetAccessKey( service_key, registration_key )
+        
+        null_account = self._GetAccountKeyFromAccessKey( service_key, null_access_key )
+        
+        # the null access key disappears in this method, never to be seen again
+        
+        self._RefreshAccountInfoCache()
+        
+        #
         
         service_admin_account_type = HydrusNetwork.AccountType.GenerateAdminAccountType( service_type )
         
         service_admin_account_type_id = self._AddAccountType( service_id, service_admin_account_type )
         
-        self._RefreshAccountTypeCache()
+        self._RefreshAccountInfoCache()
         
         if service_type == HC.SERVER_ADMIN:
             
@@ -204,16 +257,16 @@ class DB( HydrusDB.HydrusDB ):
             force_registration_key = None
             
         
-        [ registration_key ] = self._GenerateRegistrationKeys( service_id, 1, service_admin_account_type_id, None, force_registration_key )
+        [ registration_key ] = self._GenerateRegistrationKeys( service_id, 1, service_admin_account_type_id, expires, force_registration_key )
         
-        access_key = self._GetAccessKey( service_key, registration_key )
+        admin_access_key = self._GetAccessKey( service_key, registration_key )
         
         if service_type in HC.REPOSITORIES:
             
             self._RepositoryCreate( service_id )
             
         
-        return access_key
+        return admin_access_key
         
     
     def _AddSession( self, session_key, service_key, account_key, expires ):
@@ -222,22 +275,22 @@ class DB( HydrusDB.HydrusDB ):
         
         account_id = self._GetAccountId( account_key )
         
-        self._c.execute( 'INSERT INTO sessions ( session_key, service_id, account_id, expires ) VALUES ( ?, ?, ?, ? );', ( sqlite3.Binary( session_key ), service_id, account_id, expires ) )
+        self._Execute( 'INSERT INTO sessions ( session_key, service_id, account_id, expires ) VALUES ( ?, ?, ?, ? );', ( sqlite3.Binary( session_key ), service_id, account_id, expires ) )
         
     
     def _Analyze( self, maintenance_mode = HC.MAINTENANCE_FORCED, stop_time = None ):
         
         stale_time_delta = 30 * 86400
         
-        existing_names_to_timestamps = dict( self._c.execute( 'SELECT name, timestamp FROM analyze_timestamps;' ).fetchall() )
+        existing_names_to_timestamps = dict( self._Execute( 'SELECT name, timestamp FROM analyze_timestamps;' ).fetchall() )
         
-        db_names = [ name for ( index, name, path ) in self._c.execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp', 'durable_temp' ) ]
+        db_names = [ name for ( index, name, path ) in self._Execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp', 'durable_temp' ) ]
         
         all_names = set()
         
         for db_name in db_names:
             
-            all_names.update( ( name for ( name, ) in self._c.execute( 'SELECT name FROM ' + db_name + '.sqlite_master WHERE type = ?;', ( 'table', ) ) ) )
+            all_names.update( ( name for ( name, ) in self._Execute( 'SELECT name FROM ' + db_name + '.sqlite_master WHERE type = ?;', ( 'table', ) ) ) )
             
         
         all_names.discard( 'sqlite_stat1' )
@@ -261,11 +314,11 @@ class DB( HydrusDB.HydrusDB ):
                     
                     started = HydrusData.GetNowPrecise()
                     
-                    self._c.execute( 'ANALYZE ' + name + ';' )
+                    self._Execute( 'ANALYZE ' + name + ';' )
                     
-                    self._c.execute( 'DELETE FROM analyze_timestamps WHERE name = ?;', ( name, ) )
+                    self._Execute( 'DELETE FROM analyze_timestamps WHERE name = ?;', ( name, ) )
                     
-                    self._c.execute( 'INSERT OR IGNORE INTO analyze_timestamps ( name, timestamp ) VALUES ( ?, ? );', ( name, HydrusData.GetNow() ) )
+                    self._Execute( 'INSERT OR IGNORE INTO analyze_timestamps ( name, timestamp ) VALUES ( ?, ? );', ( name, HydrusData.GetNow() ) )
                     
                     time_took = HydrusData.GetNowPrecise() - started
                     
@@ -280,7 +333,7 @@ class DB( HydrusDB.HydrusDB ):
                         
                     
                 
-                self._c.execute( 'ANALYZE sqlite_master;' ) # this reloads the current stats into the query planner
+                self._Execute( 'ANALYZE sqlite_master;' ) # this reloads the current stats into the query planner
                 
             finally:
                 
@@ -302,7 +355,7 @@ class DB( HydrusDB.HydrusDB ):
         
         try:
             
-            self._CloseDBCursor()
+            self._CloseDBConnection()
             
             backup_path = os.path.join( self._db_dir, 'server_backup' )
             
@@ -331,13 +384,34 @@ class DB( HydrusDB.HydrusDB ):
             HydrusData.Print( 'backing up: copying files' )
             HydrusPaths.MirrorTree( self._files_dir, os.path.join( backup_path, 'server_files' ) )
             
-            self._InitDBCursor()
+            self._InitDBConnection()
             
             HydrusData.Print( 'backing up: done!' )
             
         finally:
             
             HG.server_busy.release()
+            
+        
+    
+    def _ClearDeferredPhysicalDelete( self, file_hash = None, thumbnail_hash = None ):
+        
+        file_master_hash_id = None if file_hash is None else self._GetMasterHashId( file_hash )
+        thumbnail_master_hash_id = None if thumbnail_hash is None else self._GetMasterHashId( thumbnail_hash )
+        
+        self._ClearDeferredPhysicalDeleteIds( file_master_hash_id = file_master_hash_id, thumbnail_master_hash_id = thumbnail_master_hash_id )
+        
+    
+    def _ClearDeferredPhysicalDeleteIds( self, file_master_hash_id = None, thumbnail_master_hash_id = None ):
+        
+        if file_master_hash_id is not None:
+            
+            self._Execute( 'DELETE FROM deferred_physical_file_deletes WHERE master_hash_id = ?;', ( file_master_hash_id, ) )
+            
+        
+        if thumbnail_master_hash_id is not None:
+            
+            self._Execute( 'DELETE FROM deferred_physical_thumbnail_deletes WHERE master_hash_id = ?;', ( thumbnail_master_hash_id, ) )
             
         
     
@@ -352,34 +426,37 @@ class DB( HydrusDB.HydrusDB ):
             HydrusPaths.MakeSureDirectoryExists( new_dir )
             
         
-        self._c.execute( 'CREATE TABLE services ( service_id INTEGER PRIMARY KEY, service_key BLOB_BYTES, service_type INTEGER, name TEXT, port INTEGER, dictionary_string TEXT );' )
+        self._Execute( 'CREATE TABLE services ( service_id INTEGER PRIMARY KEY, service_key BLOB_BYTES, service_type INTEGER, name TEXT, port INTEGER, dictionary_string TEXT );' )
         
-        self._c.execute( 'CREATE TABLE accounts ( account_id INTEGER PRIMARY KEY, service_id INTEGER, account_key BLOB_BYTES, hashed_access_key BLOB_BYTES, account_type_id INTEGER, created INTEGER, expires INTEGER, dictionary_string TEXT );' )
-        self._c.execute( 'CREATE UNIQUE INDEX accounts_account_key_index ON accounts ( account_key );' )
-        self._c.execute( 'CREATE UNIQUE INDEX accounts_hashed_access_key_index ON accounts ( hashed_access_key );' )
+        self._Execute( 'CREATE TABLE accounts ( account_id INTEGER PRIMARY KEY, service_id INTEGER, account_key BLOB_BYTES, hashed_access_key BLOB_BYTES, account_type_id INTEGER, created INTEGER, expires INTEGER, dictionary_string TEXT );' )
+        self._Execute( 'CREATE UNIQUE INDEX accounts_account_key_index ON accounts ( account_key );' )
+        self._Execute( 'CREATE UNIQUE INDEX accounts_hashed_access_key_index ON accounts ( hashed_access_key );' )
         
-        self._c.execute( 'CREATE TABLE account_scores ( service_id INTEGER, account_id INTEGER, score_type INTEGER, score INTEGER, PRIMARY KEY ( service_id, account_id, score_type ) );' )
+        self._Execute( 'CREATE TABLE account_scores ( service_id INTEGER, account_id INTEGER, score_type INTEGER, score INTEGER, PRIMARY KEY ( service_id, account_id, score_type ) );' )
         
-        self._c.execute( 'CREATE TABLE account_types ( account_type_id INTEGER PRIMARY KEY, service_id INTEGER, dump TEXT );' )
+        self._Execute( 'CREATE TABLE account_types ( account_type_id INTEGER PRIMARY KEY, service_id INTEGER, dump TEXT );' )
         
-        self._c.execute( 'CREATE TABLE analyze_timestamps ( name TEXT, timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE analyze_timestamps ( name TEXT, timestamp INTEGER );' )
         
-        self._c.execute( 'CREATE TABLE files_info ( master_hash_id INTEGER PRIMARY KEY, size INTEGER, mime INTEGER, width INTEGER, height INTEGER, duration INTEGER, num_frames INTEGER, num_words INTEGER );' )
+        self._Execute( 'CREATE TABLE deferred_physical_file_deletes ( master_hash_id INTEGER PRIMARY KEY );' )
+        self._Execute( 'CREATE TABLE deferred_physical_thumbnail_deletes ( master_hash_id INTEGER PRIMARY KEY );' )
         
-        self._c.execute( 'CREATE TABLE reasons ( reason_id INTEGER PRIMARY KEY, reason TEXT );' )
-        self._c.execute( 'CREATE UNIQUE INDEX reasons_reason_index ON reasons ( reason );' )
+        self._Execute( 'CREATE TABLE files_info ( master_hash_id INTEGER PRIMARY KEY, size INTEGER, mime INTEGER, width INTEGER, height INTEGER, duration INTEGER, num_frames INTEGER, num_words INTEGER );' )
         
-        self._c.execute( 'CREATE TABLE registration_keys ( registration_key BLOB_BYTES PRIMARY KEY, service_id INTEGER, account_type_id INTEGER, account_key BLOB_BYTES, access_key BLOB_BYTES UNIQUE, expires INTEGER );' )
+        self._Execute( 'CREATE TABLE reasons ( reason_id INTEGER PRIMARY KEY, reason TEXT );' )
+        self._Execute( 'CREATE UNIQUE INDEX reasons_reason_index ON reasons ( reason );' )
         
-        self._c.execute( 'CREATE TABLE sessions ( session_key BLOB_BYTES, service_id INTEGER, account_id INTEGER, expires INTEGER );' )
+        self._Execute( 'CREATE TABLE registration_keys ( registration_key BLOB_BYTES PRIMARY KEY, service_id INTEGER, account_type_id INTEGER, account_key BLOB_BYTES, access_key BLOB_BYTES UNIQUE, expires INTEGER );' )
         
-        self._c.execute( 'CREATE TABLE version ( version INTEGER, year INTEGER, month INTEGER );' )
+        self._Execute( 'CREATE TABLE sessions ( session_key BLOB_BYTES, service_id INTEGER, account_id INTEGER, expires INTEGER );' )
+        
+        self._Execute( 'CREATE TABLE version ( version INTEGER, year INTEGER, month INTEGER );' )
         
         # master
         
-        self._c.execute( 'CREATE TABLE IF NOT EXISTS external_master.hashes ( master_hash_id INTEGER PRIMARY KEY, hash BLOB_BYTES UNIQUE );' )
+        self._Execute( 'CREATE TABLE IF NOT EXISTS external_master.hashes ( master_hash_id INTEGER PRIMARY KEY, hash BLOB_BYTES UNIQUE );' )
         
-        self._c.execute( 'CREATE TABLE IF NOT EXISTS external_master.tags ( master_tag_id INTEGER PRIMARY KEY, tag TEXT UNIQUE );' )
+        self._Execute( 'CREATE TABLE IF NOT EXISTS external_master.tags ( master_tag_id INTEGER PRIMARY KEY, tag TEXT UNIQUE );' )
         
         # inserts
         
@@ -387,57 +464,53 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_year, current_month ) = ( current_time_struct.tm_year, current_time_struct.tm_mon )
         
-        self._c.execute( 'INSERT INTO version ( version, year, month ) VALUES ( ?, ?, ? );', ( HC.SOFTWARE_VERSION, current_year, current_month ) )
+        self._Execute( 'INSERT INTO version ( version, year, month ) VALUES ( ?, ?, ? );', ( HC.SOFTWARE_VERSION, current_year, current_month ) )
         
         # set up server admin
         
         admin_service = HydrusNetwork.GenerateService( HC.SERVER_ADMIN_KEY, HC.SERVER_ADMIN, 'server admin', HC.DEFAULT_SERVER_ADMIN_PORT )
         
-        self._AddService( admin_service ) # this sets up the admin account and a registration key by itself
+        self._AddService( admin_service ) # this sets up the admin account and a registration token by itself
         
     
-    def _DeleteOrphans( self ):
+    def _DeferFilesDeleteIfNowOrphan( self, master_hash_ids, definitely_no_thumbnails = False, ignore_service_id = None ):
         
-        # make a table for files
-        # make a table for thumbnails
+        orphan_master_hash_ids = self._FilterOrphanMasterHashIds( master_hash_ids, ignore_service_id = ignore_service_id )
         
-        # populate both tables with what you have in your hdd
-        # if the filename isn't even a hash, schedule it for immediate deletion instead
-        
-        # delete from the tables based on what is in current and pending repo file tables
-        # delete from the file tables based on what is in update tables
-        
-        # delete whatever is left
-        
-        # might want to split this up into 256 jobs--depends on how fast its bits run
-        # might also want to set server_busy, if it isn't already
-        
-        # also think about how often it runs--maybe only once a month is appropriate
-        
-        return # return to this to fix it for new system
+        if len( orphan_master_hash_ids ) > 0:
+            
+            self._ExecuteMany( 'INSERT OR IGNORE INTO deferred_physical_file_deletes ( master_hash_id ) VALUES ( ? );', ( ( master_hash_id, ) for master_hash_id in orphan_master_hash_ids ) )
+            
+            if not definitely_no_thumbnails:
+                
+                self._ExecuteMany( 'INSERT OR IGNORE INTO deferred_physical_thumbnail_deletes ( master_hash_id ) VALUES ( ? );', ( ( master_hash_id, ) for master_hash_id in orphan_master_hash_ids ) )
+                
+            
+            self._cursor_transaction_wrapper.pub_after_job( 'notify_new_physical_file_deletes' )
+            
         
     
     def _DeleteRepositoryPetitions( self, service_id, subject_account_ids ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + pending_files_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + pending_files_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + pending_mappings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + pending_mappings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE account_id = ?;', ( ( subject_account_id, ) for subject_account_id in subject_account_ids ) )
         
     
     def _DeleteService( self, service_key ):
@@ -447,18 +520,73 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        self._c.execute( 'DELETE FROM services WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM services WHERE service_id = ?;', ( service_id, ) )
         
-        self._c.execute( 'DELETE FROM accounts WHERE service_id = ?;', ( service_id, ) )
-        self._c.execute( 'DELETE FROM account_types WHERE service_id = ?;', ( service_id, ) )
-        self._c.execute( 'DELETE FROM account_scores WHERE service_id = ?;', ( service_id, ) )
-        self._c.execute( 'DELETE FROM registration_keys WHERE service_id = ?;', ( service_id, ) )
-        self._c.execute( 'DELETE FROM sessions WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM accounts WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM account_types WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM account_scores WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM registration_keys WHERE service_id = ?;', ( service_id, ) )
+        self._Execute( 'DELETE FROM sessions WHERE service_id = ?;', ( service_id, ) )
         
         if service_type in HC.REPOSITORIES:
             
             self._RepositoryDrop( service_id )
             
+        
+    
+    def _FilterOrphanMasterHashIds( self, master_hash_ids, ignore_service_id = None ):
+        
+        orphan_master_hash_ids = set( master_hash_ids )
+        
+        with self._MakeTemporaryIntegerTable( master_hash_ids, 'master_hash_id' ) as temp_hash_ids_table_name:
+            
+            queries = []
+            
+            for service_id in self._GetServiceIds( ( HC.FILE_REPOSITORY, ) ):
+                
+                if ignore_service_id is not None and service_id == ignore_service_id:
+                    
+                    continue
+                    
+                
+                ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
+                ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
+                
+                # temp master files to service to current
+                queries.append( 'SELECT master_hash_id FROM {} CROSS JOIN {} USING ( master_hash_id ) CROSS JOIN {} USING ( service_hash_id );'.format( temp_hash_ids_table_name, hash_id_map_table_name, current_files_table_name ) )
+                
+            
+            for service_id in self._GetServiceIds( HC.REPOSITORIES ):
+                
+                if ignore_service_id is not None and service_id == ignore_service_id:
+                    
+                    continue
+                    
+                
+                update_table_name = GenerateRepositoryUpdateTableName( service_id )
+                
+                queries.append( 'SELECT master_hash_id FROM {} CROSS JOIN {} USING ( master_hash_id );'.format( temp_hash_ids_table_name, update_table_name ) )
+                
+            
+            for query in queries:
+                
+                useful_master_hash_ids = self._STS( self._Execute( query ) )
+                
+                if len( useful_master_hash_ids ) > 0:
+                    
+                    orphan_master_hash_ids.difference_update( useful_master_hash_ids )
+                    
+                    if len( orphan_master_hash_ids ) == 0:
+                        
+                        return orphan_master_hash_ids
+                        
+                    
+                    self._ExecuteMany( 'DELETE FROM {} WHERE master_hash_id = ?;'.format( temp_hash_ids_table_name ), ( ( master_hash_id, ) for master_hash_id in useful_master_hash_ids ) )
+                    
+                
+            
+        
+        return orphan_master_hash_ids
         
     
     def _GenerateRegistrationKeysFromAccount( self, service_key, account: HydrusNetwork.Account, num, account_type_key, expires ):
@@ -472,6 +600,20 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GenerateRegistrationKeys( self, service_id, num, account_type_id, expires, force_registration_key = None ):
         
+        account_type = self._GetAccountType( service_id, account_type_id )
+        
+        if account_type.IsNullAccount():
+            
+            result = self._Execute( 'SELECT 1 FROM accounts WHERE account_type_id = ?;', ( account_type_id, ) ).fetchone()
+            
+            if result is not None:
+                
+                # null account already exists
+                
+                raise HydrusExceptions.BadRequestException( 'You cannot create new null accounts!' )
+                
+            
+        
         if force_registration_key is None:
             
             keys = [ ( os.urandom( HC.HYDRUS_KEY_LENGTH ), os.urandom( HC.HYDRUS_KEY_LENGTH ), os.urandom( HC.HYDRUS_KEY_LENGTH ) ) for i in range( num ) ]
@@ -481,7 +623,7 @@ class DB( HydrusDB.HydrusDB ):
             keys = [ ( force_registration_key, os.urandom( HC.HYDRUS_KEY_LENGTH ), os.urandom( HC.HYDRUS_KEY_LENGTH ) ) for i in range( num ) ]
             
         
-        self._c.executemany( 'INSERT INTO registration_keys ( registration_key, service_id, account_type_id, account_key, access_key, expires ) VALUES ( ?, ?, ?, ?, ?, ? );', [ ( sqlite3.Binary( hashlib.sha256( registration_key ).digest() ), service_id, account_type_id, sqlite3.Binary( account_key ), sqlite3.Binary( access_key ), expires ) for ( registration_key, account_key, access_key ) in keys ] )
+        self._ExecuteMany( 'INSERT INTO registration_keys ( registration_key, service_id, account_type_id, account_key, access_key, expires ) VALUES ( ?, ?, ?, ?, ?, ? );', [ ( sqlite3.Binary( hashlib.sha256( registration_key ).digest() ), service_id, account_type_id, sqlite3.Binary( account_key ), sqlite3.Binary( access_key ), expires ) for ( registration_key, account_key, access_key ) in keys ] )
         
         return [ registration_key for ( registration_key, account_key, access_key ) in keys ]
         
@@ -490,28 +632,28 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        # we generate a new access_key every time this is requested so that no one with access to the registration key can peek at the access_key before the legit user fetches it for real
+        # we generate a new access_key every time this is requested so that no one with access to the registration token can peek at the access_key before the legit user fetches it for real
         # the reg_key is deleted when the last-requested access_key is used to create a session, which calls getaccountkeyfromaccesskey
         
         registration_key_sha256 = hashlib.sha256( registration_key ).digest()
         
-        result = self._c.execute( 'SELECT 1 FROM registration_keys WHERE service_id = ? AND registration_key = ?;', ( service_id, sqlite3.Binary( registration_key_sha256 ) ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM registration_keys WHERE service_id = ? AND registration_key = ?;', ( service_id, sqlite3.Binary( registration_key_sha256 ) ) ).fetchone()
         
         if result is None:
             
-            raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that registration key in its database.' )
+            raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that registration token in its database.' )
             
         
         new_access_key = os.urandom( HC.HYDRUS_KEY_LENGTH )
         
-        self._c.execute( 'UPDATE registration_keys SET access_key = ? WHERE service_id = ? AND registration_key = ?;', ( sqlite3.Binary( new_access_key ), service_id, sqlite3.Binary( registration_key_sha256 ) ) )
+        self._Execute( 'UPDATE registration_keys SET access_key = ? WHERE service_id = ? AND registration_key = ?;', ( sqlite3.Binary( new_access_key ), service_id, sqlite3.Binary( registration_key_sha256 ) ) )
         
         return new_access_key
         
     
     def _GetAccount( self, service_id, account_id ) -> HydrusNetwork.Account:
         
-        ( account_key, account_type_id, created, expires, dictionary_string ) = self._c.execute( 'SELECT account_key, account_type_id, created, expires, dictionary_string FROM accounts WHERE service_id = ? AND account_id = ?;', ( service_id, account_id ) ).fetchone()
+        ( account_key, account_type_id, created, expires, dictionary_string ) = self._Execute( 'SELECT account_key, account_type_id, created, expires, dictionary_string FROM accounts WHERE service_id = ? AND account_id = ?;', ( service_id, account_id ) ).fetchone()
         
         account_type = self._GetAccountType( service_id, account_type_id )
         
@@ -553,11 +695,11 @@ class DB( HydrusDB.HydrusDB ):
             
             ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
             
-            result = self._c.execute( 'SELECT account_id FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
+            result = self._Execute( 'SELECT account_id FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
             
             if result is None:
                 
-                result = self._c.execute( 'SELECT account_id FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
+                result = self._Execute( 'SELECT account_id FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
                 
             
             if result is None:
@@ -604,11 +746,11 @@ class DB( HydrusDB.HydrusDB ):
             
             ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
             
-            result = self._c.execute( 'SELECT account_id FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( service_tag_id, service_hash_id ) ).fetchone()
+            result = self._Execute( 'SELECT account_id FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( service_tag_id, service_hash_id ) ).fetchone()
             
             if result is None:
                 
-                result = self._c.execute( 'SELECT account_id FROM ' + deleted_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( service_tag_id, service_hash_id ) ).fetchone()
+                result = self._Execute( 'SELECT account_id FROM ' + deleted_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( service_tag_id, service_hash_id ) ).fetchone()
                 
             
             if result is None:
@@ -641,7 +783,7 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        result = self._c.execute( 'SELECT account_key FROM accounts WHERE service_id = ? AND hashed_access_key = ?;', ( service_id, sqlite3.Binary( hashlib.sha256( access_key ).digest() ), ) ).fetchone()
+        result = self._Execute( 'SELECT account_key FROM accounts WHERE service_id = ? AND hashed_access_key = ?;', ( service_id, sqlite3.Binary( hashlib.sha256( access_key ).digest() ), ) ).fetchone()
         
         if result is None:
             
@@ -651,14 +793,14 @@ class DB( HydrusDB.HydrusDB ):
             
             try:
                 
-                ( account_type_id, account_key, expires ) = self._c.execute( 'SELECT account_type_id, account_key, expires FROM registration_keys WHERE access_key = ?;', ( sqlite3.Binary( access_key ), ) ).fetchone()
+                ( account_type_id, account_key, expires ) = self._Execute( 'SELECT account_type_id, account_key, expires FROM registration_keys WHERE access_key = ?;', ( sqlite3.Binary( access_key ), ) ).fetchone()
                 
             except:
                 
                 raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that account in its database.' )
                 
             
-            self._c.execute( 'DELETE FROM registration_keys WHERE access_key = ?;', ( sqlite3.Binary( access_key ), ) )
+            self._Execute( 'DELETE FROM registration_keys WHERE access_key = ?;', ( sqlite3.Binary( access_key ), ) )
             
             #
             
@@ -674,7 +816,7 @@ class DB( HydrusDB.HydrusDB ):
             
             dictionary_string = dictionary.DumpToString()
             
-            self._c.execute( 'INSERT INTO accounts ( service_id, account_key, hashed_access_key, account_type_id, created, expires, dictionary_string ) VALUES ( ?, ?, ?, ?, ?, ?, ? );', ( service_id, sqlite3.Binary( account_key ), sqlite3.Binary( hashed_access_key ), account_type_id, created, expires, dictionary_string ) )
+            self._Execute( 'INSERT INTO accounts ( service_id, account_key, hashed_access_key, account_type_id, created, expires, dictionary_string ) VALUES ( ?, ?, ?, ?, ?, ?, ? );', ( service_id, sqlite3.Binary( account_key ), sqlite3.Binary( hashed_access_key ), account_type_id, created, expires, dictionary_string ) )
             
         else:
             
@@ -686,7 +828,7 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetAccountKeyFromAccountId( self, account_id ):
         
-        try: ( account_key, ) = self._c.execute( 'SELECT account_key FROM accounts WHERE account_id = ?;', ( account_id, ) ).fetchone()
+        try: ( account_key, ) = self._Execute( 'SELECT account_key FROM accounts WHERE account_id = ?;', ( account_id, ) ).fetchone()
         except: raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that account_id in its database.' )
         
         return account_key
@@ -694,11 +836,11 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetAccountId( self, account_key ):
         
-        result = self._c.execute( 'SELECT account_id FROM accounts WHERE account_key = ?;', ( sqlite3.Binary( account_key ), ) ).fetchone()
+        result = self._Execute( 'SELECT account_id FROM accounts WHERE account_key = ?;', ( sqlite3.Binary( account_key ), ) ).fetchone()
         
         if result is None:
             
-            raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that account key in its database.' )
+            raise HydrusExceptions.InsufficientCredentialsException( 'The service could not find that account id in its database.' )
             
         
         ( account_id, ) = result
@@ -768,7 +910,7 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        account_ids = self._STL( self._c.execute( 'SELECT account_id FROM accounts WHERE service_id = ?;', ( service_id, ) ) )
+        account_ids = self._STL( self._Execute( 'SELECT account_id FROM accounts WHERE service_id = ?;', ( service_id, ) ) )
         
         accounts = [ self._GetAccount( service_id, account_id ) for account_id in account_ids ]
         
@@ -809,14 +951,37 @@ class DB( HydrusDB.HydrusDB ):
         
         account_type.ReportAutoCreateAccount()
         
-        self._c.execute( 'UPDATE account_types SET dump = ? WHERE service_id = ? AND account_type_id = ?;', ( account_type.DumpToString(), service_id, account_type_id ) )
+        self._Execute( 'UPDATE account_types SET dump = ? WHERE service_id = ? AND account_type_id = ?;', ( account_type.DumpToString(), service_id, account_type_id ) )
         
         return list( self._GenerateRegistrationKeys( service_id, num, account_type_id, expires ) )[0]
         
     
+    def _GetDeferredPhysicalDelete( self ):
+        
+        file_result = self._Execute( 'SELECT master_hash_id FROM deferred_physical_file_deletes LIMIT 1;' ).fetchone()
+        
+        if file_result is not None:
+            
+            ( master_hash_id, ) = file_result
+            
+            file_result = self._GetHash( master_hash_id )
+            
+        
+        thumbnail_result = self._Execute( 'SELECT master_hash_id FROM deferred_physical_thumbnail_deletes LIMIT 1;' ).fetchone()
+        
+        if thumbnail_result is not None:
+            
+            ( master_hash_id, ) = thumbnail_result
+            
+            thumbnail_result = self._GetHash( master_hash_id )
+            
+        
+        return ( file_result, thumbnail_result )
+        
+    
     def _GetHash( self, master_hash_id ):
         
-        result = self._c.execute( 'SELECT hash FROM hashes WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT hash FROM hashes WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -830,20 +995,21 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetHashes( self, master_hash_ids ):
         
-        select_statement = 'SELECT hash FROM hashes WHERE master_hash_id = ?;'
-        
-        return [ hash for ( hash, ) in self._ExecuteManySelectSingleParam( select_statement, master_hash_ids ) ]
+        with self._MakeTemporaryIntegerTable( master_hash_ids, 'master_hash_id' ) as temp_hash_ids_table_name:
+            
+            return self._STL( self._Execute( 'SELECT hash FROM {} CROSS JOIN hashes USING ( master_hash_id );'.format( temp_hash_ids_table_name ) ) )
+            
         
     
     def _GetMasterHashId( self, hash ):
         
-        result = self._c.execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
+        result = self._Execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
         
         if result is None:
             
-            self._c.execute( 'INSERT INTO hashes ( hash ) VALUES ( ? );', ( sqlite3.Binary( hash ), ) )
+            self._Execute( 'INSERT INTO hashes ( hash ) VALUES ( ? );', ( sqlite3.Binary( hash ), ) )
             
-            master_hash_id = self._c.lastrowid
+            master_hash_id = self._GetLastRowId()
             
             return master_hash_id
             
@@ -867,7 +1033,7 @@ class DB( HydrusDB.HydrusDB ):
                 continue
                 
             
-            result = self._c.execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
+            result = self._Execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
             
             if result is None:
                 
@@ -883,11 +1049,11 @@ class DB( HydrusDB.HydrusDB ):
         
         if len( hashes_not_in_db ) > 0:
             
-            self._c.executemany( 'INSERT INTO hashes ( hash ) VALUES ( ? );', ( ( sqlite3.Binary( hash ), ) for hash in hashes_not_in_db ) )
+            self._ExecuteMany( 'INSERT INTO hashes ( hash ) VALUES ( ? );', ( ( sqlite3.Binary( hash ), ) for hash in hashes_not_in_db ) )
             
             for hash in hashes_not_in_db:
                 
-                ( master_hash_id, ) = self._c.execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
+                ( master_hash_id, ) = self._Execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
                 
                 master_hash_ids.add( master_hash_id )
                 
@@ -902,13 +1068,13 @@ class DB( HydrusDB.HydrusDB ):
         
         HydrusTags.CheckTagNotEmpty( tag )
         
-        result = self._c.execute( 'SELECT master_tag_id FROM tags WHERE tag = ?;', ( tag, ) ).fetchone()
+        result = self._Execute( 'SELECT master_tag_id FROM tags WHERE tag = ?;', ( tag, ) ).fetchone()
         
         if result is None:
             
-            self._c.execute( 'INSERT INTO tags ( tag ) VALUES ( ? );', ( tag, ) )
+            self._Execute( 'INSERT INTO tags ( tag ) VALUES ( ? );', ( tag, ) )
             
-            master_tag_id = self._c.lastrowid
+            master_tag_id = self._GetLastRowId()
             
             return master_tag_id
             
@@ -924,14 +1090,14 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        ( options, ) = self._c.execute( 'SELECT options FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
+        ( options, ) = self._Execute( 'SELECT options FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
         
         return options
         
     
     def _GetReason( self, reason_id ):
         
-        result = self._c.execute( 'SELECT reason FROM reasons WHERE reason_id = ?;', ( reason_id, ) ).fetchone()
+        result = self._Execute( 'SELECT reason FROM reasons WHERE reason_id = ?;', ( reason_id, ) ).fetchone()
         
         if result is None: raise Exception( 'Reason error in database' )
         
@@ -942,13 +1108,13 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetReasonId( self, reason ):
         
-        result = self._c.execute( 'SELECT reason_id FROM reasons WHERE reason = ?;', ( reason, ) ).fetchone()
+        result = self._Execute( 'SELECT reason_id FROM reasons WHERE reason = ?;', ( reason, ) ).fetchone()
         
         if result is None:
             
-            self._c.execute( 'INSERT INTO reasons ( reason ) VALUES ( ? );', ( reason, ) )
+            self._Execute( 'INSERT INTO reasons ( reason ) VALUES ( ? );', ( reason, ) )
             
-            reason_id = self._c.lastrowid
+            reason_id = self._GetLastRowId()
             
             return reason_id
             
@@ -962,7 +1128,7 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetServiceId( self, service_key ):
         
-        result = self._c.execute( 'SELECT service_id FROM services WHERE service_key = ?;', ( sqlite3.Binary( service_key ), ) ).fetchone()
+        result = self._Execute( 'SELECT service_id FROM services WHERE service_key = ?;', ( sqlite3.Binary( service_key ), ) ).fetchone()
         
         if result is None:
             
@@ -976,24 +1142,24 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetServiceIds( self, limited_types = HC.ALL_SERVICES ):
         
-        return [ service_id for ( service_id, ) in self._c.execute( 'SELECT service_id FROM services WHERE service_type IN ' + HydrusData.SplayListForDB( limited_types ) + ';' ) ]
+        return [ service_id for ( service_id, ) in self._Execute( 'SELECT service_id FROM services WHERE service_type IN ' + HydrusData.SplayListForDB( limited_types ) + ';' ) ]
         
     
     def _GetServiceKey( self, service_id ):
         
-        ( service_key, ) = self._c.execute( 'SELECT service_key FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
+        ( service_key, ) = self._Execute( 'SELECT service_key FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
         
         return service_key
         
     
     def _GetServiceKeys( self, limited_types = HC.ALL_SERVICES ):
         
-        return [ service_key for ( service_key, ) in self._c.execute( 'SELECT service_key FROM services WHERE service_type IN '+ HydrusData.SplayListForDB( limited_types ) + ';' ) ]
+        return [ service_key for ( service_key, ) in self._Execute( 'SELECT service_key FROM services WHERE service_type IN '+ HydrusData.SplayListForDB( limited_types ) + ';' ) ]
         
     
     def _GetServiceType( self, service_id ):
         
-        result = self._c.execute( 'SELECT service_type FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
+        result = self._Execute( 'SELECT service_type FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
         
         if result is None: raise Exception( 'Service id error in database' )
         
@@ -1006,7 +1172,7 @@ class DB( HydrusDB.HydrusDB ):
         
         services = []
         
-        service_info = self._c.execute( 'SELECT service_key, service_type, name, port, dictionary_string FROM services WHERE service_type IN ' + HydrusData.SplayListForDB( limited_types ) + ';' ).fetchall()
+        service_info = self._Execute( 'SELECT service_key, service_type, name, port, dictionary_string FROM services WHERE service_type IN ' + HydrusData.SplayListForDB( limited_types ) + ';' ).fetchall()
         
         for ( service_key, service_type, name, port, dictionary_string ) in service_info:
             
@@ -1029,19 +1195,19 @@ class DB( HydrusDB.HydrusDB ):
         
         now = HydrusData.GetNow()
         
-        self._c.execute( 'DELETE FROM sessions WHERE ? > expires;', ( now, ) )
+        self._Execute( 'DELETE FROM sessions WHERE ? > expires;', ( now, ) )
         
         sessions = []
         
         if service_key is None:
             
-            results = self._c.execute( 'SELECT session_key, service_id, account_id, expires FROM sessions;' ).fetchall()
+            results = self._Execute( 'SELECT session_key, service_id, account_id, expires FROM sessions;' ).fetchall()
             
         else:
             
             service_id = self._GetServiceId( service_key)
             
-            results = self._c.execute( 'SELECT session_key, service_id, account_id, expires FROM sessions WHERE service_id = ?;', ( service_id, ) ).fetchall()
+            results = self._Execute( 'SELECT session_key, service_id, account_id, expires FROM sessions WHERE service_id = ?;', ( service_id, ) ).fetchall()
             
         
         service_ids_to_service_keys = {}
@@ -1070,7 +1236,7 @@ class DB( HydrusDB.HydrusDB ):
             
             if account_id not in account_ids_to_hashed_access_keys:
                 
-                ( hashed_access_key, ) = self._c.execute( 'SELECT hashed_access_key FROM accounts WHERE account_id = ?;', ( account_id, ) ).fetchone()
+                ( hashed_access_key, ) = self._Execute( 'SELECT hashed_access_key FROM accounts WHERE account_id = ?;', ( account_id, ) ).fetchone()
                 
                 account_ids_to_hashed_access_keys[ account_id ] = hashed_access_key
                 
@@ -1085,7 +1251,7 @@ class DB( HydrusDB.HydrusDB ):
     
     def _GetTag( self, master_tag_id ):
         
-        result = self._c.execute( 'SELECT tag FROM tags WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
+        result = self._Execute( 'SELECT tag FROM tags WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
         
         if result is None:
             
@@ -1097,18 +1263,55 @@ class DB( HydrusDB.HydrusDB ):
         return tag
         
     
+    def _HashExists( self, hash ):
+        
+        result = self._Execute( 'SELECT 1 FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
+        
+        if result is None:
+            
+            return False
+            
+        else:
+            
+            return True
+            
+        
+    
     def _InitCaches( self ):
         
         self._over_monthly_data = False
         self._services_over_monthly_data = set()
         
-        self._RefreshAccountTypeCache()
+        self._RefreshAccountInfoCache()
         
     
     def _InitExternalDatabases( self ):
         
         self._db_filenames[ 'external_mappings' ] = 'server.mappings.db'
         self._db_filenames[ 'external_master' ] = 'server.master.db'
+        
+    
+    def _IsAnOrphan( self, possible_hash ):
+        
+        if self._HashExists( possible_hash ):
+            
+            hash = possible_hash
+            
+            master_hash_id = self._GetMasterHashId( hash )
+            
+            orphan_master_hash_ids = self._FilterOrphanMasterHashIds( ( master_hash_id, ) )
+            
+            return len( orphan_master_hash_ids ) == 1
+            
+        else:
+            
+            return True
+            
+        
+    
+    def _IsNullAccount( self, service_id, account_id ):
+        
+        return self._service_ids_to_null_account_ids[ service_id ] == account_id
         
     
     def _ManageDBError( self, job, e ):
@@ -1129,7 +1332,7 @@ class DB( HydrusDB.HydrusDB ):
     
     def _MasterHashExists( self, hash ):
         
-        result = self._c.execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
+        result = self._Execute( 'SELECT master_hash_id FROM hashes WHERE hash = ?;', ( sqlite3.Binary( hash ), ) ).fetchone()
         
         if result is None:
             
@@ -1143,7 +1346,7 @@ class DB( HydrusDB.HydrusDB ):
     
     def _MasterTagExists( self, tag ):
         
-        result = self._c.execute( 'SELECT master_tag_id FROM tags WHERE tag = ?;', ( tag, ) ).fetchone()
+        result = self._Execute( 'SELECT master_tag_id FROM tags WHERE tag = ?;', ( tag, ) ).fetchone()
         
         if result is None:
             
@@ -1161,15 +1364,26 @@ class DB( HydrusDB.HydrusDB ):
         
         subject_account_id = self._GetAccountId( subject_account_key )
         
+        if self._IsNullAccount( service_id, subject_account_id ):
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot reassign the null account!' )
+            
+        
         subject_account = self._GetAccount( service_id, subject_account_id )
         
         current_account_type_id = self._GetAccountTypeId( service_id, subject_account.GetAccountType().GetAccountTypeKey() )
         new_account_type_id = self._GetAccountTypeId( service_id, new_account_type_key )
         
         current_account_type = self._GetAccountType( service_id, current_account_type_id )
+        
         new_account_type = self._GetAccountType( service_id, new_account_type_id )
         
-        self._c.execute( 'UPDATE accounts SET account_type_id = ? WHERE account_id = ?;', ( new_account_type_id, subject_account_id ) )
+        if new_account_type.IsNullAccount():
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot reassign anyone to the null account!' )
+            
+        
+        self._Execute( 'UPDATE accounts SET account_type_id = ? WHERE account_id = ?;', ( new_account_type_id, subject_account_id ) )
         
         HG.server_controller.pub( 'update_session_accounts', service_key, ( subject_account_key, ) )
         
@@ -1188,6 +1402,11 @@ class DB( HydrusDB.HydrusDB ):
         service_id = self._GetServiceId( service_key )
         
         subject_account_id = self._GetAccountId( subject_account_key )
+        
+        if self._IsNullAccount( service_id, subject_account_id ):
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot ban the null account!' )
+            
         
         subject_account = self._GetAccount( service_id, subject_account_id )
         
@@ -1222,9 +1441,14 @@ class DB( HydrusDB.HydrusDB ):
         
         subject_account_id = self._GetAccountId( subject_account_key )
         
-        ( current_expires, ) = self._c.execute( 'SELECT expires FROM accounts WHERE account_id = ?;', ( subject_account_id, ) ).fetchone()
+        if self._IsNullAccount( service_id, subject_account_id ):
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot modify the null account!' )
+            
         
-        self._c.execute( 'UPDATE accounts SET expires = ? WHERE account_id = ?;', ( new_expires, subject_account_id ) )
+        ( current_expires, ) = self._Execute( 'SELECT expires FROM accounts WHERE account_id = ?;', ( subject_account_id, ) ).fetchone()
+        
+        self._Execute( 'UPDATE accounts SET expires = ? WHERE account_id = ?;', ( new_expires, subject_account_id ) )
         
         HG.server_controller.pub( 'update_session_accounts', service_key, ( subject_account_key, ) )
         
@@ -1242,9 +1466,14 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        account_id = self._GetAccountId( subject_account_key )
+        subject_account_id = self._GetAccountId( subject_account_key )
         
-        subject_account = self._GetAccount( service_id, account_id )
+        if self._IsNullAccount( service_id, subject_account_id ):
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot tell the null account anything!' )
+            
+        
+        subject_account = self._GetAccount( service_id, subject_account_id )
         
         now = HydrusData.GetNow()
         
@@ -1275,9 +1504,14 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        account_id = self._GetAccountId( subject_account_key )
+        subject_account_id = self._GetAccountId( subject_account_key )
         
-        subject_account = self._GetAccount( service_id, account_id )
+        if self._IsNullAccount( service_id, subject_account_id ):
+            
+            raise HydrusExceptions.BadRequestException( 'You cannot unban the null account!' )
+            
+        
+        subject_account = self._GetAccount( service_id, subject_account_id )
         
         subject_account.Unban()
         
@@ -1295,9 +1529,15 @@ class DB( HydrusDB.HydrusDB ):
     
     def _ModifyAccountTypes( self, service_key, admin_account, account_types, deletee_account_type_keys_to_replacement_account_type_keys ):
         
-        service_id = self._GetServiceId( service_key )
-        
         current_account_types = self._GetAccountTypes( service_key, admin_account )
+        
+        account_types = [ at for at in account_types if not at.IsNullAccount() ]
+        
+        account_types.extend( [ at for at in current_account_types if at.IsNullAccount() ] )
+        
+        #
+        
+        service_id = self._GetServiceId( service_key )
         
         current_account_type_keys_to_account_types = { account_type.GetAccountTypeKey() : account_type for account_type in current_account_types }
         
@@ -1313,12 +1553,17 @@ class DB( HydrusDB.HydrusDB ):
             
             if deletee_account_type_key not in deletee_account_type_keys_to_replacement_account_type_keys:
                 
-                raise HydrusExceptions.DataMissing( 'Was missing a replacement account_type_key.' )
+                raise HydrusExceptions.BadRequestException( 'Was missing a replacement account_type_key.' )
                 
             
             if deletee_account_type_keys_to_replacement_account_type_keys[ deletee_account_type_key ] not in future_account_type_keys:
                 
-                raise HydrusExceptions.DataMissing( 'Was a replacement account_type_key was not in the future account types.' )
+                raise HydrusExceptions.BadRequestException( 'Was a replacement account_type_key was not in the future account types.' )
+                
+            
+            if future_account_type_keys_to_account_types[ deletee_account_type_keys_to_replacement_account_type_keys[ deletee_account_type_key ] ].IsNullAccount():
+                
+                raise HydrusExceptions.BadRequestException( 'You cannot assign people to the null account!' )
                 
             
         
@@ -1344,18 +1589,23 @@ class DB( HydrusDB.HydrusDB ):
                 
             else:
                 
-                dump = account_type.DumpToString()
-                
                 account_type_id = modification_account_type_keys_to_account_type_ids[ account_type_key ]
                 
-                self._c.execute( 'UPDATE account_types SET dump = ? WHERE service_id = ? AND account_type_id = ?;', ( dump, service_id, account_type_id ) )
+                dump = account_type.DumpToString()
                 
-                HydrusData.Print(
-                    'Account {} confirmed/updated the account type, "{}".'.format(
-                        admin_account.GetAccountKey().hex(),
-                        account_type.GetTitle()
+                ( existing_dump, ) = self._Execute( 'SELECT dump FROM account_types WHERE service_id = ? AND account_type_id = ?;', ( service_id, account_type_id ) ).fetchone()
+                
+                if dump != existing_dump:
+                    
+                    self._Execute( 'UPDATE account_types SET dump = ? WHERE service_id = ? AND account_type_id = ?;', ( dump, service_id, account_type_id ) )
+                    
+                    HydrusData.Print(
+                        'Account {} updated the account type, "{}".'.format(
+                            admin_account.GetAccountKey().hex(),
+                            account_type.GetTitle()
+                        )
                     )
-                )
+                    
                 
             
         
@@ -1366,10 +1616,10 @@ class DB( HydrusDB.HydrusDB ):
             deletee_account_type_id = modification_account_type_keys_to_account_type_ids[ deletee_account_type_key ]
             new_account_type_id = modification_account_type_keys_to_account_type_ids[ new_account_type_key ]
             
-            self._c.execute( 'UPDATE accounts SET account_type_id = ? WHERE service_id = ? AND account_type_id = ?;', ( new_account_type_id, service_id, deletee_account_type_id ) )
-            self._c.execute( 'UPDATE registration_keys SET account_type_id = ? WHERE service_id = ? AND account_type_id = ?;', ( new_account_type_id, service_id, deletee_account_type_id ) )
+            self._Execute( 'UPDATE accounts SET account_type_id = ? WHERE service_id = ? AND account_type_id = ?;', ( new_account_type_id, service_id, deletee_account_type_id ) )
+            self._Execute( 'UPDATE registration_keys SET account_type_id = ? WHERE service_id = ? AND account_type_id = ?;', ( new_account_type_id, service_id, deletee_account_type_id ) )
             
-            self._c.execute( 'DELETE FROM account_types WHERE service_id = ? AND account_type_id = ?;', ( service_id, deletee_account_type_id ) )
+            self._Execute( 'DELETE FROM account_types WHERE service_id = ? AND account_type_id = ?;', ( service_id, deletee_account_type_id ) )
             
             deletee_account_type = current_account_type_keys_to_account_types[ deletee_account_type_key ]
             new_account_type = future_account_type_keys_to_account_types[ new_account_type_key ]
@@ -1384,14 +1634,14 @@ class DB( HydrusDB.HydrusDB ):
             
         
         # now we are done, no rollback, so let's update the cache
-        self._RefreshAccountTypeCache()
+        self._RefreshAccountInfoCache()
         
-        self.pub_after_job( 'update_all_session_accounts', service_key )
+        self._cursor_transaction_wrapper.pub_after_job( 'update_all_session_accounts', service_key )
         
     
     def _ModifyServices( self, account, services ):
         
-        current_service_keys = { service_key for ( service_key, ) in self._c.execute( 'SELECT service_key FROM services;' ) }
+        current_service_keys = { service_key for ( service_key, ) in self._Execute( 'SELECT service_key FROM services;' ) }
         
         future_service_keys = { service.GetServiceKey() for service in services }
         
@@ -1417,7 +1667,7 @@ class DB( HydrusDB.HydrusDB ):
                 
                 dictionary_string = dictionary.DumpToString()
                 
-                self._c.execute( 'UPDATE services SET name = ?, port = ?, dictionary_string = ? WHERE service_id = ?;', ( name, port, dictionary_string, service_id ) )
+                self._Execute( 'UPDATE services SET name = ?, port = ?, dictionary_string = ? WHERE service_id = ?;', ( name, port, dictionary_string, service_id ) )
                 
             else:
                 
@@ -1432,38 +1682,22 @@ class DB( HydrusDB.HydrusDB ):
     
     def _Read( self, action, *args, **kwargs ):
         
-        if action == 'access_key': result = self._GetAccessKey( *args, **kwargs )
-        elif action == 'account': result = self._GetAccountFromAccountKey( *args, **kwargs )
-        elif action == 'account_from_content': result = self._GetAccountFromContent( *args, **kwargs )
-        elif action == 'account_info': result = self._GetAccountInfo( *args, **kwargs )
-        elif action == 'account_key_from_access_key': result = self._GetAccountKeyFromAccessKey( *args, **kwargs )
-        elif action == 'account_types': result = self._GetAccountTypes( *args, **kwargs )
-        elif action == 'auto_create_account_types': result = self._GetAutoCreateAccountTypes( *args, **kwargs )
-        elif action == 'auto_create_registration_key': result = self._GetAutoCreateRegistrationKey( *args, **kwargs )
-        elif action == 'all_accounts': result = self._GetAllAccounts( *args, **kwargs )
-        elif action == 'immediate_update': result = self._RepositoryGenerateImmediateUpdate( *args, **kwargs )
-        elif action == 'ip': result = self._RepositoryGetIPTimestamp( *args, **kwargs )
-        elif action == 'num_petitions': result = self._RepositoryGetNumPetitions( *args, **kwargs )
-        elif action == 'petition': result = self._RepositoryGetPetition( *args, **kwargs )
-        elif action == 'registration_keys': result = self._GenerateRegistrationKeysFromAccount( *args, **kwargs )
-        elif action == 'service_has_file': result = self._RepositoryHasFile( *args, **kwargs )
-        elif action == 'service_keys': result = self._GetServiceKeys( *args, **kwargs )
-        elif action == 'services': result = self._GetServices( *args, **kwargs )
-        elif action == 'services_from_account': result = self._GetServicesFromAccount( *args, **kwargs )
-        elif action == 'sessions': result = self._GetSessions( *args, **kwargs )
-        elif action == 'verify_access_key': result = self._VerifyAccessKey( *args, **kwargs )
-        else: raise Exception( 'db received an unknown read command: ' + action )
+        if action not in self._read_commands_to_methods:
+            
+            raise Exception( 'db received an unknown read command: ' + action )
+            
         
-        return result
+        return self._read_commands_to_methods[ action ]( *args, **kwargs )
         
     
-    def _RefreshAccountTypeCache( self ):
+    def _RefreshAccountInfoCache( self ):
         
         self._service_ids_to_account_type_ids = collections.defaultdict( set )
+        self._service_ids_to_null_account_ids = {}
         self._account_type_ids_to_account_types = {}
         self._service_ids_to_account_type_keys_to_account_type_ids = collections.defaultdict( dict )
         
-        data = self._c.execute( 'SELECT account_type_id, service_id, dump FROM account_types;' ).fetchall()
+        data = self._Execute( 'SELECT account_type_id, service_id, dump FROM account_types;' ).fetchall()
         
         for ( account_type_id, service_id, dump ) in data:
             
@@ -1472,6 +1706,18 @@ class DB( HydrusDB.HydrusDB ):
             self._service_ids_to_account_type_ids[ service_id ].add( account_type_id )
             self._account_type_ids_to_account_types[ account_type_id ] = account_type
             self._service_ids_to_account_type_keys_to_account_type_ids[ service_id ][ account_type.GetAccountTypeKey() ] = account_type_id
+            
+            if account_type.IsNullAccount():
+                
+                result = self._Execute( 'SELECT account_id FROM accounts WHERE account_type_id = ?;', ( account_type_id, ) ).fetchone()
+                
+                if result is not None:
+                    
+                    ( null_account_id, ) = result
+                    
+                    self._service_ids_to_null_account_ids[ service_id ] = null_account_id
+                    
+                
             
         
     
@@ -1488,10 +1734,10 @@ class DB( HydrusDB.HydrusDB ):
             
             ip = file_dict[ 'ip' ]
             
-            self._c.execute( 'INSERT INTO ' + ip_addresses_table_name + ' ( master_hash_id, ip, ip_timestamp ) VALUES ( ?, ?, ? );', ( master_hash_id, ip, timestamp ) )
+            self._Execute( 'INSERT INTO ' + ip_addresses_table_name + ' ( master_hash_id, ip, ip_timestamp ) VALUES ( ?, ?, ? );', ( master_hash_id, ip, timestamp ) )
             
         
-        result = self._c.execute( 'SELECT 1 FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
         
         if result is not None:
             
@@ -1502,12 +1748,12 @@ class DB( HydrusDB.HydrusDB ):
             
             #self._RepositoryRewardFilePenders( service_id, service_hash_id, 1 )
             
-            #self._c.execute( 'DELETE FROM ' + pending_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) )
-            self._c.execute( 'DELETE FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) )
+            #self._Execute( 'DELETE FROM ' + pending_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) )
+            self._Execute( 'DELETE FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) )
             
         else:
             
-            result = self._c.execute( 'SELECT 1 FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM ' + deleted_files_table_name + ' WHERE service_hash_id = ?;', ( service_hash_id, ) ).fetchone()
             
             if result is not None:
                 
@@ -1515,7 +1761,11 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        self._c.execute( 'INSERT INTO ' + current_files_table_name + ' ( service_hash_id, account_id, file_timestamp ) VALUES ( ?, ?, ? );', ( service_hash_id, account_id, timestamp ) )
+        self._Execute( 'INSERT INTO ' + current_files_table_name + ' ( service_hash_id, account_id, file_timestamp ) VALUES ( ?, ?, ? );', ( service_hash_id, account_id, timestamp ) )
+        
+        hash = file_dict[ 'hash' ]
+        
+        self._ClearDeferredPhysicalDeleteIds( file_master_hash_id = master_hash_id, thumbnail_master_hash_id = master_hash_id )
         
     
     def _RepositoryAddMappings( self, service_id, account_id, master_tag_id, master_hash_ids, overwrite_deleted, timestamp ):
@@ -1529,21 +1779,22 @@ class DB( HydrusDB.HydrusDB ):
             
             #self._RepositoryRewardMappingPenders( service_id, service_tag_id, service_hash_ids, 1 )
             
-            #self._c.executemany( 'DELETE FROM ' + pending_mappings_table_name + ' WHERE master_tag_id = ? AND master_hash_id = ?;', ( ( master_tag_id, master_hash_id ) for master_hash_id in master_hash_ids ) )
-            self._c.executemany( 'DELETE FROM ' + deleted_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in service_hash_ids ) )
+            #self._ExecuteMany( 'DELETE FROM ' + pending_mappings_table_name + ' WHERE master_tag_id = ? AND master_hash_id = ?;', ( ( master_tag_id, master_hash_id ) for master_hash_id in master_hash_ids ) )
+            self._ExecuteMany( 'DELETE FROM ' + deleted_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in service_hash_ids ) )
             
         else:
             
-            select_statement = 'SELECT service_hash_id FROM ' + deleted_mappings_table_name + ' WHERE service_tag_id = ' + str( service_tag_id ) + ' AND service_hash_id = ?;'
-            
-            deleted_service_hash_ids = self._STI( self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) )
+            with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
+                
+                deleted_service_hash_ids = self._STS( self._Execute( 'SELECT service_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id ) WHERE service_tag_id = ?;'.format( temp_hash_ids_table_name, deleted_mappings_table_name ), ( service_tag_id, ) ) )
+                
             
             service_hash_ids = set( service_hash_ids ).difference( deleted_service_hash_ids )
             
         
         # in future, delete from pending with the master ids here
         
-        self._c.executemany( 'INSERT OR IGNORE INTO ' + current_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, mapping_timestamp ) VALUES ( ?, ?, ?, ? );', [ ( service_tag_id, service_hash_id, account_id, timestamp ) for service_hash_id in service_hash_ids ] )
+        self._ExecuteMany( 'INSERT OR IGNORE INTO ' + current_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, mapping_timestamp ) VALUES ( ?, ?, ?, ? );', [ ( service_tag_id, service_hash_id, account_id, timestamp ) for service_hash_id in service_hash_ids ] )
         
     
     def _RepositoryAddTagParent( self, service_id, account_id, child_master_tag_id, parent_master_tag_id, overwrite_deleted, timestamp ):
@@ -1557,12 +1808,12 @@ class DB( HydrusDB.HydrusDB ):
             
             self._RepositoryRewardTagParentPenders( service_id, child_master_tag_id, parent_master_tag_id, 1 )
             
-            self._c.execute( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) )
-            self._c.execute( 'DELETE FROM ' + deleted_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
+            self._Execute( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) )
+            self._Execute( 'DELETE FROM ' + deleted_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
             
         else:
             
-            result = self._c.execute( 'SELECT 1 FROM ' + deleted_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM ' + deleted_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
             
             if result is not None:
                 
@@ -1570,7 +1821,7 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        self._c.execute( 'INSERT OR IGNORE INTO ' + current_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, parent_timestamp ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, timestamp ) )
+        self._Execute( 'INSERT OR IGNORE INTO ' + current_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, parent_timestamp ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, timestamp ) )
         
     
     def _RepositoryAddTagSibling( self, service_id, account_id, bad_master_tag_id, good_master_tag_id, overwrite_deleted, timestamp ):
@@ -1584,12 +1835,12 @@ class DB( HydrusDB.HydrusDB ):
             
             self._RepositoryRewardTagSiblingPenders( service_id, bad_master_tag_id, good_master_tag_id, 1 )
             
-            self._c.execute( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) )
-            self._c.execute( 'DELETE FROM ' + deleted_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
+            self._Execute( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) )
+            self._Execute( 'DELETE FROM ' + deleted_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
             
         else:
             
-            result = self._c.execute( 'SELECT 1 FROM ' + deleted_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM ' + deleted_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
             
             if result is not None:
                 
@@ -1597,105 +1848,105 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        self._c.execute( 'INSERT OR IGNORE INTO ' + current_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, sibling_timestamp ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, timestamp ) )
+        self._Execute( 'INSERT OR IGNORE INTO ' + current_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, sibling_timestamp ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, timestamp ) )
         
     
     def _RepositoryCreate( self, service_id ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + hash_id_map_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, master_hash_id INTEGER UNIQUE, hash_id_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + hash_id_map_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, master_hash_id INTEGER UNIQUE, hash_id_timestamp INTEGER );' )
         self._CreateIndex( hash_id_map_table_name, [ 'hash_id_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + tag_id_map_table_name + ' ( service_tag_id INTEGER PRIMARY KEY, master_tag_id INTEGER UNIQUE, tag_id_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + tag_id_map_table_name + ' ( service_tag_id INTEGER PRIMARY KEY, master_tag_id INTEGER UNIQUE, tag_id_timestamp INTEGER );' )
         self._CreateIndex( tag_id_map_table_name, [ 'tag_id_timestamp' ] )
         
         #
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + current_files_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, account_id INTEGER, file_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + current_files_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, account_id INTEGER, file_timestamp INTEGER );' )
         self._CreateIndex( current_files_table_name, [ 'account_id' ] )
         self._CreateIndex( current_files_table_name, [ 'file_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + deleted_files_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, account_id INTEGER, file_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + deleted_files_table_name + ' ( service_hash_id INTEGER PRIMARY KEY, account_id INTEGER, file_timestamp INTEGER );' )
         self._CreateIndex( deleted_files_table_name, [ 'account_id' ] )
         self._CreateIndex( deleted_files_table_name, [ 'file_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + pending_files_table_name + ' ( master_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( master_hash_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + pending_files_table_name + ' ( master_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( master_hash_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( pending_files_table_name, [ 'account_id', 'reason_id' ] )
         
-        self._c.execute( 'CREATE TABLE ' + petitioned_files_table_name + ' ( service_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( service_hash_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + petitioned_files_table_name + ' ( service_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( service_hash_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( petitioned_files_table_name, [ 'account_id', 'reason_id' ] )
         
-        self._c.execute( 'CREATE TABLE ' + ip_addresses_table_name + ' ( master_hash_id INTEGER, ip TEXT, ip_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + ip_addresses_table_name + ' ( master_hash_id INTEGER, ip TEXT, ip_timestamp INTEGER );' )
         
         #
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + current_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, mapping_timestamp INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + current_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, mapping_timestamp INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( current_mappings_table_name, [ 'account_id' ] )
         self._CreateIndex( current_mappings_table_name, [ 'mapping_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + deleted_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, mapping_timestamp INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + deleted_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, mapping_timestamp INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( deleted_mappings_table_name, [ 'account_id' ] )
         self._CreateIndex( deleted_mappings_table_name, [ 'mapping_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + pending_mappings_table_name + ' ( master_tag_id INTEGER, master_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( master_tag_id, master_hash_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + pending_mappings_table_name + ' ( master_tag_id INTEGER, master_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( master_tag_id, master_hash_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( pending_mappings_table_name, [ 'account_id', 'reason_id' ] )
         
-        self._c.execute( 'CREATE TABLE ' + petitioned_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + petitioned_mappings_table_name + ' ( service_tag_id INTEGER, service_hash_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( service_tag_id, service_hash_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( petitioned_mappings_table_name, [ 'account_id', 'reason_id' ] )
         
         #
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + current_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, parent_timestamp INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + current_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, parent_timestamp INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( current_tag_parents_table_name, [ 'account_id' ] )
         self._CreateIndex( current_tag_parents_table_name, [ 'parent_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + deleted_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, parent_timestamp INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + deleted_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, parent_timestamp INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( deleted_tag_parents_table_name, [ 'account_id' ] )
         self._CreateIndex( deleted_tag_parents_table_name, [ 'parent_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + pending_tag_parents_table_name + ' ( child_master_tag_id INTEGER, parent_master_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( child_master_tag_id, parent_master_tag_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + pending_tag_parents_table_name + ' ( child_master_tag_id INTEGER, parent_master_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( child_master_tag_id, parent_master_tag_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( pending_tag_parents_table_name, [ 'account_id', 'reason_id' ] )
         
-        self._c.execute( 'CREATE TABLE ' + petitioned_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + petitioned_tag_parents_table_name + ' ( child_service_tag_id INTEGER, parent_service_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( child_service_tag_id, parent_service_tag_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( petitioned_tag_parents_table_name, [ 'account_id', 'reason_id' ] )
         
         #
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + current_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER PRIMARY KEY, good_service_tag_id INTEGER, account_id INTEGER, sibling_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + current_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER PRIMARY KEY, good_service_tag_id INTEGER, account_id INTEGER, sibling_timestamp INTEGER );' )
         self._CreateIndex( current_tag_siblings_table_name, [ 'account_id' ] )
         self._CreateIndex( current_tag_siblings_table_name, [ 'sibling_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + deleted_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER PRIMARY KEY, good_service_tag_id INTEGER, account_id INTEGER, sibling_timestamp INTEGER );' )
+        self._Execute( 'CREATE TABLE ' + deleted_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER PRIMARY KEY, good_service_tag_id INTEGER, account_id INTEGER, sibling_timestamp INTEGER );' )
         self._CreateIndex( deleted_tag_siblings_table_name, [ 'account_id' ] )
         self._CreateIndex( deleted_tag_siblings_table_name, [ 'sibling_timestamp' ] )
         
-        self._c.execute( 'CREATE TABLE ' + pending_tag_siblings_table_name + ' ( bad_master_tag_id INTEGER, good_master_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( bad_master_tag_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + pending_tag_siblings_table_name + ' ( bad_master_tag_id INTEGER, good_master_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( bad_master_tag_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( pending_tag_siblings_table_name, [ 'account_id', 'reason_id' ] )
         
-        self._c.execute( 'CREATE TABLE ' + petitioned_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER, good_service_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( bad_service_tag_id, account_id ) ) WITHOUT ROWID;' )
+        self._Execute( 'CREATE TABLE ' + petitioned_tag_siblings_table_name + ' ( bad_service_tag_id INTEGER, good_service_tag_id INTEGER, account_id INTEGER, reason_id INTEGER, PRIMARY KEY ( bad_service_tag_id, account_id ) ) WITHOUT ROWID;' )
         self._CreateIndex( petitioned_tag_siblings_table_name, [ 'account_id', 'reason_id' ] )
         
         #
         
         ( update_table_name ) = GenerateRepositoryUpdateTableName( service_id )
         
-        self._c.execute( 'CREATE TABLE ' + update_table_name + ' ( master_hash_id INTEGER PRIMARY KEY );' )
+        self._Execute( 'CREATE TABLE ' + update_table_name + ' ( master_hash_id INTEGER PRIMARY KEY );' )
         
     
     def _RepositoryCreateUpdate( self, service_key, begin, end ):
         
         service_id = self._GetServiceId( service_key )
         
-        ( name, ) = self._c.execute( 'SELECT name FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
+        ( name, ) = self._Execute( 'SELECT name FROM services WHERE service_id = ?;', ( service_id, ) ).fetchone()
         
         HydrusData.Print( 'Creating update for ' + repr( name ) + ' from ' + HydrusData.ConvertTimestampToPrettyTime( begin, in_utc = True ) + ' to ' + HydrusData.ConvertTimestampToPrettyTime( end, in_utc = True ) )
         
@@ -1735,11 +1986,16 @@ class DB( HydrusDB.HydrusDB ):
                 update_hashes.append( update_hash )
                 
             
-            ( update_table_name ) = GenerateRepositoryUpdateTableName( service_id )
+            update_table_name = GenerateRepositoryUpdateTableName( service_id )
             
             master_hash_ids = self._GetMasterHashIds( update_hashes )
             
-            self._c.executemany( 'INSERT OR IGNORE INTO ' + update_table_name + ' ( master_hash_id ) VALUES ( ? );', ( ( master_hash_id, ) for master_hash_id in master_hash_ids ) )
+            self._ExecuteMany( 'INSERT OR IGNORE INTO ' + update_table_name + ' ( master_hash_id ) VALUES ( ? );', ( ( master_hash_id, ) for master_hash_id in master_hash_ids ) )
+            
+            for master_hash_id in master_hash_ids:
+                
+                self._ClearDeferredPhysicalDeleteIds( file_master_hash_id = master_hash_id )
+                
             
         
         HydrusData.Print( 'Update OK. ' + HydrusData.ToHumanInt( total_definition_rows ) + ' definition rows and ' + HydrusData.ToHumanInt( total_content_rows ) + ' content rows in ' + HydrusData.ToHumanInt( len( updates ) ) + ' update files.' )
@@ -1751,32 +2007,38 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        select_statement = 'SELECT service_hash_id FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;'
-        
-        valid_service_hash_ids = self._STL( self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) )
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
+            
+            valid_service_hash_ids = self._STL( self._Execute( 'SELECT service_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id );'.format( temp_hash_ids_table_name, current_files_table_name ) ) )
+            
         
         self._RepositoryRewardFilePetitioners( service_id, valid_service_hash_ids, 1 )
         
-        self._c.executemany( 'DELETE FROM ' + current_files_table_name + ' WHERE service_hash_id = ?', ( ( service_hash_id, ) for service_hash_id in valid_service_hash_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE service_hash_id = ?', ( ( service_hash_id, ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + current_files_table_name + ' WHERE service_hash_id = ?', ( ( service_hash_id, ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE service_hash_id = ?', ( ( service_hash_id, ) for service_hash_id in valid_service_hash_ids ) )
         
-        self._c.executemany( 'INSERT OR IGNORE INTO ' + deleted_files_table_name + ' ( service_hash_id, account_id, file_timestamp ) VALUES ( ?, ?, ? );', ( ( service_hash_id, account_id, timestamp ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'INSERT OR IGNORE INTO ' + deleted_files_table_name + ' ( service_hash_id, account_id, file_timestamp ) VALUES ( ?, ?, ? );', ( ( service_hash_id, account_id, timestamp ) for service_hash_id in valid_service_hash_ids ) )
+        
+        master_hash_ids = self._RepositoryGetMasterHashIds( service_id, valid_service_hash_ids )
+        
+        self._DeferFilesDeleteIfNowOrphan( master_hash_ids )
         
     
     def _RepositoryDeleteMappings( self, service_id, account_id, service_tag_id, service_hash_ids, timestamp ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        select_statement = 'SELECT service_hash_id FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ' + str( service_tag_id ) + ' AND service_hash_id = ?;'
-        
-        valid_service_hash_ids = self._STL( self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) )
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
+            
+            valid_service_hash_ids = self._STL( self._Execute( 'SELECT service_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id ) WHERE service_tag_id = ?;'.format( temp_hash_ids_table_name, current_mappings_table_name ), ( service_tag_id, ) ) )
+            
         
         self._RepositoryRewardMappingPetitioners( service_id, service_tag_id, valid_service_hash_ids, 1 )
         
-        self._c.executemany( 'DELETE FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in valid_service_hash_ids ) )
-        self._c.executemany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in valid_service_hash_ids ) )
         
-        self._c.executemany( 'INSERT OR IGNORE INTO ' + deleted_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, mapping_timestamp ) VALUES ( ?, ?, ?, ? );', ( ( service_tag_id, service_hash_id, account_id, timestamp ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'INSERT OR IGNORE INTO ' + deleted_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, mapping_timestamp ) VALUES ( ?, ?, ?, ? );', ( ( service_tag_id, service_hash_id, account_id, timestamp ) for service_hash_id in valid_service_hash_ids ) )
         
     
     def _RepositoryDeleteTagParent( self, service_id, account_id, child_service_tag_id, parent_service_tag_id, timestamp ):
@@ -1785,10 +2047,10 @@ class DB( HydrusDB.HydrusDB ):
         
         self._RepositoryRewardTagParentPetitioners( service_id, child_service_tag_id, parent_service_tag_id, 1 )
         
-        self._c.execute( 'DELETE FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
-        self._c.execute( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
         
-        self._c.execute( 'INSERT OR IGNORE INTO ' + deleted_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, parent_timestamp ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, timestamp ) )
+        self._Execute( 'INSERT OR IGNORE INTO ' + deleted_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, parent_timestamp ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, timestamp ) )
         
     
     def _RepositoryDeleteTagSibling( self, service_id, account_id, bad_service_tag_id, good_service_tag_id, timestamp ):
@@ -1797,10 +2059,10 @@ class DB( HydrusDB.HydrusDB ):
         
         self._RepositoryRewardTagSiblingPetitioners( service_id, bad_service_tag_id, good_service_tag_id, 1 )
         
-        self._c.execute( 'DELETE FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
-        self._c.execute( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
         
-        self._c.execute( 'INSERT OR IGNORE INTO ' + deleted_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, sibling_timestamp ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, timestamp ) )
+        self._Execute( 'INSERT OR IGNORE INTO ' + deleted_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, sibling_timestamp ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, timestamp ) )
         
     
     def _RepositoryDenyFilePetition( self, service_id, service_hash_ids ):
@@ -1809,7 +2071,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE service_hash_id = ?;', ( ( service_hash_id, ) for service_hash_id in service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_files_table_name + ' WHERE service_hash_id = ?;', ( ( service_hash_id, ) for service_hash_id in service_hash_ids ) )
         
     
     def _RepositoryDenyMappingPetition( self, service_id, service_tag_id, service_hash_ids ):
@@ -1818,7 +2080,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        self._c.executemany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in service_hash_ids ) )
+        self._ExecuteMany( 'DELETE FROM ' + petitioned_mappings_table_name + ' WHERE service_tag_id = ? AND service_hash_id = ?;', ( ( service_tag_id, service_hash_id ) for service_hash_id in service_hash_ids ) )
         
     
     def _RepositoryDenyTagParentPend( self, service_id, child_master_tag_id, parent_master_tag_id ):
@@ -1827,7 +2089,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        self._c.execute( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) )
+        self._Execute( 'DELETE FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) )
         
     
     def _RepositoryDenyTagParentPetition( self, service_id, child_service_tag_id, parent_service_tag_id ):
@@ -1836,7 +2098,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        self._c.execute( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) )
         
     
     def _RepositoryDenyTagSiblingPend( self, service_id, bad_master_tag_id, good_master_tag_id ):
@@ -1845,7 +2107,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        self._c.execute( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) )
+        self._Execute( 'DELETE FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) )
         
     
     def _RepositoryDenyTagSiblingPetition( self, service_id, bad_service_tag_id, good_service_tag_id ):
@@ -1854,10 +2116,27 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        self._c.execute( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
+        self._Execute( 'DELETE FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) )
         
     
     def _RepositoryDrop( self, service_id ):
+        
+        ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
+        ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
+        
+        for ( block_of_master_hash_ids, num_done, num_to_do ) in HydrusDB.ReadLargeIdQueryInSeparateChunks( self._c, 'SELECT master_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id );'.format( current_files_table_name, hash_id_map_table_name ), 1024 ):
+            
+            self._DeferFilesDeleteIfNowOrphan( block_of_master_hash_ids, ignore_service_id = service_id )
+            
+        
+        update_table_name = GenerateRepositoryUpdateTableName( service_id )
+        
+        for ( block_of_master_hash_ids, num_done, num_to_do ) in HydrusDB.ReadLargeIdQueryInSeparateChunks( self._c, 'SELECT master_hash_id FROM {};'.format( update_table_name ), 1024 ):
+            
+            self._DeferFilesDeleteIfNowOrphan( block_of_master_hash_ids, definitely_no_thumbnails = True, ignore_service_id = service_id )
+            
+        
+        #
         
         table_names = []
         
@@ -1875,7 +2154,7 @@ class DB( HydrusDB.HydrusDB ):
         
         for table_name in table_names:
             
-            self._c.execute( 'DROP TABLE ' + table_name + ';' )
+            self._Execute( 'DROP TABLE ' + table_name + ';' )
             
         
     
@@ -1902,14 +2181,14 @@ class DB( HydrusDB.HydrusDB ):
         
         ( service_hash_ids_table_name, service_tag_ids_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        for ( service_hash_id, hash ) in self._c.execute( 'SELECT service_hash_id, hash FROM ' + service_hash_ids_table_name + ' NATURAL JOIN hashes WHERE hash_id_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
+        for ( service_hash_id, hash ) in self._Execute( 'SELECT service_hash_id, hash FROM ' + service_hash_ids_table_name + ' NATURAL JOIN hashes WHERE hash_id_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
             
             row = ( HC.DEFINITIONS_TYPE_HASHES, service_hash_id, hash )
             
             definitions_update_builder.AddRow( row )
             
         
-        for ( service_tag_id, tag ) in self._c.execute( 'SELECT service_tag_id, tag FROM ' + service_tag_ids_table_name + ' NATURAL JOIN tags WHERE tag_id_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
+        for ( service_tag_id, tag ) in self._Execute( 'SELECT service_tag_id, tag FROM ' + service_tag_ids_table_name + ' NATURAL JOIN tags WHERE tag_id_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
             
             row = ( HC.DEFINITIONS_TYPE_TAGS, service_tag_id, tag )
             
@@ -1926,14 +2205,14 @@ class DB( HydrusDB.HydrusDB ):
         
         table_join = self._RepositoryGetFilesInfoFilesTableJoin( service_id, HC.CONTENT_STATUS_CURRENT )
         
-        for ( service_hash_id, size, mime, timestamp, width, height, duration, num_frames, num_words ) in self._c.execute( 'SELECT service_hash_id, size, mime, file_timestamp, width, height, duration, num_frames, num_words FROM ' + table_join + ' WHERE file_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
+        for ( service_hash_id, size, mime, timestamp, width, height, duration, num_frames, num_words ) in self._Execute( 'SELECT service_hash_id, size, mime, file_timestamp, width, height, duration, num_frames, num_words FROM ' + table_join + ' WHERE file_timestamp BETWEEN ? AND ?;', ( begin, end ) ):
             
             file_row = ( service_hash_id, size, mime, timestamp, width, height, duration, num_frames, num_words )
             
             content_update_builder.AddRow( ( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADD, file_row ) )
             
         
-        service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._c.execute( 'SELECT service_hash_id FROM ' + deleted_files_table_name + ' WHERE file_timestamp BETWEEN ? AND ?;', ( begin, end ) ) ]
+        service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._Execute( 'SELECT service_hash_id FROM ' + deleted_files_table_name + ' WHERE file_timestamp BETWEEN ? AND ?;', ( begin, end ) ) ]
         
         for service_hash_id in service_hash_ids:
             
@@ -1944,7 +2223,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        service_tag_ids_to_service_hash_ids = HydrusData.BuildKeyToListDict( self._c.execute( 'SELECT service_tag_id, service_hash_id FROM ' + current_mappings_table_name + ' WHERE mapping_timestamp BETWEEN ? AND ?;', ( begin, end ) ) )
+        service_tag_ids_to_service_hash_ids = HydrusData.BuildKeyToListDict( self._Execute( 'SELECT service_tag_id, service_hash_id FROM ' + current_mappings_table_name + ' WHERE mapping_timestamp BETWEEN ? AND ?;', ( begin, end ) ) )
         
         for ( service_tag_id, service_hash_ids ) in list(service_tag_ids_to_service_hash_ids.items()):
             
@@ -1956,7 +2235,7 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        service_tag_ids_to_service_hash_ids = HydrusData.BuildKeyToListDict( self._c.execute( 'SELECT service_tag_id, service_hash_id FROM ' + deleted_mappings_table_name + ' WHERE mapping_timestamp BETWEEN ? AND ?;', ( begin, end ) ) )
+        service_tag_ids_to_service_hash_ids = HydrusData.BuildKeyToListDict( self._Execute( 'SELECT service_tag_id, service_hash_id FROM ' + deleted_mappings_table_name + ' WHERE mapping_timestamp BETWEEN ? AND ?;', ( begin, end ) ) )
         
         for ( service_tag_id, service_hash_ids ) in list(service_tag_ids_to_service_hash_ids.items()):
             
@@ -1972,14 +2251,14 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        pairs = self._c.execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + current_tag_parents_table_name + ' WHERE parent_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
+        pairs = self._Execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + current_tag_parents_table_name + ' WHERE parent_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
         
         for pair in pairs:
             
             content_update_builder.AddRow( ( HC.CONTENT_TYPE_TAG_PARENTS, HC.CONTENT_UPDATE_ADD, pair ) )
             
         
-        pairs = self._c.execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + deleted_tag_parents_table_name + ' WHERE parent_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
+        pairs = self._Execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + deleted_tag_parents_table_name + ' WHERE parent_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
         
         for pair in pairs:
             
@@ -1990,14 +2269,14 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        pairs = self._c.execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + current_tag_siblings_table_name + ' WHERE sibling_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
+        pairs = self._Execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + current_tag_siblings_table_name + ' WHERE sibling_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
         
         for pair in pairs:
             
             content_update_builder.AddRow( ( HC.CONTENT_TYPE_TAG_SIBLINGS, HC.CONTENT_UPDATE_ADD, pair ) )
             
         
-        pairs = self._c.execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + deleted_tag_siblings_table_name + ' WHERE sibling_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
+        pairs = self._Execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + deleted_tag_siblings_table_name + ' WHERE sibling_timestamp BETWEEN ? AND ?;', ( begin, end ) ).fetchall()
         
         for pair in pairs:
             
@@ -2021,7 +2300,7 @@ class DB( HydrusDB.HydrusDB ):
         
         table_join = 'files_info NATURAL JOIN ' + hash_id_map_table_name + ' NATURAL JOIN ' + current_files_table_name
         
-        ( num_files, num_files_bytes ) = self._c.execute( 'SELECT COUNT( * ), SUM( size ) FROM ' + table_join + ' WHERE account_id = ?;', ( account_id, ) ).fetchone()
+        ( num_files, num_files_bytes ) = self._Execute( 'SELECT COUNT( * ), SUM( size ) FROM ' + table_join + ' WHERE account_id = ?;', ( account_id, ) ).fetchone()
         
         if num_files_bytes is None:
             
@@ -2037,13 +2316,13 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        num_mappings = len( self._c.execute( 'SELECT 1 FROM ' + current_mappings_table_name + ' WHERE account_id = ? LIMIT 5000;', ( account_id, ) ).fetchall() )
+        num_mappings = len( self._Execute( 'SELECT 1 FROM ' + current_mappings_table_name + ' WHERE account_id = ? LIMIT 5000;', ( account_id, ) ).fetchall() )
         
         account_info[ 'num_mappings' ] = num_mappings
         
         #
         
-        result = self._c.execute( 'SELECT score FROM account_scores WHERE service_id = ? AND account_id = ? AND score_type = ?;', ( service_id, account_id, HC.SCORE_PETITION ) ).fetchone()
+        result = self._Execute( 'SELECT score FROM account_scores WHERE service_id = ? AND account_id = ? AND score_type = ?;', ( service_id, account_id, HC.SCORE_PETITION ) ).fetchone()
         
         if result is None: petition_score = 0
         else: ( petition_score, ) = result
@@ -2057,7 +2336,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        ( count, ) = self._c.execute( 'SELECT COUNT( * ) FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ?;', ( service_tag_id, ) ).fetchone()
+        ( count, ) = self._Execute( 'SELECT COUNT( * ) FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ?;', ( service_tag_id, ) ).fetchone()
         
         return count
         
@@ -2090,7 +2369,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_files_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_files_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2107,7 +2386,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._c.execute( 'SELECT service_hash_id FROM ' + petitioned_files_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ) ]
+        service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._Execute( 'SELECT service_hash_id FROM ' + petitioned_files_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ) ]
         
         master_hash_ids = self._RepositoryGetMasterHashIds( service_id, service_hash_ids )
         
@@ -2128,7 +2407,7 @@ class DB( HydrusDB.HydrusDB ):
         
         master_hash_id = self._GetMasterHashId( hash )
         
-        result = self._c.execute( 'SELECT ip, ip_timestamp FROM ' + ip_addresses_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT ip, ip_timestamp FROM ' + ip_addresses_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -2142,7 +2421,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_mappings_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_mappings_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2159,7 +2438,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        tag_ids_to_hash_ids = HydrusData.BuildKeyToListDict( self._c.execute( 'SELECT service_tag_id, service_hash_id FROM ' + petitioned_mappings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ) )
+        tag_ids_to_hash_ids = HydrusData.BuildKeyToListDict( self._Execute( 'SELECT service_tag_id, service_hash_id FROM ' + petitioned_mappings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ) )
         
         contents = []
         
@@ -2169,9 +2448,9 @@ class DB( HydrusDB.HydrusDB ):
         min_weight_permitted = None
         max_weight_permitted = None
         
-        petition_namespace = None
-        
         max_total_weight = None
+        
+        petition_namespace = None
         
         petition_pairs = list( tag_ids_to_hash_ids.items() )
         
@@ -2190,14 +2469,14 @@ class DB( HydrusDB.HydrusDB ):
                     min_weight_permitted = 1
                     max_weight_permitted = 1
                     
-                    max_total_weight = 20000
+                    max_total_weight = 2000
                     
                 elif content_weight < 10:
                     
                     min_weight_permitted = 2
                     max_weight_permitted = 9
                     
-                    max_total_weight = 5000
+                    max_total_weight = 2000
                     
                 elif content_weight < 50:
                     
@@ -2206,12 +2485,19 @@ class DB( HydrusDB.HydrusDB ):
                     
                     max_total_weight = 2000
                     
-                else:
+                elif content_weight < 100:
                     
                     min_weight_permitted = 50
+                    max_weight_permitted = 99
+                    
+                    max_total_weight = 20000
+                    
+                else:
+                    
+                    min_weight_permitted = 100
                     max_weight_permitted = None
                     
-                    max_total_weight = 500
+                    max_total_weight = 100000
                     
                 
             else:
@@ -2251,10 +2537,9 @@ class DB( HydrusDB.HydrusDB ):
             
             contents.append( content )
             
-            total_num_petitions += 1
             total_weight += content_weight
             
-            if total_num_petitions > 500 or total_weight > 50000:
+            if total_weight >= max_total_weight:
                 
                 break
                 
@@ -2262,19 +2547,19 @@ class DB( HydrusDB.HydrusDB ):
         
         return HydrusNetwork.Petition( action, petitioner_account, reason, contents )
         
-        
     
     def _RepositoryGetMasterHashIds( self, service_id, service_hash_ids ):
         
-        ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
-        
-        select_statement = 'SELECT master_hash_id FROM ' + hash_id_map_table_name + ' WHERE service_hash_id = ?;'
-        
-        master_hash_ids = [ master_hash_id for ( master_hash_id, ) in self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) ]
-        
-        if len( service_hash_ids ) != len( master_hash_ids ):
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_service_hash_ids_table_name:
             
-            raise HydrusExceptions.DataMissing( 'Missing master_hash_id map error!' )
+            ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
+            
+            master_hash_ids = self._STL( self._Execute( 'SELECT master_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id );'.format( temp_service_hash_ids_table_name, hash_id_map_table_name ) ) )
+            
+            if len( service_hash_ids ) != len( master_hash_ids ):
+                
+                raise HydrusExceptions.DataMissing( 'Missing master_hash_id map error!' )
+                
             
         
         return master_hash_ids
@@ -2284,7 +2569,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        result = self._c.execute( 'SELECT master_tag_id FROM ' + tag_id_map_table_name + ' WHERE service_tag_id = ?;', ( service_tag_id, ) ).fetchone()
+        result = self._Execute( 'SELECT master_tag_id FROM ' + tag_id_map_table_name + ' WHERE service_tag_id = ?;', ( service_tag_id, ) ).fetchone()
         
         if result is None:
             
@@ -2306,7 +2591,7 @@ class DB( HydrusDB.HydrusDB ):
         
         if account.HasPermission( HC.CONTENT_TYPE_FILES, HC.PERMISSION_ACTION_MODERATE ):
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_files_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_files_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_FILES, HC.CONTENT_STATUS_PETITIONED, num_petitions ) )
             
@@ -2315,7 +2600,7 @@ class DB( HydrusDB.HydrusDB ):
         
         if account.HasPermission( HC.CONTENT_TYPE_MAPPINGS, HC.PERMISSION_ACTION_MODERATE ):
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT service_tag_id, account_id, reason_id FROM ' + petitioned_mappings_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT service_tag_id, account_id, reason_id FROM ' + petitioned_mappings_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_MAPPINGS, HC.CONTENT_STATUS_PETITIONED, num_petitions ) )
             
@@ -2324,11 +2609,11 @@ class DB( HydrusDB.HydrusDB ):
         
         if account.HasPermission( HC.CONTENT_TYPE_TAG_SIBLINGS, HC.PERMISSION_ACTION_MODERATE ):
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_parents_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_parents_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_TAG_PARENTS, HC.CONTENT_STATUS_PENDING, num_petitions ) )
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_parents_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_parents_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_TAG_PARENTS, HC.CONTENT_STATUS_PETITIONED, num_petitions ) )
             
@@ -2337,11 +2622,11 @@ class DB( HydrusDB.HydrusDB ):
         
         if account.HasPermission( HC.CONTENT_TYPE_TAG_PARENTS, HC.PERMISSION_ACTION_MODERATE ):
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_siblings_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_siblings_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_TAG_SIBLINGS, HC.CONTENT_STATUS_PENDING, num_petitions ) )
             
-            ( num_petitions, ) = self._c.execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_siblings_table_name + ' LIMIT 1000 );' ).fetchone()
+            ( num_petitions, ) = self._Execute( 'SELECT COUNT( * ) FROM ( SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_siblings_table_name + ' LIMIT 1000 );' ).fetchone()
             
             petition_count_info.append( ( HC.CONTENT_TYPE_TAG_SIBLINGS, HC.CONTENT_STATUS_PETITIONED, num_petitions ) )
             
@@ -2391,13 +2676,13 @@ class DB( HydrusDB.HydrusDB ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        result = self._c.execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
-            self._c.execute( 'INSERT INTO ' + hash_id_map_table_name + ' ( master_hash_id, hash_id_timestamp ) VALUES ( ?, ? );', ( master_hash_id, timestamp ) )
+            self._Execute( 'INSERT INTO ' + hash_id_map_table_name + ' ( master_hash_id, hash_id_timestamp ) VALUES ( ?, ? );', ( master_hash_id, timestamp ) )
             
-            service_hash_id = self._c.lastrowid
+            service_hash_id = self._GetLastRowId()
             
             return service_hash_id
             
@@ -2418,7 +2703,7 @@ class DB( HydrusDB.HydrusDB ):
         
         for master_hash_id in master_hash_ids:
             
-            result = self._c.execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+            result = self._Execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
             
             if result is None:
                 
@@ -2434,11 +2719,11 @@ class DB( HydrusDB.HydrusDB ):
         
         if len( master_hash_ids_not_in_table ) > 0:
             
-            self._c.executemany( 'INSERT INTO ' + hash_id_map_table_name + ' ( master_hash_id, hash_id_timestamp ) VALUES ( ?, ? );', ( ( master_hash_id, timestamp ) for master_hash_id in master_hash_ids_not_in_table ) )
+            self._ExecuteMany( 'INSERT INTO ' + hash_id_map_table_name + ' ( master_hash_id, hash_id_timestamp ) VALUES ( ?, ? );', ( ( master_hash_id, timestamp ) for master_hash_id in master_hash_ids_not_in_table ) )
             
             for master_hash_id in master_hash_ids_not_in_table:
                 
-                ( service_hash_id, ) = self._c.execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+                ( service_hash_id, ) = self._Execute( 'SELECT service_hash_id FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
                 
                 service_hash_ids.add( service_hash_id )
                 
@@ -2451,13 +2736,13 @@ class DB( HydrusDB.HydrusDB ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        result = self._c.execute( 'SELECT service_tag_id FROM ' + tag_id_map_table_name + ' WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
+        result = self._Execute( 'SELECT service_tag_id FROM ' + tag_id_map_table_name + ' WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
         
         if result is None:
             
-            self._c.execute( 'INSERT INTO ' + tag_id_map_table_name + ' ( master_tag_id, tag_id_timestamp ) VALUES ( ?, ? );', ( master_tag_id, timestamp ) )
+            self._Execute( 'INSERT INTO ' + tag_id_map_table_name + ' ( master_tag_id, tag_id_timestamp ) VALUES ( ?, ? );', ( master_tag_id, timestamp ) )
             
-            service_tag_id = self._c.lastrowid
+            service_tag_id = self._GetLastRowId()
             
             return service_tag_id
             
@@ -2473,7 +2758,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_parents_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_parents_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2490,7 +2775,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        pairs = self._c.execute( 'SELECT child_master_tag_id, parent_master_tag_id FROM ' + pending_tag_parents_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
+        pairs = self._Execute( 'SELECT child_master_tag_id, parent_master_tag_id FROM ' + pending_tag_parents_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
         
         contents = []
         
@@ -2526,7 +2811,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_parents_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_parents_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2543,7 +2828,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        pairs = self._c.execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + petitioned_tag_parents_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
+        pairs = self._Execute( 'SELECT child_service_tag_id, parent_service_tag_id FROM ' + petitioned_tag_parents_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
         
         contents = []
         
@@ -2582,7 +2867,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_siblings_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + pending_tag_siblings_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2599,7 +2884,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        pairs = self._c.execute( 'SELECT bad_master_tag_id, good_master_tag_id FROM ' + pending_tag_siblings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
+        pairs = self._Execute( 'SELECT bad_master_tag_id, good_master_tag_id FROM ' + pending_tag_siblings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
         
         contents = []
         
@@ -2635,7 +2920,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_siblings_table_name + ' LIMIT 100;' ).fetchall()
+        result = self._Execute( 'SELECT DISTINCT account_id, reason_id FROM ' + petitioned_tag_siblings_table_name + ' LIMIT 100;' ).fetchall()
         
         if len( result ) == 0:
             
@@ -2652,7 +2937,7 @@ class DB( HydrusDB.HydrusDB ):
         
         reason = self._GetReason( reason_id )
         
-        pairs = self._c.execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + petitioned_tag_siblings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
+        pairs = self._Execute( 'SELECT bad_service_tag_id, good_service_tag_id FROM ' + petitioned_tag_siblings_table_name + ' WHERE account_id = ? AND reason_id = ?;', ( petitioner_account_id, reason_id ) ).fetchall()
         
         contents = []
         
@@ -2700,7 +2985,7 @@ class DB( HydrusDB.HydrusDB ):
         
         table_join = self._RepositoryGetFilesInfoFilesTableJoin( service_id, HC.CONTENT_STATUS_CURRENT )
         
-        result = self._c.execute( 'SELECT mime FROM ' + table_join + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT mime FROM ' + table_join + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -2710,6 +2995,56 @@ class DB( HydrusDB.HydrusDB ):
         ( mime, ) = result
         
         return ( True, mime )
+        
+    
+    def _RepositoryNullifyHistory( self, service_key, begin, end ):
+        
+        service_id = self._GetServiceId( service_key )
+        
+        self._RepositoryNullifyHistoryFiles( service_id, begin, end )
+        self._RepositoryNullifyHistoryTagParents( service_id, begin, end )
+        self._RepositoryNullifyHistoryTagSiblings( service_id, begin, end )
+        self._RepositoryNullifyHistoryMappings( service_id, begin, end )
+        
+    
+    def _RepositoryNullifyHistoryFiles( self, service_id, begin, end ):
+        
+        null_account_id = self._service_ids_to_null_account_ids[ service_id ]
+        
+        ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
+        
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE file_timestamp BETWEEN ? AND ?;'.format( current_files_table_name ), ( null_account_id, begin, end ) )
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE file_timestamp BETWEEN ? AND ?;'.format( deleted_files_table_name ), ( null_account_id, begin, end ) )
+        
+    
+    def _RepositoryNullifyHistoryMappings( self, service_id, begin, end ):
+        
+        null_account_id = self._service_ids_to_null_account_ids[ service_id ]
+        
+        ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
+        
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE mapping_timestamp BETWEEN ? AND ?;'.format( current_mappings_table_name ), ( null_account_id, begin, end ) )
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE mapping_timestamp BETWEEN ? AND ?;'.format( deleted_mappings_table_name ), ( null_account_id, begin, end ) )
+        
+    
+    def _RepositoryNullifyHistoryTagParents( self, service_id, begin, end ):
+        
+        null_account_id = self._service_ids_to_null_account_ids[ service_id ]
+        
+        ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
+        
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE parent_timestamp BETWEEN ? AND ?;'.format( current_tag_parents_table_name ), ( null_account_id, begin, end ) )
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE parent_timestamp BETWEEN ? AND ?;'.format( deleted_tag_parents_table_name ), ( null_account_id, begin, end ) )
+        
+    
+    def _RepositoryNullifyHistoryTagSiblings( self, service_id, begin, end ):
+        
+        null_account_id = self._service_ids_to_null_account_ids[ service_id ]
+        
+        ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
+        
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE sibling_timestamp BETWEEN ? AND ?;'.format( current_tag_siblings_table_name ), ( null_account_id, begin, end ) )
+        self._Execute( 'UPDATE {} SET account_id = ? WHERE sibling_timestamp BETWEEN ? AND ?;'.format( deleted_tag_siblings_table_name ), ( null_account_id, begin, end ) )
         
     
     def _RepositoryPendTagParent( self, service_id, account_id, child_master_tag_id, parent_master_tag_id, reason_id ):
@@ -2724,7 +3059,7 @@ class DB( HydrusDB.HydrusDB ):
             child_service_tag_id = self._RepositoryGetServiceTagId( service_id, child_master_tag_id, HydrusData.GetNow() )
             parent_service_tag_id = self._RepositoryGetServiceTagId( service_id, parent_master_tag_id, HydrusData.GetNow() )
             
-            result = self._c.execute( 'SELECT 1 FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
             
             if result is not None:
                 
@@ -2732,7 +3067,7 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        self._c.execute( 'REPLACE INTO ' + pending_tag_parents_table_name + ' ( child_master_tag_id, parent_master_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( child_master_tag_id, parent_master_tag_id, account_id, reason_id ) )
+        self._Execute( 'REPLACE INTO ' + pending_tag_parents_table_name + ' ( child_master_tag_id, parent_master_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( child_master_tag_id, parent_master_tag_id, account_id, reason_id ) )
         
     
     def _RepositoryPendTagSibling( self, service_id, account_id, bad_master_tag_id, good_master_tag_id, reason_id ):
@@ -2747,7 +3082,7 @@ class DB( HydrusDB.HydrusDB ):
             bad_service_tag_id = self._RepositoryGetServiceTagId( service_id, bad_master_tag_id, HydrusData.GetNow() )
             good_service_tag_id = self._RepositoryGetServiceTagId( service_id, good_master_tag_id, HydrusData.GetNow() )
             
-            result = self._c.execute( 'SELECT 1 FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
             
             if result is not None:
                 
@@ -2755,57 +3090,59 @@ class DB( HydrusDB.HydrusDB ):
                 
             
         
-        self._c.execute( 'REPLACE INTO ' + pending_tag_siblings_table_name + ' ( bad_master_tag_id, good_master_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( bad_master_tag_id, good_master_tag_id, account_id, reason_id ) )
+        self._Execute( 'REPLACE INTO ' + pending_tag_siblings_table_name + ' ( bad_master_tag_id, good_master_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( bad_master_tag_id, good_master_tag_id, account_id, reason_id ) )
         
     
     def _RepositoryPetitionFiles( self, service_id, account_id, service_hash_ids, reason_id ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        select_statement = 'SELECT service_hash_id FROM ' + current_files_table_name + ' WHERE service_hash_id = ?;'
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
+            
+            valid_service_hash_ids = self._STL( self._Execute( 'SELECT service_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id );'.format( temp_hash_ids_table_name, current_files_table_name ) ) )
+            
         
-        valid_service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) ]
-        
-        self._c.executemany( 'REPLACE INTO ' + petitioned_files_table_name + ' ( service_hash_id, account_id, reason_id ) VALUES ( ?, ?, ? );', ( ( service_hash_id, account_id, reason_id ) for service_hash_id in valid_service_hash_ids ) )
+        self._ExecuteMany( 'REPLACE INTO ' + petitioned_files_table_name + ' ( service_hash_id, account_id, reason_id ) VALUES ( ?, ?, ? );', ( ( service_hash_id, account_id, reason_id ) for service_hash_id in valid_service_hash_ids ) )
         
     
     def _RepositoryPetitionMappings( self, service_id, account_id, service_tag_id, service_hash_ids, reason_id ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        select_statement = 'SELECT service_hash_id FROM ' + current_mappings_table_name + ' WHERE service_tag_id = ' + str( service_tag_id ) + ' AND service_hash_id = ?;'
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
+            
+            valid_service_hash_ids = self._STL( self._Execute( 'SELECT service_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id ) WHERE service_tag_id = ?;'.format( temp_hash_ids_table_name, current_mappings_table_name ), ( service_tag_id, ) ) )
+            
         
-        valid_service_hash_ids = [ service_hash_id for ( service_hash_id, ) in self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ) ]
-        
-        self._c.executemany( 'REPLACE INTO ' + petitioned_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', [ ( service_tag_id, service_hash_id, account_id, reason_id ) for service_hash_id in valid_service_hash_ids ] )
+        self._ExecuteMany( 'REPLACE INTO ' + petitioned_mappings_table_name + ' ( service_tag_id, service_hash_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', [ ( service_tag_id, service_hash_id, account_id, reason_id ) for service_hash_id in valid_service_hash_ids ] )
         
     
     def _RepositoryPetitionTagParent( self, service_id, account_id, child_service_tag_id, parent_service_tag_id, reason_id ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT 1 FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM ' + current_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ).fetchone()
         
         if result is None:
             
             return
             
         
-        self._c.execute( 'REPLACE INTO ' + petitioned_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, reason_id ) )
+        self._Execute( 'REPLACE INTO ' + petitioned_tag_parents_table_name + ' ( child_service_tag_id, parent_service_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( child_service_tag_id, parent_service_tag_id, account_id, reason_id ) )
         
     
     def _RepositoryPetitionTagSibling( self, service_id, account_id, bad_service_tag_id, good_service_tag_id, reason_id ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        result = self._c.execute( 'SELECT 1 FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM ' + current_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ).fetchone()
         
         if result is None:
             
             return
             
         
-        self._c.execute( 'REPLACE INTO ' + petitioned_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, reason_id ) )
+        self._Execute( 'REPLACE INTO ' + petitioned_tag_siblings_table_name + ' ( bad_service_tag_id, good_service_tag_id, account_id, reason_id ) VALUES ( ?, ?, ?, ? );', ( bad_service_tag_id, good_service_tag_id, account_id, reason_id ) )
         
     
     def _RepositoryProcessAddFile( self, service, account, file_dict, timestamp ):
@@ -2835,7 +3172,7 @@ class DB( HydrusDB.HydrusDB ):
                     
                     table_join = self._RepositoryGetFilesInfoFilesTableJoin( service_id, HC.CONTENT_STATUS_CURRENT )
                     
-                    ( total_current_storage, ) = self._c.execute( 'SELECT SUM( size ) FROM ' + table_join + ';' ).fetchone()
+                    ( total_current_storage, ) = self._Execute( 'SELECT SUM( size ) FROM ' + table_join + ';' ).fetchone()
                     
                     if total_current_storage is None:
                         
@@ -2844,7 +3181,7 @@ class DB( HydrusDB.HydrusDB ):
                     
                     table_join = self._RepositoryGetFilesInfoFilesTableJoin( service_id, HC.CONTENT_STATUS_PENDING )
                     
-                    ( total_pending_storage, ) = self._c.execute( 'SELECT SUM( size ) FROM ' + table_join + ';' ).fetchone()
+                    ( total_pending_storage, ) = self._Execute( 'SELECT SUM( size ) FROM ' + table_join + ';' ).fetchone()
                     
                     if total_pending_storage is None:
                         
@@ -2864,7 +3201,7 @@ class DB( HydrusDB.HydrusDB ):
             
         
     
-    def _RepositoryProcessClientToServerUpdate( self, service_key, account, client_to_server_update, timestamp ):
+    def _RepositoryProcessClientToServerUpdate( self, service_key: bytes, account: HydrusNetwork.Account, client_to_server_update: HydrusNetwork.ClientToServerUpdate, timestamp: int ):
         
         service_id = self._GetServiceId( service_key )
         
@@ -3116,13 +3453,14 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
-        select_statement = 'SELECT account_id, COUNT( * ) FROM ' + petitioned_files_table_name + ' WHERE service_hash_id = ? GROUP BY account_id;'
-        
         counter = collections.Counter()
         
-        for ( account_id, count ) in self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ):
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
             
-            counter[ account_id ] += count
+            for ( account_id, count ) in self._Execute( 'SELECT account_id, COUNT( * ) FROM {} CROSS JOIN {} USING ( service_hash_id ) GROUP BY account_id;'.format( temp_hash_ids_table_name, petitioned_files_table_name ) ):
+                
+                counter[ account_id ] += count
+                
             
         
         scores = [ ( account_id, count * multiplier ) for ( account_id, count ) in counter.items() ]
@@ -3134,13 +3472,14 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_mappings_table_name, deleted_mappings_table_name, pending_mappings_table_name, petitioned_mappings_table_name ) = GenerateRepositoryMappingsTableNames( service_id )
         
-        select_statement = 'SELECT account_id, COUNT( * ) FROM ' + petitioned_mappings_table_name + ' WHERE service_tag_id = ' + str( service_tag_id ) + ' AND service_hash_id = ? GROUP BY account_id;'
-        
         counter = collections.Counter()
         
-        for ( account_id, count ) in self._ExecuteManySelectSingleParam( select_statement, service_hash_ids ):
+        with self._MakeTemporaryIntegerTable( service_hash_ids, 'service_hash_id' ) as temp_hash_ids_table_name:
             
-            counter[ account_id ] += count
+            for ( account_id, count ) in self._Execute( 'SELECT account_id, COUNT( * ) FROM {} CROSS JOIN {} USING ( service_hash_id ) WHERE service_tag_id = ? GROUP BY account_id;'.format( temp_hash_ids_table_name, petitioned_mappings_table_name ), ( service_tag_id, ) ):
+                
+                counter[ account_id ] += count
+                
             
         
         scores = [ ( account_id, count * multiplier ) for ( account_id, count ) in counter.items() ]
@@ -3160,7 +3499,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        account_ids = [ account_id for ( account_id, ) in self._c.execute( 'SELECT account_id FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) ) ]
+        account_ids = [ account_id for ( account_id, ) in self._Execute( 'SELECT account_id FROM ' + pending_tag_parents_table_name + ' WHERE child_master_tag_id = ? AND parent_master_tag_id = ?;', ( child_master_tag_id, parent_master_tag_id ) ) ]
         
         scores = [ ( account_id, weighted_score ) for account_id in account_ids ]
         
@@ -3177,7 +3516,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_parents_table_name, deleted_tag_parents_table_name, pending_tag_parents_table_name, petitioned_tag_parents_table_name ) = GenerateRepositoryTagParentsTableNames( service_id )
         
-        account_ids = [ account_id for ( account_id, ) in self._c.execute( 'SELECT account_id FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ) ]
+        account_ids = [ account_id for ( account_id, ) in self._Execute( 'SELECT account_id FROM ' + petitioned_tag_parents_table_name + ' WHERE child_service_tag_id = ? AND parent_service_tag_id = ?;', ( child_service_tag_id, parent_service_tag_id ) ) ]
         
         scores = [ ( account_id, weighted_score ) for account_id in account_ids ]
         
@@ -3196,7 +3535,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        account_ids = [ account_id for ( account_id, ) in self._c.execute( 'SELECT account_id FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) ) ]
+        account_ids = [ account_id for ( account_id, ) in self._Execute( 'SELECT account_id FROM ' + pending_tag_siblings_table_name + ' WHERE bad_master_tag_id = ? AND good_master_tag_id = ?;', ( bad_master_tag_id, good_master_tag_id ) ) ]
         
         scores = [ ( account_id, weighted_score ) for account_id in account_ids ]
         
@@ -3213,7 +3552,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( current_tag_siblings_table_name, deleted_tag_siblings_table_name, pending_tag_siblings_table_name, petitioned_tag_siblings_table_name ) = GenerateRepositoryTagSiblingsTableNames( service_id )
         
-        account_ids = [ account_id for ( account_id, ) in self._c.execute( 'SELECT account_id FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ) ]
+        account_ids = [ account_id for ( account_id, ) in self._Execute( 'SELECT account_id FROM ' + petitioned_tag_siblings_table_name + ' WHERE bad_service_tag_id = ? AND good_service_tag_id = ?;', ( bad_service_tag_id, good_service_tag_id ) ) ]
         
         scores = [ ( account_id, weighted_score ) for account_id in account_ids ]
         
@@ -3224,7 +3563,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        result = self._c.execute( 'SELECT 1 FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM ' + hash_id_map_table_name + ' WHERE master_hash_id = ?;', ( master_hash_id, ) ).fetchone()
         
         if result is None:
             
@@ -3240,7 +3579,7 @@ class DB( HydrusDB.HydrusDB ):
         
         ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
         
-        result = self._c.execute( 'SELECT 1 FROM ' + tag_id_map_table_name + ' WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM ' + tag_id_map_table_name + ' WHERE master_tag_id = ?;', ( master_tag_id, ) ).fetchone()
         
         if result is None:
             
@@ -3254,6 +3593,9 @@ class DB( HydrusDB.HydrusDB ):
     
     def _RepositorySuperBan( self, service_id, admin_account_id, subject_account_ids, timestamp ):
         
+        # this is pending a rewrite, nothing calls it atm, executemanysingleparam no longer exists
+        pass
+        '''
         ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
         
         select_statement = 'SELECT service_hash_id FROM ' + current_files_table_name + ' WHERE account_id = ?;'
@@ -3306,13 +3648,13 @@ class DB( HydrusDB.HydrusDB ):
                 self._RepositoryDeleteTagSibling( service_id, admin_account_id, bad_service_tag_id, good_service_tag_id, timestamp )
                 
             
-        
+        '''
     
     def _RewardAccounts( self, service_id, score_type, scores ):
         
-        self._c.executemany( 'INSERT OR IGNORE INTO account_scores ( service_id, account_id, score_type, score ) VALUES ( ?, ?, ?, ? );', [ ( service_id, account_id, score_type, 0 ) for ( account_id, score ) in scores ] )
+        self._ExecuteMany( 'INSERT OR IGNORE INTO account_scores ( service_id, account_id, score_type, score ) VALUES ( ?, ?, ?, ? );', [ ( service_id, account_id, score_type, 0 ) for ( account_id, score ) in scores ] )
         
-        self._c.executemany( 'UPDATE account_scores SET score = score + ? WHERE service_id = ? AND account_id = ? and score_type = ?;', [ ( score, service_id, account_id, score_type ) for ( account_id, score ) in scores ] )
+        self._ExecuteMany( 'UPDATE account_scores SET score = score + ? WHERE service_id = ? AND account_id = ? and score_type = ?;', [ ( score, service_id, account_id, score_type ) for ( account_id, score ) in scores ] )
         
     
     def _SaveAccounts( self, service_id, accounts ):
@@ -3323,7 +3665,7 @@ class DB( HydrusDB.HydrusDB ):
             
             dictionary_string = dictionary.DumpToString()
             
-            self._c.execute( 'UPDATE accounts SET dictionary_string = ? WHERE account_key = ?;', ( dictionary_string, sqlite3.Binary( account_key ) ) )
+            self._Execute( 'UPDATE accounts SET dictionary_string = ? WHERE account_key = ?;', ( dictionary_string, sqlite3.Binary( account_key ) ) )
             
             account.SetClean()
             
@@ -3352,7 +3694,7 @@ class DB( HydrusDB.HydrusDB ):
             
             dictionary_string = dictionary.DumpToString()
             
-            self._c.execute( 'UPDATE services SET dictionary_string = ? WHERE service_key = ?;', ( dictionary_string, sqlite3.Binary( service_key ) ) )
+            self._Execute( 'UPDATE services SET dictionary_string = ? WHERE service_key = ?;', ( dictionary_string, sqlite3.Binary( service_key ) ) )
             
             service.SetClean()
             
@@ -3364,13 +3706,13 @@ class DB( HydrusDB.HydrusDB ):
         
         if version == 433:
             
-            old_data = self._c.execute( 'SELECT account_type_id, service_id, account_type_key, title, dictionary_string FROM account_types;' ).fetchall()
+            old_data = self._Execute( 'SELECT account_type_id, service_id, account_type_key, title, dictionary_string FROM account_types;' ).fetchall()
             
-            self._c.execute( 'DROP TABLE account_types;' )
+            self._Execute( 'DROP TABLE account_types;' )
             
             from hydrus.core.networking import HydrusNetworkLegacy
             
-            self._c.execute( 'CREATE TABLE account_types ( account_type_id INTEGER PRIMARY KEY, service_id INTEGER, dump TEXT );' )
+            self._Execute( 'CREATE TABLE account_types ( account_type_id INTEGER PRIMARY KEY, service_id INTEGER, dump TEXT );' )
             
             for ( account_type_id, service_id, account_type_key, title, dictionary_string ) in old_data:
                 
@@ -3378,13 +3720,65 @@ class DB( HydrusDB.HydrusDB ):
                 
                 dump = account_type.DumpToString()
                 
-                self._c.execute( 'INSERT INTO account_types ( account_type_id, service_id, dump ) VALUES ( ?, ?, ? );', ( account_type_id, service_id, dump ) )
+                self._Execute( 'INSERT INTO account_types ( account_type_id, service_id, dump ) VALUES ( ?, ?, ? );', ( account_type_id, service_id, dump ) )
+                
+            
+        
+        if version == 445:
+            
+            # ok, time for null account!
+            
+            service_ids = self._GetServiceIds()
+            
+            for service_id in service_ids:
+                
+                service_key = self._GetServiceKey( service_id )
+                
+                service_null_account_type = HydrusNetwork.AccountType.GenerateNullAccountType()
+                
+                service_null_account_type_id = self._AddAccountType( service_id, service_null_account_type )
+                
+                self._RefreshAccountInfoCache()
+                
+                expires = None
+                
+                [ registration_key ] = self._GenerateRegistrationKeys( service_id, 1, service_null_account_type_id, expires )
+                
+                null_access_key = self._GetAccessKey( service_key, registration_key )
+                
+                null_account = self._GetAccountKeyFromAccessKey( service_key, null_access_key )
+                
+                self._RefreshAccountInfoCache()
+                
+            
+        
+        if version == 463:
+            
+            result = self._Execute( 'SELECT 1 FROM sqlite_master WHERE name = ?;', ( 'deferred_physical_file_deletes', ) ).fetchone()
+            
+            if result is None:
+                
+                self._Execute( 'CREATE TABLE deferred_physical_file_deletes ( master_hash_id INTEGER PRIMARY KEY );' )
+                self._Execute( 'CREATE TABLE deferred_physical_thumbnail_deletes ( master_hash_id INTEGER PRIMARY KEY );' )
+                
+                HydrusData.Print( 'Populating deferred physical file delete tables\u2026' )
+                
+                for service_id in self._GetServiceIds( ( HC.FILE_REPOSITORY, ) ):
+                    
+                    ( hash_id_map_table_name, tag_id_map_table_name ) = GenerateRepositoryMasterMapTableNames( service_id )
+                    ( current_files_table_name, deleted_files_table_name, pending_files_table_name, petitioned_files_table_name, ip_addresses_table_name ) = GenerateRepositoryFilesTableNames( service_id )
+                    
+                    for ( block_of_master_hash_ids, num_done, num_to_do ) in HydrusDB.ReadLargeIdQueryInSeparateChunks( self._c, 'SELECT master_hash_id FROM {} CROSS JOIN {} USING ( service_hash_id );'.format( deleted_files_table_name, hash_id_map_table_name ), 1024 ):
+                        
+                        self._DeferFilesDeleteIfNowOrphan( block_of_master_hash_ids )
+                        
+                    
                 
             
         
         HydrusData.Print( 'The server has updated to version ' + str( version + 1 ) )
         
-        self._c.execute( 'UPDATE version SET version = ?;', ( version + 1, ) )
+        self._Execute( 'UPDATE version SET version = ?;', ( version + 1, ) )
         
     
     def _Vacuum( self ):
@@ -3400,7 +3794,7 @@ class DB( HydrusDB.HydrusDB ):
         
         try:
             
-            db_names = [ name for ( index, name, path ) in self._c.execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp', 'durable_temp' ) ]
+            db_names = [ name for ( index, name, path ) in self._Execute( 'PRAGMA database_list;' ) if name not in ( 'mem', 'temp', 'durable_temp' ) ]
             
             db_names = [ name for name in db_names if name in self._db_filenames ]
             
@@ -3428,7 +3822,7 @@ class DB( HydrusDB.HydrusDB ):
             
             if len( db_names ) > 0:
                 
-                self._CloseDBCursor()
+                self._CloseDBConnection()
                 
                 try:
                     
@@ -3462,7 +3856,7 @@ class DB( HydrusDB.HydrusDB ):
                     
                 finally:
                     
-                    self._InitDBCursor()
+                    self._InitDBConnection()
                     
                 
             
@@ -3476,11 +3870,11 @@ class DB( HydrusDB.HydrusDB ):
         
         service_id = self._GetServiceId( service_key )
         
-        result = self._c.execute( 'SELECT 1 FROM accounts WHERE service_id = ? AND hashed_access_key = ?;', ( service_id, sqlite3.Binary( hashlib.sha256( access_key ).digest() ) ) ).fetchone()
+        result = self._Execute( 'SELECT 1 FROM accounts WHERE service_id = ? AND hashed_access_key = ?;', ( service_id, sqlite3.Binary( hashlib.sha256( access_key ).digest() ) ) ).fetchone()
         
         if result is None:
             
-            result = self._c.execute( 'SELECT 1 FROM registration_keys WHERE service_id = ? AND access_key = ?;', ( service_id, sqlite3.Binary( access_key ) ) ).fetchone()
+            result = self._Execute( 'SELECT 1 FROM registration_keys WHERE service_id = ? AND access_key = ?;', ( service_id, sqlite3.Binary( access_key ) ) ).fetchone()
             
             if result is None:
                 

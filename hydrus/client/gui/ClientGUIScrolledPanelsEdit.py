@@ -11,8 +11,6 @@ from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusTags
-from hydrus.core import HydrusText
-from hydrus.core.networking import HydrusNetwork
 
 from hydrus.client import ClientApplicationCommand as CAC
 from hydrus.client import ClientConstants as CC
@@ -27,13 +25,15 @@ from hydrus.client.gui import ClientGUIMPV
 from hydrus.client.gui import ClientGUITags
 from hydrus.client.gui import ClientGUITopLevelWindowsPanels
 from hydrus.client.gui import QtPorting as QP
-from hydrus.client.gui.lists import ClientGUIListBoxes
 from hydrus.client.gui.lists import ClientGUIListConstants as CGLC
 from hydrus.client.gui.lists import ClientGUIListCtrl
+from hydrus.client.gui.search import ClientGUILocation
 from hydrus.client.gui.widgets import ClientGUICommon
 from hydrus.client.gui.widgets import ClientGUIControls
 from hydrus.client.gui.widgets import ClientGUIMenuButton
-from hydrus.client.importing import ClientImportOptions
+from hydrus.client.importing.options import FileImportOptions
+from hydrus.client.importing.options import PresentationImportOptions
+from hydrus.client.importing.options import TagImportOptions
 from hydrus.client.media import ClientMedia
 from hydrus.client.metadata import ClientTags
 
@@ -43,7 +43,7 @@ class EditChooseMultiple( ClientGUIScrolledPanels.EditPanel ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
-        self._checkboxes = QP.CheckListBox( self )
+        self._checkboxes = ClientGUICommon.BetterCheckBoxList( self )
         
         self._checkboxes.setMinimumSize( QC.QSize( 320, 420 ) )
         
@@ -84,7 +84,7 @@ class EditChooseMultiple( ClientGUIScrolledPanels.EditPanel ):
     
     def GetValue( self ) -> list:
         
-        return self._checkboxes.GetChecked()
+        return self._checkboxes.GetValue()
         
     
 class EditDefaultTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
@@ -310,7 +310,7 @@ class EditDefaultTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             tag_import_options = HydrusSerialisable.CreateFromString( raw_text )
             
-            if not isinstance( tag_import_options, ClientImportOptions.TagImportOptions ):
+            if not isinstance( tag_import_options, TagImportOptions.TagImportOptions ):
                 
                 raise Exception( 'Not a Tag Import Options!' )
                 
@@ -342,63 +342,150 @@ class EditDefaultTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditDeleteFilesPanel( ClientGUIScrolledPanels.EditPanel ):
     
+    SPECIAL_CHOICE_CUSTOM = 0
+    SPECIAL_CHOICE_NO_REASON = 1
+    
     def __init__( self, parent: QW.QWidget, media, default_reason, suggested_file_service_key = None ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
-        self._media = ClientMedia.FlattenMedia( media )
+        local_file_services = list( HG.client_controller.services_manager.GetServices( ( HC.LOCAL_FILE_DOMAIN, ) ) )
         
-        self._question_is_already_resolved = False
+        if suggested_file_service_key is None:
+            
+            suggested_file_service_key = local_file_services[0].GetServiceKey()
+            
+        
+        self._media = self._FilterForDeleteLock( ClientMedia.FlattenMedia( media ), suggested_file_service_key )
+        
+        self._question_is_already_resolved = len( self._media ) == 0
+        
+        ( self._all_files_have_existing_file_deletion_reasons, self._existing_shared_file_deletion_reason ) = self._GetExistingSharedFileDeletionReason()
         
         self._simple_description = ClientGUICommon.BetterStaticText( self, label = 'init' )
         
+        self._num_actionable_local_file_services = 0
         self._permitted_action_choices = []
+        self._this_dialog_includes_service_keys = False
         
-        self._InitialisePermittedActionChoices( suggested_file_service_key = suggested_file_service_key )
+        self._InitialisePermittedActionChoices()
         
         self._action_radio = ClientGUICommon.BetterRadioBox( self, choices = self._permitted_action_choices, vertical = True )
         
         self._action_radio.Select( 0 )
         
+        selection_success = False
+        
+        if HG.client_controller.new_options.GetBoolean( 'remember_last_advanced_file_deletion_special_action' ):
+            
+            last_advanced_file_deletion_special_action = HG.client_controller.new_options.GetNoneableString( 'last_advanced_file_deletion_special_action' )
+            
+            selection_success = self._TryToSelectAction( last_advanced_file_deletion_special_action )
+            
+        
+        if not selection_success:
+            
+            self._TryToSelectAction( suggested_file_service_key )
+            
+        
         self._reason_panel = ClientGUICommon.StaticBox( self, 'reason' )
+        
+        existing_reason_was_in_list = False
         
         permitted_reason_choices = []
         
-        permitted_reason_choices.append( ( default_reason, default_reason ) )
-        
-        for s in HG.client_controller.new_options.GetStringList( 'advanced_file_deletion_reasons' ):
+        if self._existing_shared_file_deletion_reason is not None and default_reason == self._existing_shared_file_deletion_reason:
             
-            permitted_reason_choices.append( ( s, s ) )
+            existing_reason_was_in_list = True
             
-        
-        permitted_reason_choices.append( ( 'custom', None ) )
-        
-        self._reason_radio = ClientGUICommon.BetterRadioBox( self._reason_panel, choices = permitted_reason_choices, vertical = True )
-        
-        self._reason_radio.Select( 0 )
-        
-        self._custom_reason = QW.QLineEdit( self._reason_panel )
-        
-        #
-        
-        ( file_service_key, hashes, description ) = self._action_radio.GetValue()
-        
-        self._simple_description.setText( description )
-        
-        if HG.client_controller.new_options.GetBoolean( 'use_advanced_file_deletion_dialog' ):
-            
-            if len( self._permitted_action_choices ) == 1:
-                
-                self._action_radio.hide()
-                
-            else:
-                
-                self._simple_description.hide()
-                
+            permitted_reason_choices.append( ( 'keep existing reason: {}'.format( default_reason ), default_reason ) )
             
         else:
             
+            permitted_reason_choices.append( ( default_reason, default_reason ) )
+            
+        
+        if HG.client_controller.new_options.GetBoolean( 'remember_last_advanced_file_deletion_reason' ):
+            
+            last_advanced_file_deletion_reason = HG.client_controller.new_options.GetNoneableString( 'last_advanced_file_deletion_reason' )
+            
+        else:
+            
+            last_advanced_file_deletion_reason = None
+            
+        
+        if last_advanced_file_deletion_reason is None:
+            
+            selection_index = 0 # default, top row
+            
+        else:
+            
+            selection_index = None # text or custom
+            
+        
+        for ( i, s ) in enumerate( HG.client_controller.new_options.GetStringList( 'advanced_file_deletion_reasons' ) ):
+            
+            if self._existing_shared_file_deletion_reason is not None and s == self._existing_shared_file_deletion_reason and not existing_reason_was_in_list:
+                
+                existing_reason_was_in_list = True
+                
+                permitted_reason_choices.append( ( 'keep existing reason: {}'.format( s ), s ) )
+                
+            else:
+                
+                permitted_reason_choices.append( ( s, s ) )
+                
+            
+            if last_advanced_file_deletion_reason is not None and s == last_advanced_file_deletion_reason:
+                
+                selection_index = i + 1
+                
+            
+        
+        if self._existing_shared_file_deletion_reason is not None and not existing_reason_was_in_list:
+            
+            permitted_reason_choices.append( ( 'keep existing reason: {}'.format( self._existing_shared_file_deletion_reason ), self._existing_shared_file_deletion_reason ) )
+            
+        
+        custom_index = len( permitted_reason_choices )
+        
+        permitted_reason_choices.append( ( 'custom', self.SPECIAL_CHOICE_CUSTOM ) )
+        
+        if self._all_files_have_existing_file_deletion_reasons and self._existing_shared_file_deletion_reason is None:
+            
+            permitted_reason_choices.append( ( '(all files have existing file deletion reasons and they differ): do not alter them.', self.SPECIAL_CHOICE_NO_REASON ) )
+            
+        
+        self._reason_radio = ClientGUICommon.BetterRadioBox( self._reason_panel, choices = permitted_reason_choices, vertical = True )
+        
+        self._custom_reason = QW.QLineEdit( self._reason_panel )
+        
+        if selection_index is None:
+            
+            selection_index = custom_index
+            
+            self._custom_reason.setText( last_advanced_file_deletion_reason )
+            
+        
+        self._reason_radio.Select( selection_index )
+        
+        #
+        
+        ( file_service_key, list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, description ) = self._action_radio.GetValue()
+        
+        self._simple_description.setText( description )
+        
+        if len( self._permitted_action_choices ) == 1:
+            
             self._action_radio.hide()
+            
+        else:
+            
+            self._simple_description.hide()
+            
+        
+        if not HG.client_controller.new_options.GetBoolean( 'use_advanced_file_deletion_dialog' ):
+            
             self._reason_panel.hide()
             
         
@@ -429,95 +516,266 @@ class EditDeleteFilesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self.widget().setLayout( vbox )
         
+        QP.CallAfter( self._SetFocus )
+        
+    
+    def _FilterForDeleteLock( self, media, suggested_file_service_key: bytes ):
+        
+        delete_lock_for_archived_files = HG.client_controller.new_options.GetBoolean( 'delete_lock_for_archived_files' )
+        
+        if delete_lock_for_archived_files:
+            
+            service = HG.client_controller.services_manager.GetService( suggested_file_service_key )
+            
+            if service.GetServiceType() in HC.LOCAL_FILE_SERVICES:
+                
+                media = [ m for m in media if m.HasInbox() ]
+                
+            
+        
+        return media
+        
+    
+    def _GetExistingSharedFileDeletionReason( self ):
+        
+        all_files_have_existing_file_deletion_reasons = True
+        reasons = set()
+        
+        for m in self._media:
+            
+            lm = m.GetLocationsManager()
+            
+            if not lm.HasLocalFileDeletionReason():
+                
+                all_files_have_existing_file_deletion_reasons = False
+                
+                return ( all_files_have_existing_file_deletion_reasons, None )
+                
+            
+            reason = lm.GetLocalFileDeletionReason()
+            
+            reasons.add( reason )
+            
+        
+        shared_reason = None
+        
+        if all_files_have_existing_file_deletion_reasons and len( reasons ) == 1:
+            
+            shared_reason = list( reasons )[0]
+            
+        
+        return ( all_files_have_existing_file_deletion_reasons, shared_reason )
+        
     
     def _GetReason( self ):
         
-        reason = self._reason_radio.GetValue()
-        
-        if reason is None:
+        if self._reason_panel.isEnabled():
             
-            reason = self._custom_reason.text()
+            reason = self._reason_radio.GetValue()
+            
+            if reason == self.SPECIAL_CHOICE_CUSTOM:
+                
+                reason = self._custom_reason.text()
+                
+            elif reason == self.SPECIAL_CHOICE_NO_REASON:
+                
+                reason = None
+                
+            
+        else:
+            
+            reason = None
             
         
         return reason
         
     
-    def _InitialisePermittedActionChoices( self, suggested_file_service_key = None ):
+    def _InitialisePermittedActionChoices( self ):
         
         possible_file_service_keys = []
         
-        if suggested_file_service_key is None:
+        local_file_services = list( HG.client_controller.services_manager.GetServices( ( HC.LOCAL_FILE_DOMAIN, ) ) )
+        local_file_service_keys = { service.GetServiceKey() for service in local_file_services }
+        
+        possible_file_service_keys.extend( ( ( lfs.GetServiceKey(), lfs.GetServiceKey() ) for lfs in local_file_services ) )
+        
+        possible_file_service_keys.append( ( CC.TRASH_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
+        
+        if HG.client_controller.new_options.GetBoolean( 'use_advanced_file_deletion_dialog' ):
             
-            suggested_file_service_key = CC.LOCAL_FILE_SERVICE_KEY
+            possible_file_service_keys.append( ( CC.COMBINED_LOCAL_FILE_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY ) )
             
         
-        if suggested_file_service_key == CC.LOCAL_FILE_SERVICE_KEY:
+        possible_file_service_keys.extend( ( ( rfs.GetServiceKey(), rfs.GetServiceKey() ) for rfs in HG.client_controller.services_manager.GetServices( ( HC.FILE_REPOSITORY, ) ) ) )
+        
+        keys_to_hashes = { ( selection_file_service_key, deletee_file_service_key ) : [ m.GetHash() for m in self._media if selection_file_service_key in m.GetLocationsManager().GetCurrent() ] for ( selection_file_service_key, deletee_file_service_key ) in possible_file_service_keys }
+        
+        trashed_key = ( CC.TRASH_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
+        combined_key = ( CC.COMBINED_LOCAL_FILE_SERVICE_KEY, CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
+        
+        if trashed_key in keys_to_hashes and combined_key in keys_to_hashes and keys_to_hashes[ trashed_key ] == keys_to_hashes[ combined_key ]:
             
-            possible_file_service_keys.append( CC.LOCAL_FILE_SERVICE_KEY )
-            possible_file_service_keys.append( CC.TRASH_SERVICE_KEY )
-            possible_file_service_keys.append( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
-            
-        elif suggested_file_service_key == CC.TRASH_SERVICE_KEY:
-            
-            possible_file_service_keys.append( CC.TRASH_SERVICE_KEY )
-            possible_file_service_keys.append( CC.COMBINED_LOCAL_FILE_SERVICE_KEY )
-            
-        else:
-            
-            possible_file_service_keys.append( suggested_file_service_key )
+            del keys_to_hashes[ trashed_key ]
             
         
-        keys_to_hashes = { possible_file_service_key : [ m.GetHash() for m in self._media if possible_file_service_key in m.GetLocationsManager().GetCurrent() ] for possible_file_service_key in possible_file_service_keys }
+        possible_file_service_keys_and_hashes = [ ( fsk, keys_to_hashes[ fsk ] ) for fsk in possible_file_service_keys if fsk in keys_to_hashes and len( keys_to_hashes[ fsk ] ) > 0 ]
         
-        for possible_file_service_key in possible_file_service_keys:
-            
-            hashes = keys_to_hashes[ possible_file_service_key ]
+        self._num_actionable_local_file_services = len( local_file_service_keys.intersection( ( fsk[0] for ( fsk, hashes ) in possible_file_service_keys_and_hashes ) ) )
+        
+        all_local_jobs = []
+        num_local_services_done = 0
+        
+        for ( fsk, hashes ) in possible_file_service_keys_and_hashes:
             
             num_to_delete = len( hashes )
             
-            if len( hashes ) > 0:
+            ( selection_file_service_key, deletee_file_service_key ) = fsk
+            
+            deletee_service = HG.client_controller.services_manager.GetService( deletee_file_service_key )
+            
+            deletee_service_type = deletee_service.GetServiceType()
+            
+            if deletee_service_type == HC.LOCAL_FILE_DOMAIN:
                 
-                if possible_file_service_key == CC.LOCAL_FILE_SERVICE_KEY:
+                self._this_dialog_includes_service_keys = True
+                
+                if num_to_delete == 1:
                     
-                    if not HC.options[ 'confirm_trash' ]:
-                        
-                        # this dialog will never show
-                        self._question_is_already_resolved = True
-                        
-                    
-                    if num_to_delete == 1: text = 'Send this file to the trash?'
-                    else: text = 'Send these ' + HydrusData.ToHumanInt( num_to_delete ) + ' files to the trash?'
-                    
-                elif possible_file_service_key == CC.TRASH_SERVICE_KEY:
-                    
-                    if num_to_delete == 1: text = 'Permanently delete this file?'
-                    else: text = 'Permanently delete these ' + HydrusData.ToHumanInt( num_to_delete ) + ' files?'
-                    
-                elif possible_file_service_key == CC.COMBINED_LOCAL_FILE_SERVICE_KEY:
-                    
-                    # do a physical delete, skipping trash
-                    # this is only a valid option when local delete has some values, but it applies to both local and trash, hence the combined local fsk
-                    
-                    if CC.LOCAL_FILE_SERVICE_KEY in keys_to_hashes and len( keys_to_hashes[ CC.LOCAL_FILE_SERVICE_KEY ] ) > 0:
-                        
-                        possible_file_service_key = 'physical_delete'
-                        
-                        if num_to_delete == 1: text = 'Permanently delete this file?'
-                        else: text = 'Permanently delete these ' + HydrusData.ToHumanInt( num_to_delete ) + ' files?'
-                        
-                    else:
-                        
-                        continue
-                        
+                    file_desc = 'one file'
                     
                 else:
                     
-                    if num_to_delete == 1: text = 'Admin-delete this file?'
-                    else: text = 'Admin-delete these ' + HydrusData.ToHumanInt( num_to_delete ) + ' files?'
+                    file_desc = '{} files'.format( HydrusData.ToHumanInt( num_to_delete ) )
                     
                 
-                self._permitted_action_choices.append( ( text, ( possible_file_service_key, hashes, text ) ) )
+                if self._num_actionable_local_file_services == 1:
+                    
+                    template = 'Send {} from {} to trash?'
+                    
+                else:
+                    
+                    template = 'Remove {} from {}?'
+                    
                 
+                text = template.format( file_desc, deletee_service.GetName() )
+                
+                chunks_of_hashes = HydrusData.SplitListIntoChunks( hashes, 64 )
+                
+                content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes ) for chunk_of_hashes in chunks_of_hashes ]
+                
+                list_of_service_keys_to_content_updates = [ { deletee_file_service_key : [ content_update ] } for content_update in content_updates ]
+                
+                all_local_jobs.extend( list_of_service_keys_to_content_updates )
+                
+                save_reason = True
+                
+                involves_physical_delete = False
+                
+                num_local_services_done += 1
+                
+                # this is an ugly place to put this, and the mickey-mouse append, but it works
+                if self._num_actionable_local_file_services > 1 and num_local_services_done == self._num_actionable_local_file_services:
+                    
+                    self._permitted_action_choices.append( ( text, ( deletee_file_service_key, list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, text ) ) )
+                    
+                    deletee_file_service_key = CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY
+                    
+                    h = [ m.GetHash() for m in self._media if CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY in m.GetLocationsManager().GetCurrent() ]
+                    
+                    chunks_of_hashes = HydrusData.SplitListIntoChunks( h, 64 )
+                    
+                    content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes ) for chunk_of_hashes in chunks_of_hashes ]
+                    
+                    list_of_service_keys_to_content_updates = [ { deletee_file_service_key : [ content_update ] } for content_update in content_updates ]
+                    
+                    text = 'Delete from all local services? (force send to trash)'
+                    
+                    save_reason = True
+                    
+                    involves_physical_delete = False
+                    
+                
+            elif deletee_service_type == HC.FILE_REPOSITORY:
+                
+                if deletee_service.HasPermission( HC.CONTENT_TYPE_FILES, HC.PERMISSION_ACTION_PETITION ):
+                    
+                    self._this_dialog_includes_service_keys = True
+                    
+                    if num_to_delete == 1:
+                        
+                        file_desc = 'one file'
+                        
+                    else:
+                        
+                        file_desc = '{} files'.format( HydrusData.ToHumanInt( num_to_delete ) )
+                        
+                    
+                    if deletee_service.HasPermission( HC.CONTENT_TYPE_FILES, HC.PERMISSION_ACTION_MODERATE ):
+                        
+                        text = 'Admin-delete {} from {}?'.format( file_desc, deletee_service.GetName() )
+                        
+                        save_reason = False
+                        reason = 'admin'
+                        
+                    else:
+                        
+                        text = 'Petition {} from {}?'.format( file_desc, deletee_service.GetName() )
+                        
+                        save_reason = True
+                        reason = None
+                        
+                    
+                    content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_PETITION, hashes, reason = reason ) ]
+                    
+                    list_of_service_keys_to_content_updates = [ { deletee_file_service_key : content_updates } ]
+                    
+                    involves_physical_delete = False
+                    
+                
+            elif deletee_file_service_key == CC.COMBINED_LOCAL_FILE_SERVICE_KEY:
+                
+                # do a physical delete now, skipping or force-removing from trash
+                
+                deletee_file_service_key = 'physical_delete'
+                
+                if selection_file_service_key == CC.TRASH_SERVICE_KEY:
+                    
+                    suffix = 'trashed '
+                    
+                else:
+                    
+                    suffix = ''
+                    
+                
+                if num_to_delete == 1:
+                    
+                    suffix = 'one {}file'.format( suffix )
+                    
+                else:
+                    
+                    suffix = '{} {}files'.format( HydrusData.ToHumanInt( num_to_delete ), suffix )
+                    
+                
+                text = 'Permanently delete {}?'.format( suffix )
+                
+                chunks_of_hashes = HydrusData.SplitListIntoChunks( hashes, 64 )
+                
+                content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes ) for chunk_of_hashes in chunks_of_hashes ]
+                
+                list_of_service_keys_to_content_updates = [ { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] } for content_update in content_updates ]
+                
+                save_reason = True
+                
+                involves_physical_delete = True
+                
+            
+            self._permitted_action_choices.append( ( text, ( deletee_file_service_key, list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, text ) ) )
+            
+        
+        if self._num_actionable_local_file_services == 1 and not HC.options[ 'confirm_trash' ]:
+            
+            # this dialog will never show
+            self._question_is_already_resolved = True
             
         
         if HG.client_controller.new_options.GetBoolean( 'use_advanced_file_deletion_dialog' ):
@@ -526,7 +784,7 @@ class EditDeleteFilesPanel( ClientGUIScrolledPanels.EditPanel ):
             
             num_to_delete = len( hashes )
             
-            if len( hashes ) > 0:
+            if num_to_delete > 0:
                 
                 if num_to_delete == 1:
                     
@@ -537,7 +795,23 @@ class EditDeleteFilesPanel( ClientGUIScrolledPanels.EditPanel ):
                     text = 'Permanently delete these ' + HydrusData.ToHumanInt( num_to_delete ) + ' files and do not save a deletion record?'
                     
                 
-                self._permitted_action_choices.append( ( text, ( 'clear_delete', hashes, text ) ) )
+                chunks_of_hashes = list( HydrusData.SplitListIntoChunks( hashes, 64 ) ) # iterator, so list it to use it more than once, jej
+                
+                list_of_service_keys_to_content_updates = []
+                
+                content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes ) for chunk_of_hashes in chunks_of_hashes ]
+                
+                list_of_service_keys_to_content_updates.extend( [ { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] } for content_update in content_updates ] )
+                
+                content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADVANCED, ( 'delete_deleted', chunk_of_hashes ) ) for chunk_of_hashes in chunks_of_hashes ]
+                
+                list_of_service_keys_to_content_updates.extend( [ { CC.COMBINED_LOCAL_FILE_SERVICE_KEY : [ content_update ] } for content_update in content_updates ] )
+                
+                save_reason = False
+                
+                involves_physical_delete = True
+                
+                self._permitted_action_choices.append( ( text, ( 'clear_delete', list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, text ) ) )
                 
             
         
@@ -547,98 +821,150 @@ class EditDeleteFilesPanel( ClientGUIScrolledPanels.EditPanel ):
             
         
     
+    def _SetFocus( self ):
+        
+        if self._action_radio.isVisible():
+            
+            self._action_radio.setFocus( QC.Qt.OtherFocusReason )
+            
+        elif self._reason_panel.isVisible() and self._reason_panel.isEnabled():
+            
+            self._reason_radio.setFocus( QC.Qt.OtherFocusReason )
+            
+        
+    
+    def _TryToSelectAction( self, action ) -> bool:
+        
+        if action is None:
+            
+            return False
+            
+        
+        # this is a mess since action could be 'clear_delete' or a file service key
+        
+        if isinstance( action, bytes ):
+            
+            action = action.hex()
+            
+        
+        for ( i, choice ) in enumerate( self._permitted_action_choices ):
+            
+            deletee_file_service_key = choice[1][0]
+            
+            if isinstance( deletee_file_service_key, bytes ):
+                
+                comparison_text = deletee_file_service_key.hex()
+                
+            else:
+                
+                comparison_text = deletee_file_service_key
+                
+            
+            if comparison_text == action:
+                
+                self._action_radio.Select( i )
+                
+                return True
+                
+            
+        
+        return False
+        
+    
     def _UpdateControls( self ):
         
-        ( file_service_key, hashes, description ) = self._action_radio.GetValue()
+        ( file_service_key, list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, description ) = self._action_radio.GetValue()
         
-        reason_permitted = file_service_key in ( CC.LOCAL_FILE_SERVICE_KEY, 'physical_delete' )
+        reason_permitted = save_reason
         
         if reason_permitted:
             
-            self._reason_radio.setEnabled( True )
+            self._reason_panel.setEnabled( True )
+            
+            reason = self._reason_radio.GetValue()
+            
+            if reason == self.SPECIAL_CHOICE_CUSTOM:
+                
+                self._custom_reason.setEnabled( True )
+                
+            else:
+                
+                self._custom_reason.setEnabled( False )
+                
             
         else:
             
-            self._reason_radio.setEnabled( False )
-            self._custom_reason.setEnabled( False )
-            
-        
-        reason = self._reason_radio.GetValue()
-        
-        if reason is None:
-            
-            self._custom_reason.setEnabled( True )
-            
-        else:
-            
-            self._custom_reason.setEnabled( False )
+            self._reason_panel.setEnabled( False )
             
         
     
     def GetValue( self ):
         
+        if len( self._permitted_action_choices ) == 0 or len( self._media ) == 0:
+            
+            return ( False, [] )
+            
+        
         involves_physical_delete = False
         
-        ( file_service_key, hashes, description ) = self._action_radio.GetValue()
+        ( file_service_key, list_of_service_keys_to_content_updates, save_reason, involves_physical_delete, description ) = self._action_radio.GetValue()
         
-        reason = self._GetReason()
-        
-        local_file_services = ( CC.LOCAL_FILE_SERVICE_KEY, CC.TRASH_SERVICE_KEY )
-        
-        if file_service_key in local_file_services:
+        if save_reason:
             
-            # split them into bits so we don't hang the gui with a huge delete transaction
+            reason = self._GetReason()
             
-            chunks_of_hashes = HydrusData.SplitListIntoChunks( hashes, 64 )
-            
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes, reason = reason ) for chunk_of_hashes in chunks_of_hashes ]
-            
-            jobs = [ { file_service_key : [ content_update ] } for content_update in content_updates ]
-            
-            if file_service_key == CC.TRASH_SERVICE_KEY:
+            for service_keys_to_content_updates in list_of_service_keys_to_content_updates:
                 
-                involves_physical_delete = True
+                for ( service_key, content_updates ) in service_keys_to_content_updates.items():
+                    
+                    for content_update in content_updates:
+                        
+                        content_update.SetReason( reason )
+                        
+                    
                 
             
-        elif file_service_key == 'physical_delete':
+        
+        save_action = True
+        
+        if isinstance( file_service_key, bytes ):
             
-            chunks_of_hashes = HydrusData.SplitListIntoChunks( hashes, 64 )
-            
-            jobs = []
-            
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes, reason = reason ) for chunk_of_hashes in chunks_of_hashes ]
-            
-            jobs.extend( [ { CC.LOCAL_FILE_SERVICE_KEY : [ content_update ] } for content_update in content_updates ] )
-            jobs.extend( [ { CC.TRASH_SERVICE_KEY: [ content_update ] } for content_update in content_updates ] )
-            
-            involves_physical_delete = True
-            
-        elif file_service_key == 'clear_delete':
-            
-            chunks_of_hashes = list( HydrusData.SplitListIntoChunks( hashes, 64 ) ) # iterator, so list it to use it more than once, jej
-            
-            jobs = []
-            
-            # no reason, since pointless
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, chunk_of_hashes ) for chunk_of_hashes in chunks_of_hashes ]
-            
-            jobs.extend( [ { CC.LOCAL_FILE_SERVICE_KEY : [ content_update ] } for content_update in content_updates ] )
-            jobs.extend( [ { CC.TRASH_SERVICE_KEY: [ content_update ] } for content_update in content_updates ] )
-            
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADVANCED, ( 'delete_deleted', chunk_of_hashes ) ) for chunk_of_hashes in chunks_of_hashes ]
-            
-            jobs.extend( [ { CC.COMBINED_LOCAL_FILE_SERVICE_KEY: [ content_update ] } for content_update in content_updates ] )
-            
-            involves_physical_delete = True
+            last_advanced_file_deletion_special_action = file_service_key.hex()
             
         else:
             
-            content_updates = [ HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_PETITION, hashes, reason = 'admin' ) ]
+            previous_last_advanced_file_deletion_special_action = HG.client_controller.new_options.GetNoneableString( 'last_advanced_file_deletion_special_action' )
             
-            jobs = [ { file_service_key : content_updates } ]
+            # if there is nothing to do but physically delete, then we don't want to overwrite an existing 'use service' setting
+            # HACKMODE ALERT. len() == 64 is a stupid test for 'looks like a service key mate'
+            if ( previous_last_advanced_file_deletion_special_action is None or len( previous_last_advanced_file_deletion_special_action ) == 64 ) and not self._this_dialog_includes_service_keys:
+                
+                save_action = False
+                
+            
+            last_advanced_file_deletion_special_action = file_service_key
             
         
-        return ( involves_physical_delete, jobs )
+        if save_action and HG.client_controller.new_options.GetBoolean( 'remember_last_advanced_file_deletion_special_action' ):
+            
+            HG.client_controller.new_options.SetNoneableString( 'last_advanced_file_deletion_special_action', last_advanced_file_deletion_special_action )
+            
+        
+        if save_reason and HG.client_controller.new_options.GetBoolean( 'remember_last_advanced_file_deletion_reason' ):
+            
+            if self._reason_radio.GetCurrentIndex() <= 0:
+                
+                last_advanced_file_deletion_reason = None
+                
+            else:
+                
+                last_advanced_file_deletion_reason = reason
+                
+            
+            HG.client_controller.new_options.SetNoneableString( 'last_advanced_file_deletion_reason', last_advanced_file_deletion_reason )
+            
+        
+        return ( involves_physical_delete, list_of_service_keys_to_content_updates )
         
     
     def QuestionIsAlreadyResolved( self ):
@@ -687,7 +1013,11 @@ class EditDuplicateActionOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        self._sync_archive = QW.QCheckBox( self )
+        self._sync_archive_action = ClientGUICommon.BetterChoice( self )
+        
+        self._sync_archive_action.addItem( 'make no change', ClientDuplicates.SYNC_ARCHIVE_NONE )
+        self._sync_archive_action.addItem( 'if one is archived, archive the other', ClientDuplicates.SYNC_ARCHIVE_IF_ONE_DO_BOTH )
+        self._sync_archive_action.addItem( 'always archive both', ClientDuplicates.SYNC_ARCHIVE_DO_BOTH_REGARDLESS )
         
         self._sync_urls_action = ClientGUICommon.BetterChoice( self )
         
@@ -698,11 +1028,11 @@ class EditDuplicateActionOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             self._sync_urls_action.addItem( HC.content_merge_string_lookup[ HC.CONTENT_MERGE_ACTION_COPY], HC.CONTENT_MERGE_ACTION_COPY )
             
         
-        self._sync_urls_action.addItem( HC.content_merge_string_lookup[ HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE], HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE )
+        self._sync_urls_action.addItem( HC.content_merge_string_lookup[ HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE ], HC.CONTENT_MERGE_ACTION_TWO_WAY_MERGE )
         
         #
         
-        ( tag_service_options, rating_service_options, sync_archive, sync_urls_action ) = duplicate_action_options.ToTuple()
+        ( tag_service_options, rating_service_options, sync_archive_action, sync_urls_action ) = duplicate_action_options.ToTuple()
         
         services_manager = HG.client_controller.services_manager
         
@@ -718,7 +1048,7 @@ class EditDuplicateActionOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._rating_service_actions.Sort()
         
-        self._sync_archive.setChecked( sync_archive )
+        self._sync_archive_action.SetValue( sync_archive_action )
         
         #
         
@@ -750,7 +1080,7 @@ class EditDuplicateActionOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         rows = []
         
-        rows.append( ( 'if one file is archived, archive the other as well: ', self._sync_archive ) )
+        rows.append( ( 'sync archived status?: ', self._sync_archive_action ) )
         rows.append( ( 'sync known urls?: ', self._sync_urls_action ) )
         
         gridbox = ClientGUICommon.WrapInGrid( self, rows )
@@ -1083,23 +1413,28 @@ class EditDuplicateActionOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         tag_service_actions = [ ( service_key, action, tag_filter ) for ( service_key, ( action, tag_filter ) ) in self._service_keys_to_tag_options.items() ]
         rating_service_actions = [ ( service_key, action ) for ( service_key, action ) in self._service_keys_to_rating_options.items() ]
-        sync_archive = self._sync_archive.isChecked()
+        sync_archive_action = self._sync_archive_action.GetValue()
         sync_urls_action = self._sync_urls_action.GetValue()
         
-        duplicate_action_options = ClientDuplicates.DuplicateActionOptions( tag_service_actions, rating_service_actions, sync_archive, sync_urls_action )
+        duplicate_action_options = ClientDuplicates.DuplicateActionOptions(
+            tag_service_actions = tag_service_actions,
+            rating_service_actions = rating_service_actions,
+            sync_archive_action = sync_archive_action,
+            sync_urls_action = sync_urls_action
+        )
         
         return duplicate_action_options
         
     
 class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, file_import_options: ClientImportOptions.FileImportOptions, show_downloader_options: bool ):
+    def __init__( self, parent: QW.QWidget, file_import_options: FileImportOptions.FileImportOptions, show_downloader_options: bool ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
         help_button = ClientGUICommon.BetterBitmapButton( self, CC.global_pixmaps().help, self._ShowHelp )
         
-        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', QG.QColor( 0, 0, 255 ) )
+        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', object_name = 'HydrusIndeterminate' )
         
         #
         
@@ -1107,17 +1442,29 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         self._exclude_deleted = QW.QCheckBox( pre_import_panel )
         
+        tt = 'By default, the client will not try to reimport files that it knows were deleted before. This is a good setting and should be left on in general.'
+        tt += os.linesep * 2
+        tt += 'However, you might like to turn it off for a one-time job where you want to force an import of previously deleted files.'
+        
+        self._exclude_deleted.setToolTip( tt )
+        
         self._do_not_check_known_urls_before_importing = QW.QCheckBox( pre_import_panel )
         self._do_not_check_hashes_before_importing = QW.QCheckBox( pre_import_panel )
         
-        tt = 'If hydrus recognises a file\'s URL or hash, it can decide to skip downloading it if it believes it already has it or previously deleted it.'
+        tt = 'DO NOT SET THESE EXPENSIVE OPTIONS UNLESS YOU KNOW YOU NEED THEM FOR THIS ONE JOB'
         tt += os.linesep * 2
-        tt += 'This is usually a great way to reduce bandwidth, but if you believe the clientside url mappings or serverside hashes are inaccurate and the file is being wrongly skipped, turn these on to force a download.'
+        tt += 'If hydrus recognises a file\'s URL or hash, if it is confident it already has it or previously deleted it, it will normally skip the download, saving a huge amount of time and bandwidth. The logic behind this gets quite complicated, and it is usually best to let it work normally.'
+        tt += os.linesep * 2
+        tt += 'However, if you believe the clientside url mappings or serverside hashes are inaccurate and the file is being wrongly skipped, turn these on to force a download. Only ever do this for one-time manually fired jobs. Do not turn this on for a normal download or a subscription! You do not need to turn these on for a file maintenance job that is filling in missing files, as missing files are automatically detected and essentially turn these on for you on a per-file basis.'
         
         self._do_not_check_known_urls_before_importing.setToolTip( tt )
         self._do_not_check_hashes_before_importing.setToolTip( tt )
         
         self._allow_decompression_bombs = QW.QCheckBox( pre_import_panel )
+        
+        tt = 'This is an old setting, it basically just rejects all jpegs and pngs with more than a 1GB bitmap, or about 250-350 Megapixels. In can be useful if you have an older computer that will die at a 16,000x22,000 png.'
+        
+        self._allow_decompression_bombs.setToolTip( tt )
         
         self._min_size = ClientGUIControls.NoneableBytesControl( pre_import_panel )
         self._min_size.SetValue( 5 * 1024 )
@@ -1128,18 +1475,48 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         self._max_gif_size = ClientGUIControls.NoneableBytesControl( pre_import_panel )
         self._max_gif_size.SetValue( 32 * 1024 * 1024 )
         
+        tt = 'This catches most of those gif conversions of webms. These files are low quality but huge and mostly a waste of storage and bandwidth.'
+        
+        self._max_gif_size.setToolTip( tt )
+        
         self._min_resolution = ClientGUICommon.NoneableSpinCtrl( pre_import_panel, num_dimensions = 2 )
         self._min_resolution.SetValue( ( 50, 50 ) )
         
         self._max_resolution = ClientGUICommon.NoneableSpinCtrl( pre_import_panel, num_dimensions = 2 )
         self._max_resolution.SetValue( ( 8192, 8192 ) )
         
+        tt = 'If either width or height is violated, the file will fail this test and be ignored. It does not have to be both.'
+        
+        self._min_resolution.setToolTip( tt )
+        self._max_resolution.setToolTip( tt )
+        
+        #
+        
+        destination_panel = ClientGUICommon.StaticBox( self, 'import destinations' )
+        
+        self._destination_location_context_st = ClientGUICommon.BetterStaticText( destination_panel, 'If you have more than one local file service, you can send these imports to other/multiple locations.' )
+        
+        destination_location_context = file_import_options.GetDestinationLocationContext()
+        
+        destination_location_context.FixMissingServices( HG.client_controller.services_manager.FilterValidServiceKeys )
+        
+        self._destination_location_context = ClientGUILocation.LocationSearchContextButton( destination_panel, destination_location_context )
+        
+        self._destination_location_context.SetOnlyImportableDomainsAllowed( True )
+        
         #
         
         post_import_panel = ClientGUICommon.StaticBox( self, 'post-import actions' )
         
         self._auto_archive = QW.QCheckBox( post_import_panel )
+        self._associate_primary_urls = QW.QCheckBox( post_import_panel )
         self._associate_source_urls = QW.QCheckBox( post_import_panel )
+        
+        tt = 'Any URL in the \'chain\' to the file will be linked to it as a \'known url\' unless that URL has a matching URL Class that is set otherwise. Normally, since Gallery URL Classes are by default set not to associate, this means the file will get a visible Post URL and a less prominent direct File URL.'
+        tt += os.linesep * 2
+        tt += 'If you are doing a one-off job and do not want to associate these URLs, disable it here. Do not unset this unless you have a reason to!'
+        
+        self._associate_primary_urls.setToolTip( tt )
         
         tt = 'If the parser discovers and additional source URL for another site (e.g. "This file on wewbooru was originally posted to Bixiv [here]."), should that URL be associated with the final URL? Should it be trusted to make \'already in db/previously deleted\' determinations?'
         tt += os.linesep * 2
@@ -1149,11 +1526,11 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        presentation_panel = ClientGUICommon.StaticBox( self, 'presentation options' )
+        presentation_static_box = ClientGUICommon.StaticBox( self, 'presentation options' )
         
-        self._present_new_files = QW.QCheckBox( presentation_panel )
-        self._present_already_in_inbox_files = QW.QCheckBox( presentation_panel )
-        self._present_already_in_archive_files = QW.QCheckBox( presentation_panel )
+        presentation_import_options = file_import_options.GetPresentationImportOptions()
+        
+        self._presentation_import_options_edit_panel = EditPresentationImportOptions( presentation_static_box, presentation_import_options )
         
         #
         
@@ -1171,18 +1548,13 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        ( automatic_archive, associate_source_urls ) = file_import_options.GetPostImportOptions()
+        automatic_archive = file_import_options.AutomaticallyArchives()
+        associate_primary_urls = file_import_options.ShouldAssociatePrimaryURLs()
+        associate_source_urls = file_import_options.ShouldAssociateSourceURLs()
         
         self._auto_archive.setChecked( automatic_archive )
+        self._associate_primary_urls.setChecked( associate_primary_urls )
         self._associate_source_urls.setChecked( associate_source_urls )
-        
-        #
-        
-        ( present_new_files, present_already_in_inbox_files, present_already_in_archive_files ) = file_import_options.GetPresentationOptions()
-        
-        self._present_new_files.setChecked( present_new_files )
-        self._present_already_in_inbox_files.setChecked( present_already_in_inbox_files )
-        self._present_already_in_archive_files.setChecked( present_already_in_archive_files )
         
         #
         
@@ -1192,8 +1564,8 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         if show_downloader_options and HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
             
-            rows.append( ( 'do not skip downloading because of known urls: ', self._do_not_check_known_urls_before_importing ) )
-            rows.append( ( 'do not skip downloading because of hashes: ', self._do_not_check_hashes_before_importing ) )
+            rows.append( ( 'force file downloading even if url recognised and already in db/deleted: ', self._do_not_check_known_urls_before_importing ) )
+            rows.append( ( 'force file downloading even if hash recognised and already in db/deleted: ', self._do_not_check_hashes_before_importing ) )
             
         else:
             
@@ -1214,16 +1586,23 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
+        destination_panel.Add( self._destination_location_context_st, CC.FLAGS_EXPAND_PERPENDICULAR )
+        destination_panel.Add( self._destination_location_context, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        #
+        
         rows = []
         
         rows.append( ( 'archive all imports: ', self._auto_archive ) )
         
         if show_downloader_options and HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
             
+            rows.append( ( 'associate primary urls: ', self._associate_primary_urls ) )
             rows.append( ( 'associate (and trust) additional source urls: ', self._associate_source_urls ) )
             
         else:
             
+            self._associate_primary_urls.setVisible( False )
             self._associate_source_urls.setVisible( False )
             
         
@@ -1233,15 +1612,7 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        rows = []
-        
-        rows.append( ( 'present new files', self._present_new_files ) )
-        rows.append( ( 'present \'already in db\' files in inbox', self._present_already_in_inbox_files ) )
-        rows.append( ( 'present \'already in db\' files in archive', self._present_already_in_archive_files ) )
-        
-        gridbox = ClientGUICommon.WrapInGrid( presentation_panel, rows )
-        
-        presentation_panel.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+        presentation_static_box.Add( self._presentation_import_options_edit_panel, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         
         #
         
@@ -1249,10 +1620,15 @@ class EditFileImportOptions( ClientGUIScrolledPanels.EditPanel ):
         
         QP.AddToLayout( vbox, help_hbox, CC.FLAGS_ON_RIGHT )
         QP.AddToLayout( vbox, pre_import_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        QP.AddToLayout( vbox, destination_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, post_import_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
-        QP.AddToLayout( vbox, presentation_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        QP.AddToLayout( vbox, presentation_static_box, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        vbox.addStretch( 1 )
         
         self.widget().setLayout( vbox )
+        
+        self._destination_location_context.locationChanged.connect( self._UpdateLocationText )
         
     
     def _ShowHelp( self ):
@@ -1282,7 +1658,27 @@ If you have a very large (10k+ files) file import page, consider hiding some or 
         QW.QMessageBox.information( self, 'Information', help_message )
         
     
-    def GetValue( self ) -> ClientImportOptions.FileImportOptions:
+    def _UpdateLocationText( self ):
+        
+        location_context = self._destination_location_context.GetValue()
+        
+        if location_context.IsEmpty():
+            
+            self._destination_location_context_st.setText( 'This will not import anywhere! Any import queue using this File Import Options will halt!' )
+            
+            self._destination_location_context_st.setObjectName( 'HydrusWarning' )
+            
+        else:
+            
+            self._destination_location_context_st.setText( 'If you have more than one local file service, you can send these imports to other/multiple locations.' )
+            
+            self._destination_location_context_st.setObjectName( '' )
+            
+        
+        self._destination_location_context_st.style().polish( self._destination_location_context_st )
+        
+    
+    def GetValue( self ) -> FileImportOptions.FileImportOptions:
         
         exclude_deleted = self._exclude_deleted.isChecked()
         do_not_check_known_urls_before_importing = self._do_not_check_known_urls_before_importing.isChecked()
@@ -1295,25 +1691,42 @@ If you have a very large (10k+ files) file import page, consider hiding some or 
         max_resolution = self._max_resolution.GetValue()
         
         automatic_archive = self._auto_archive.isChecked()
+        associate_primary_urls = self._associate_primary_urls.isChecked()
         associate_source_urls = self._associate_source_urls.isChecked()
         
-        present_new_files = self._present_new_files.isChecked()
-        present_already_in_inbox_files = self._present_already_in_inbox_files.isChecked()
-        present_already_in_archive_files = self._present_already_in_archive_files.isChecked()
+        presentation_import_options = self._presentation_import_options_edit_panel.GetValue()
         
-        file_import_options = ClientImportOptions.FileImportOptions()
+        file_import_options = FileImportOptions.FileImportOptions()
+        
+        destination_location_context = self._destination_location_context.GetValue()
         
         file_import_options.SetPreImportOptions( exclude_deleted, do_not_check_known_urls_before_importing, do_not_check_hashes_before_importing, allow_decompression_bombs, min_size, max_size, max_gif_size, min_resolution, max_resolution )
-        file_import_options.SetPostImportOptions( automatic_archive, associate_source_urls )
-        file_import_options.SetPresentationOptions( present_new_files, present_already_in_inbox_files, present_already_in_archive_files )
+        file_import_options.SetDestinationLocationContext( destination_location_context )
+        file_import_options.SetPostImportOptions( automatic_archive, associate_primary_urls, associate_source_urls )
+        file_import_options.SetPresentationImportOptions( presentation_import_options )
         
         return file_import_options
         
     
-class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
-    
-    def __init__( self, parent: QW.QWidget, names_to_notes: typing.Dict[ str, str ] ):
+    def CheckValid( self ):
         
+        file_import_options = self.GetValue()
+        
+        try:
+            
+            file_import_options.CheckReadyToImport()
+            
+        except Exception as e:
+            
+            raise HydrusExceptions.VetoException( e )
+            
+        
+    
+class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel, CAC.ApplicationCommandProcessorMixin ):
+    
+    def __init__( self, parent: QW.QWidget, names_to_notes: typing.Dict[ str, str ], name_to_start_on: typing.Optional[ str ] ):
+        
+        CAC.ApplicationCommandProcessorMixin.__init__( self )
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
         self._original_names = set()
@@ -1330,6 +1743,8 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
+        index_to_select = 0
+        
         if len( names_to_notes ) == 0:
             
             self._AddNotePanel( 'notes', '' )
@@ -1338,7 +1753,12 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
             
             names = sorted( names_to_notes.keys() )
             
-            for name in names:
+            for ( i, name ) in enumerate( names ):
+                
+                if name == name_to_start_on:
+                    
+                    index_to_select = i
+                    
                 
                 note = names_to_notes[ name ]
                 
@@ -1348,12 +1768,20 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             
         
-        first_panel = self._notebook.widget( 0 )
+        self._notebook.setCurrentIndex( index_to_select )
         
-        self._notebook.setCurrentIndex( 0 )
+        first_panel = self._notebook.currentWidget()
         
-        HG.client_controller.CallAfterQtSafe( first_panel, first_panel.setFocus, QC.Qt.OtherFocusReason )
-        HG.client_controller.CallAfterQtSafe( first_panel, first_panel.moveCursor, QG.QTextCursor.End )
+        ClientGUIFunctions.SetFocusLater( first_panel )
+        
+        if HG.client_controller.new_options.GetBoolean( 'start_note_editing_at_end' ):
+            
+            HG.client_controller.CallAfterQtSafe( first_panel, 'moving cursor to end', first_panel.moveCursor, QG.QTextCursor.End )
+            
+        else:
+            
+            HG.client_controller.CallAfterQtSafe( first_panel, 'moving cursor to start', first_panel.moveCursor, QG.QTextCursor.Start )
+            
         
         #
         
@@ -1371,6 +1799,8 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
         self.widget().setLayout( vbox )
         
         self._my_shortcut_handler = ClientGUIShortcuts.ShortcutsHandler( self, [ 'global', 'media' ] )
+        
+        self._notebook.tabBarDoubleClicked.connect( self._TabBarDoubleClicked )
         
     
     def _AddNote( self ):
@@ -1396,14 +1826,22 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         control = QW.QPlainTextEdit( self._notebook )
         
-        control.setPlainText( note )
+        try:
+            
+            control.setPlainText( note )
+            
+        except:
+            
+            control.setPlainText( repr( note ) )
+            
         
         self._notebook.addTab( control, name )
         
         self._notebook.setCurrentWidget( control )
         
-        HG.client_controller.CallAfterQtSafe( control, control.setFocus, QC.Qt.OtherFocusReason )
-        HG.client_controller.CallAfterQtSafe( control, control.moveCursor, QG.QTextCursor.End )
+        ClientGUIFunctions.SetFocusLater( control )
+        
+        HG.client_controller.CallAfterQtSafe( control, 'moving cursor to end', control.moveCursor, QG.QTextCursor.End )
         
         self._UpdateButtons()
         
@@ -1428,9 +1866,12 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
             
         
     
-    def _EditName( self ):
+    def _EditName( self, index = None ):
         
-        index = self._notebook.currentIndex()
+        if index is None:
+            
+            index = self._notebook.currentIndex()
+            
         
         name = self._notebook.tabText( index )
         
@@ -1450,6 +1891,18 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 self._notebook.setTabText( index, name )
                 
+            
+        
+    
+    def _TabBarDoubleClicked( self, index: int ):
+        
+        if index == -1:
+            
+            self._AddNote()
+            
+        else:
+            
+            self._EditName( index = index )
             
         
     
@@ -1474,11 +1927,9 @@ class EditFileNotesPanel( ClientGUIScrolledPanels.EditPanel ):
         
         command_processed = True
         
-        data = command.GetData()
-        
         if command.IsSimpleCommand():
             
-            action = data
+            action = command.GetSimpleAction()
             
             if action == CAC.SIMPLE_MANAGE_FILE_NOTES:
                 
@@ -1645,7 +2096,7 @@ class EditMediaViewOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             if action == CC.MEDIA_VIEWER_ACTION_SHOW_WITH_MPV and self._mime in ( HC.IMAGE_GIF, HC.GENERAL_ANIMATION ):
                 
-                s += ' (will show image gifs with native viewer)'
+                s += ' (will show unanimated gifs with native viewer)'
                 
             
             self._media_show_action.addItem( s, action )
@@ -1913,6 +2364,148 @@ class EditNoneableIntegerPanel( ClientGUIScrolledPanels.EditPanel ):
         return self._value.GetValue()
         
     
+class EditPresentationImportOptions( ClientGUIScrolledPanels.EditPanel ):
+    
+    def __init__( self, parent: QW.QWidget, presentation_import_options: PresentationImportOptions.PresentationImportOptions ):
+        
+        ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
+        
+        #
+        
+        self._presentation_status = ClientGUICommon.BetterChoice( self )
+        
+        for value in ( PresentationImportOptions.PRESENTATION_STATUS_ANY_GOOD, PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY, PresentationImportOptions.PRESENTATION_STATUS_NONE ):
+            
+            self._presentation_status.addItem( PresentationImportOptions.presentation_status_enum_str_lookup[ value ], value )
+            
+        
+        tt = 'All files means \'successful\' and \'already in db\'.'
+        tt += os.linesep * 2
+        tt += 'New means only \'successful\'.'
+        tt += os.linesep * 2
+        tt += 'None means this is a silent importer. This is rarely useful.'
+        
+        self._presentation_status.setToolTip( tt )
+        
+        self._presentation_inbox = ClientGUICommon.BetterChoice( self )
+        
+        tt = 'Inbox or archive means all files.'
+        tt += os.linesep * 2
+        tt += 'Must be in inbox means only inbox files _at the time of the presentation_. This can be neat as you process and revisit currently watched threads.'
+        tt += os.linesep * 2
+        tt += 'Or in inbox (which only shows if you are set to only see new files) allows already in db results if they are currently in the inbox. Essentially you are just excluding already-in-archive files.'
+        
+        self._presentation_inbox.setToolTip( tt )
+        
+        self._presentation_location = ClientGUILocation.LocationSearchContextButton( self, presentation_import_options.GetLocationContext() )
+        
+        tt = 'This is mostly for technical purposes on hydev\'s end, but if you want, you can filter the presented files based on a location context.'
+        
+        self._presentation_location.setToolTip( tt )
+        
+        #
+        
+        self._presentation_status.SetValue( presentation_import_options.GetPresentationStatus() )
+        
+        self._UpdateInboxChoices()
+        
+        self._presentation_inbox.SetValue( presentation_import_options.GetPresentationInbox() )
+        
+        #
+        
+        vbox = QP.VBoxLayout()
+        
+        label = 'An importer will try to import everything in its queue, but it does not have to _show_ all the successful results in the import page or subscription button/page. Many advanced users will set this to only show _new_ results to skip seeing \'already in db\' files.'
+        
+        st = ClientGUICommon.BetterStaticText( self, label = label )
+        
+        st.setWordWrap( True )
+        
+        hbox = QP.HBoxLayout()
+        
+        QP.AddToLayout( hbox, self._presentation_status, CC.FLAGS_EXPAND_BOTH_WAYS )
+        QP.AddToLayout( hbox, self._presentation_inbox, CC.FLAGS_EXPAND_BOTH_WAYS )
+        QP.AddToLayout( hbox, self._presentation_location, CC.FLAGS_EXPAND_BOTH_WAYS )
+        
+        #
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
+        QP.AddToLayout( vbox, hbox, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        vbox.addStretch( 1 )
+        
+        self.widget().setLayout( vbox )
+        
+        #
+        
+        self._presentation_status.currentIndexChanged.connect( self._UpdateInboxChoices )
+        self._presentation_status.currentIndexChanged.connect( self._UpdateEnabled )
+        
+    
+    def _UpdateEnabled( self ):
+        
+        enabled = self._presentation_status.GetValue() != PresentationImportOptions.PRESENTATION_STATUS_NONE
+        
+        self._presentation_inbox.setEnabled( enabled )
+        self._presentation_location.setEnabled( enabled )
+        
+    
+    def _UpdateInboxChoices( self ):
+        
+        do_it = False
+        
+        previous_presentation_inbox = self._presentation_inbox.GetValue()
+        
+        presentation_status = self._presentation_status.GetValue()
+        
+        if presentation_status == PresentationImportOptions.PRESENTATION_STATUS_NEW_ONLY:
+            
+            if self._presentation_inbox.count() != 3:
+                
+                do_it = True
+                
+                allowed_values = ( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC, PresentationImportOptions.PRESENTATION_INBOX_REQUIRE_INBOX, PresentationImportOptions.PRESENTATION_INBOX_INCLUDE_INBOX )
+                
+            
+        else:
+            
+            if self._presentation_inbox.count() != 2:
+                
+                do_it = True
+                
+                allowed_values = ( PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC, PresentationImportOptions.PRESENTATION_INBOX_REQUIRE_INBOX )
+                
+                if previous_presentation_inbox == PresentationImportOptions.PRESENTATION_INBOX_INCLUDE_INBOX:
+                    
+                    previous_presentation_inbox = PresentationImportOptions.PRESENTATION_INBOX_AGNOSTIC
+                    
+                
+            
+        
+        if do_it:
+            
+            self._presentation_inbox.clear()
+            
+            for value in allowed_values:
+                
+                self._presentation_inbox.addItem( PresentationImportOptions.presentation_inbox_enum_str_lookup[ value ], value )
+                
+            
+            self._presentation_inbox.SetValue( previous_presentation_inbox )
+            
+        
+    
+    def GetValue( self ) -> PresentationImportOptions.PresentationImportOptions:
+        
+        presentation_import_options = PresentationImportOptions.PresentationImportOptions()
+        
+        presentation_import_options.SetPresentationStatus( self._presentation_status.GetValue() )
+        presentation_import_options.SetPresentationInbox( self._presentation_inbox.GetValue() )
+        presentation_import_options.SetLocationContext( self._presentation_location.GetValue() )
+        
+        return presentation_import_options
+        
+    
 class EditRegexFavourites( ClientGUIScrolledPanels.EditPanel ):
     
     def __init__( self, parent: QW.QWidget, regex_favourites ):
@@ -1988,6 +2581,8 @@ class EditRegexFavourites( ClientGUIScrolledPanels.EditPanel ):
     
     def _Edit( self ):
         
+        edited_datas = []
+        
         rows = self._regexes.GetData( only_selected = True )
         
         for row in rows:
@@ -2012,6 +2607,8 @@ class EditRegexFavourites( ClientGUIScrolledPanels.EditPanel ):
                             
                             self._regexes.AddDatas( ( edited_row, ) )
                             
+                            edited_datas.append( edited_row )
+                            
                         
                     
                 else:
@@ -2020,6 +2617,8 @@ class EditRegexFavourites( ClientGUIScrolledPanels.EditPanel ):
                     
                 
             
+        
+        self._regexes.SelectDatas( edited_datas )
         
         self._regexes.Sort()
         
@@ -2031,7 +2630,7 @@ class EditRegexFavourites( ClientGUIScrolledPanels.EditPanel ):
     
 class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, tag_import_options: ClientImportOptions.TagImportOptions, show_downloader_options: bool, allow_default_selection: bool = False ):
+    def __init__( self, parent: QW.QWidget, tag_import_options: TagImportOptions.TagImportOptions, show_downloader_options: bool, allow_default_selection: bool = False ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -2048,17 +2647,22 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         default_panel = ClientGUICommon.StaticBox( self, 'default options' )
         
-        self._is_default = QW.QCheckBox( default_panel )
+        self._use_default_dropdown = ClientGUICommon.BetterChoice( default_panel )
         
-        tt = 'If this is checked, the client will refer to the defaults (as set under "network->downloaders->manage default tag import options") for the appropriate tag import options at the time of import.'
+        self._use_default_dropdown.addItem( 'use the default tag import options at the time of import', True )
+        self._use_default_dropdown.addItem( 'set custom tag import options just for this downloader', False )
+        
+        tt = 'Normally, the client will refer to the defaults (as set under "network->downloaders->manage default tag import options") for the appropriate tag import options at the time of import.'
         tt += os.linesep * 2
-        tt += 'It is easier to manage tag import options by relying on the defaults, since any change in the single default location will update all the eventual import queues that refer to those defaults, whereas having specific options for every subscription or downloader means making an update to the blacklist or tag filter needs to be repeated dozens or hundreds of times.'
+        tt += 'It is easier to work this way, since you can change a single default setting and update all current and future downloaders that refer to those defaults, whereas having specific options for every subscription or downloader means you have to update every single one just to make a little change somewhere.'
         tt += os.linesep * 2
-        tt += 'But if you are doing a one-time import that has some unusual tag rules, uncheck this and set those specific rules here.'
+        tt += 'But if you are doing a one-time import that has some unusual tag rules, set some specific rules here.'
         
-        self._is_default.setToolTip( tt )
+        self._use_default_dropdown.setToolTip( tt )
         
-        self._load_default_options = ClientGUICommon.BetterButton( default_panel, 'load one of the default options', self._LoadDefaultOptions )
+        #
+        
+        self._load_default_options = ClientGUICommon.BetterButton( self, 'load one of the default options', self._LoadDefaultOptions )
         
         #
         
@@ -2070,6 +2674,18 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._fetch_tags_even_if_url_recognised_and_file_already_in_db = QW.QCheckBox( downloader_options_panel )
         self._fetch_tags_even_if_hash_recognised_and_file_already_in_db = QW.QCheckBox( downloader_options_panel )
+        
+        tt = 'I strongly recommend you uncheck this for normal use. When it is on, downloaders are inefficent!'
+        tt += os.linesep * 2
+        tt += 'This will force the client to download the metadata for a file even if it thinks it has visited its page before. Normally, hydrus will skip an URL in this case. It is useful to turn this on if you want to force a recheck of the tags in that page.'
+        
+        self._fetch_tags_even_if_url_recognised_and_file_already_in_db.setToolTip( tt )
+        
+        tt = 'I strongly recommend you uncheck this for normal use.  When it is on, downloaders could be inefficent!'
+        tt += os.linesep * 2
+        tt += 'This will force the client to download the metadata for a file even if the gallery step has given a hash that the client thinks it recognises. Normally, hydrus will skip an URL in this case (although the hash-from-gallery case is rare, so this option rarely matters). This is mostly a debug complement to the url check option.'
+        
+        self._fetch_tags_even_if_hash_recognised_and_file_already_in_db.setToolTip( tt )
         
         tag_blacklist = tag_import_options.GetTagBlacklist()
         
@@ -2083,17 +2699,25 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._tag_blacklist_button = ClientGUITags.TagFilterButton( downloader_options_panel, message, tag_blacklist, only_show_blacklist = True )
         
+        self._tag_blacklist_button.setToolTip( 'A blacklist will ignore files if they have any of a certain list of tags.' )
+        
         self._tag_whitelist = list( tag_import_options.GetTagWhitelist() )
         
         self._tag_whitelist_button = ClientGUICommon.BetterButton( downloader_options_panel, 'whitelist', self._EditWhitelist )
         
+        self._tag_blacklist_button.setToolTip( 'A whitelist will ignore files if they do not have any of a certain list of tags.' )
+        
         self._UpdateTagWhitelistLabel()
+        
+        self._no_tags_label = ClientGUICommon.BetterStaticText( self, label = 'THIS CURRENTLY GETS NO TAGS' )
+        
+        self._no_tags_label.setObjectName( 'HydrusWarning' )
         
         self._services_vbox = QP.VBoxLayout()
         
         #
         
-        self._is_default.setChecked( tag_import_options.IsDefault() )
+        self._use_default_dropdown.SetValue( tag_import_options.IsDefault() )
         
         self._fetch_tags_even_if_url_recognised_and_file_already_in_db.setChecked( tag_import_options.ShouldFetchTagsEvenIfURLKnownAndFileAlreadyInDB() )
         self._fetch_tags_even_if_hash_recognised_and_file_already_in_db.setChecked( tag_import_options.ShouldFetchTagsEvenIfHashKnownAndFileAlreadyInDB() )
@@ -2104,12 +2728,6 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        rows = []
-        
-        rows.append( ( 'rely on the appropriate default tag import options at the time of import: ', self._is_default ) )
-        
-        gridbox = ClientGUICommon.WrapInGrid( default_panel, rows )
-        
         if not HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
             
             st = ClientGUICommon.BetterStaticText( default_panel, label = 'Most of the time, you want to rely on the default tag import options!' )
@@ -2119,8 +2737,7 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             default_panel.Add( st, CC.FLAGS_EXPAND_PERPENDICULAR )
             
         
-        default_panel.Add( gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
-        default_panel.Add( self._load_default_options, CC.FLAGS_EXPAND_PERPENDICULAR )
+        default_panel.Add( self._use_default_dropdown, CC.FLAGS_EXPAND_PERPENDICULAR )
         
         if not allow_default_selection:
             
@@ -2131,8 +2748,8 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         rows = []
         
-        rows.append( ( 'fetch tags even if url recognised and file already in db: ', self._fetch_tags_even_if_url_recognised_and_file_already_in_db ) )
-        rows.append( ( 'fetch tags even if hash recognised and file already in db: ', self._fetch_tags_even_if_hash_recognised_and_file_already_in_db ) )
+        rows.append( ( 'force page fetch even if url recognised and file already in db: ', self._fetch_tags_even_if_url_recognised_and_file_already_in_db ) )
+        rows.append( ( 'force page fetch even if hash recognised and file already in db: ', self._fetch_tags_even_if_hash_recognised_and_file_already_in_db ) )
         rows.append( ( 'set file blacklist: ', self._tag_blacklist_button ) )
         rows.append( ( 'set file whitelist: ', self._tag_whitelist_button ) )
         
@@ -2150,6 +2767,7 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         vbox = QP.VBoxLayout()
         
         QP.AddToLayout( vbox, downloader_options_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        QP.AddToLayout( vbox, self._no_tags_label, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._services_vbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         
         self._specific_options_panel.setLayout( vbox )
@@ -2160,6 +2778,7 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         QP.AddToLayout( vbox, help_button, CC.FLAGS_ON_RIGHT )
         QP.AddToLayout( vbox, default_panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+        QP.AddToLayout( vbox, self._load_default_options, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._specific_options_panel, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
         vbox.addStretch( 1 )
         
@@ -2167,9 +2786,11 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
-        self._is_default.clicked.connect( self._UpdateIsDefault )
+        self._use_default_dropdown.currentIndexChanged.connect( self._UpdateIsDefault )
         
         self._UpdateIsDefault()
+        
+        self._UpdateNoTagsLabel()
         
     
     def _EditWhitelist( self ):
@@ -2204,6 +2825,8 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             self._service_keys_to_service_tag_import_options_panels[ service_key ] = panel
             
             QP.AddToLayout( self._services_vbox, panel, CC.FLAGS_EXPAND_PERPENDICULAR )
+            
+            panel.valueChanged.connect( self._UpdateNoTagsLabel )
             
         
     
@@ -2248,9 +2871,9 @@ class EditTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         self._SetValue( default_tag_import_options )
         
     
-    def _SetValue( self, tag_import_options: ClientImportOptions.TagImportOptions ):
+    def _SetValue( self, tag_import_options: TagImportOptions.TagImportOptions ):
         
-        self._is_default.setChecked( tag_import_options.IsDefault() )
+        self._use_default_dropdown.SetValue( tag_import_options.IsDefault() )
         
         self._tag_blacklist_button.SetValue( tag_import_options.GetTagBlacklist() )
         
@@ -2292,9 +2915,11 @@ Please note that once you know what tags you like, you can (and should) set up t
     
     def _UpdateIsDefault( self ):
         
-        is_default = self._is_default.isChecked()
+        is_default = self._use_default_dropdown.GetValue()
         
         show_specific_options = not is_default
+        
+        self._load_default_options.setVisible( show_specific_options )
         
         self._specific_options_panel.setVisible( show_specific_options )
         
@@ -2302,6 +2927,19 @@ Please note that once you know what tags you like, you can (and should) set up t
             
             self.window().adjustSize()
             
+        
+        self._UpdateNoTagsLabel()
+        
+    
+    def _UpdateNoTagsLabel( self ):
+        
+        tag_import_options = self.GetValue()
+        
+        we_explicitly_get_no_tags = ( not tag_import_options.IsDefault() ) and ( not tag_import_options.CanAddTags() )
+        
+        self._no_tags_label.setVisible( we_explicitly_get_no_tags )
+        
+        self.updateGeometry()
         
     
     def _UpdateTagWhitelistLabel( self ):
@@ -2318,13 +2956,13 @@ Please note that once you know what tags you like, you can (and should) set up t
         self._tag_whitelist_button.setText( label )
         
     
-    def GetValue( self ) -> ClientImportOptions.TagImportOptions:
+    def GetValue( self ) -> TagImportOptions.TagImportOptions:
         
-        is_default = self._is_default.isChecked()
+        is_default = self._use_default_dropdown.GetValue()
         
         if is_default:
             
-            tag_import_options = ClientImportOptions.TagImportOptions( is_default = True )
+            tag_import_options = TagImportOptions.TagImportOptions( is_default = True )
             
         else:
             
@@ -2336,7 +2974,7 @@ Please note that once you know what tags you like, you can (and should) set up t
             tag_blacklist = self._tag_blacklist_button.GetValue()
             tag_whitelist = list( self._tag_whitelist )
             
-            tag_import_options = ClientImportOptions.TagImportOptions( fetch_tags_even_if_url_recognised_and_file_already_in_db = fetch_tags_even_if_url_recognised_and_file_already_in_db, fetch_tags_even_if_hash_recognised_and_file_already_in_db = fetch_tags_even_if_hash_recognised_and_file_already_in_db, tag_blacklist = tag_blacklist, tag_whitelist = tag_whitelist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
+            tag_import_options = TagImportOptions.TagImportOptions( fetch_tags_even_if_url_recognised_and_file_already_in_db = fetch_tags_even_if_url_recognised_and_file_already_in_db, fetch_tags_even_if_hash_recognised_and_file_already_in_db = fetch_tags_even_if_hash_recognised_and_file_already_in_db, tag_blacklist = tag_blacklist, tag_whitelist = tag_whitelist, service_keys_to_service_tag_import_options = service_keys_to_service_tag_import_options )
             
         
         return tag_import_options
@@ -2464,7 +3102,7 @@ class EditSelectFromListButtonsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             if not first_focused:
                 
-                HG.client_controller.CallAfterQtSafe( button, button.setFocus, QC.Qt.OtherFocusReason)
+                ClientGUIFunctions.SetFocusLater( button )
                 
                 first_focused = True
                 
@@ -2487,7 +3125,9 @@ class EditSelectFromListButtonsPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditServiceTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, service_key: bytes, service_tag_import_options: ClientImportOptions.ServiceTagImportOptions, show_downloader_options: bool = True ):
+    valueChanged = QC.Signal()
+    
+    def __init__( self, parent: QW.QWidget, service_key: bytes, service_tag_import_options: TagImportOptions.ServiceTagImportOptions, show_downloader_options: bool = True ):
         
         ClientGUIScrolledPanels.EditPanel.__init__( self, parent )
         
@@ -2584,6 +3224,8 @@ class EditServiceTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._UpdateAdditionalTagsButtonLabel()
         
+        self.valueChanged.emit()
+        
     
     def _EditOnlyAddExistingTagsFilter( self ):
         
@@ -2667,19 +3309,21 @@ class EditServiceTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._get_tags_filter_button.setEnabled( should_enable_filter )
         
+        self.valueChanged.emit()
+        
     
-    def GetValue( self ) -> ClientImportOptions.ServiceTagImportOptions:
+    def GetValue( self ) -> TagImportOptions.ServiceTagImportOptions:
         
         get_tags = self._get_tags_checkbox.isChecked()
         
         get_tags_filter = self._get_tags_filter_button.GetValue()
         
-        service_tag_import_options = ClientImportOptions.ServiceTagImportOptions( get_tags = get_tags, get_tags_filter = get_tags_filter, additional_tags = self._additional_tags, to_new_files = self._to_new_files, to_already_in_inbox = self._to_already_in_inbox, to_already_in_archive = self._to_already_in_archive, only_add_existing_tags = self._only_add_existing_tags, only_add_existing_tags_filter = self._only_add_existing_tags_filter, get_tags_overwrite_deleted = self._get_tags_overwrite_deleted, additional_tags_overwrite_deleted = self._additional_tags_overwrite_deleted )
+        service_tag_import_options = TagImportOptions.ServiceTagImportOptions( get_tags = get_tags, get_tags_filter = get_tags_filter, additional_tags = self._additional_tags, to_new_files = self._to_new_files, to_already_in_inbox = self._to_already_in_inbox, to_already_in_archive = self._to_already_in_archive, only_add_existing_tags = self._only_add_existing_tags, only_add_existing_tags_filter = self._only_add_existing_tags_filter, get_tags_overwrite_deleted = self._get_tags_overwrite_deleted, additional_tags_overwrite_deleted = self._additional_tags_overwrite_deleted )
         
         return service_tag_import_options
         
     
-    def SetValue( self, service_tag_import_options: ClientImportOptions.ServiceTagImportOptions ):
+    def SetValue( self, service_tag_import_options: TagImportOptions.ServiceTagImportOptions ):
         
         ( get_tags, get_tags_filter, self._additional_tags, self._to_new_files, self._to_already_in_inbox, self._to_already_in_archive, self._only_add_existing_tags, self._only_add_existing_tags_filter, self._get_tags_overwrite_deleted, self._additional_tags_overwrite_deleted ) = service_tag_import_options.ToTuple()
         
@@ -2691,4 +3335,3 @@ class EditServiceTagImportOptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._UpdateAdditionalTagsButtonLabel()
         
-    

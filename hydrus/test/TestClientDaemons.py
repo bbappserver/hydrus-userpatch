@@ -5,9 +5,11 @@ import unittest
 from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusPaths
+from hydrus.core import HydrusTemp
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientDaemons
+from hydrus.client.importing import ClientImportFiles
 from hydrus.client.importing import ClientImportLocal
 
 with open( os.path.join( HC.STATIC_DIR, 'hydrus.png' ), 'rb' ) as f:
@@ -18,11 +20,11 @@ class TestDaemons( unittest.TestCase ):
     
     def test_import_folders_daemon( self ):
         
-        test_dir = HydrusPaths.GetTempDir()
+        test_dir = HydrusTemp.GetTempDir()
         
         try:
             
-            HG.test_controller.SetRead( 'hash_status', ( CC.STATUS_UNKNOWN, None, '' ) )
+            HG.test_controller.SetRead( 'hash_status', ClientImportFiles.FileImportStatus.STATICGetUnknownStatus() )
             
             HydrusPaths.MakeSureDirectoryExists( test_dir )
             

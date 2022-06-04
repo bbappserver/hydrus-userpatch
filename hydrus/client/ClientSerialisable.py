@@ -9,19 +9,26 @@ from qtpy import QtCore as QC
 from qtpy import QtGui as QG
 from qtpy import QtWidgets as QW
 
-from hydrus.core import HydrusConstants as HC
+from hydrus.core import HydrusCompression
 from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
+from hydrus.core import HydrusImageHandling
 from hydrus.core import HydrusPaths
 from hydrus.core import HydrusSerialisable
+from hydrus.core import HydrusTemp
 
 from hydrus.client import ClientConstants as CC
-from hydrus.client import ClientImageHandling
-from hydrus.client import ClientParsing
-from hydrus.client import ClientPaths
 from hydrus.client.gui import ClientGUIFunctions
 from hydrus.client.gui import QtPorting as QP
-from hydrus.client.importing import ClientImporting
+
+# ok, the serialised png format is:
+
+# the png is monochrome, no alpha channel (mode 'L' in PIL)
+# the data is read left to right in visual pixels. one pixel = one byte
+# first two bytes (i.e. ( 0, 0 ) and ( 1, 0 )), are a big endian unsigned short (!H), and say how tall the header is in number of rows. the actual data starts after that
+# first four bytes of data are a big endian unsigned int (!I) saying how long the payload is in bytes
+# read that many pixels after that, you got the payload
+# it should be zlib compressed these days and is most likely a dumped hydrus serialisable object, which is a json guy with a whole complicated loading system. utf-8 it into a string and you are half way there :^)
 
 if cv2.__version__.startswith( '2' ):
     
@@ -115,18 +122,7 @@ def CreateTopImage( width, title, payload_description, text ):
     
     del painter
     
-    data_bytearray = top_qt_image.bits()
-    
-    if QP.qtpy.PYSIDE2:
-        
-        data_bytes = bytes( data_bytearray )
-        
-    elif QP.qtpy.PYQT5:
-        
-        data_bytes = data_bytearray.asstring( top_height * width * 3 )
-        
-    
-    top_image_rgb = numpy.fromstring( data_bytes, dtype = 'uint8' ).reshape( ( top_height, width, 3 ) )
+    top_image_rgb = ClientGUIFunctions.ConvertQtImageToNumPy( top_qt_image )
     
     top_image = cv2.cvtColor( top_image_rgb, cv2.COLOR_RGB2GRAY )
     
@@ -166,7 +162,7 @@ def DumpToPNG( width, payload_bytes, title, payload_description, text, path ):
     finished_image = numpy.concatenate( ( top_image, payload_image ) )
     
     # this is to deal with unicode paths, which cv2 can't handle
-    ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath( suffix = '.png' )
+    ( os_file_handle, temp_path ) = HydrusTemp.GetTempPath( suffix = '.png' )
     
     try:
         
@@ -182,22 +178,24 @@ def DumpToPNG( width, payload_bytes, title, payload_description, text, path ):
         
     finally:
         
-        HydrusPaths.CleanUpTempPath( os_file_handle, temp_path )
+        HydrusTemp.CleanUpTempPath( os_file_handle, temp_path )
         
     
-def GetPayloadBytes( payload_obj ):
+def GetPayloadBytesAndLength( payload_obj ):
     
     if isinstance( payload_obj, bytes ):
         
-        return payload_obj
+        return ( HydrusCompression.CompressBytesToBytes( payload_obj ), len( payload_obj ) )
         
     elif isinstance( payload_obj, str ):
         
-        return bytes( payload_obj, 'utf-8' )
+        return ( HydrusCompression.CompressStringToBytes( payload_obj ), len( payload_obj ) )
         
     else:
         
-        return payload_obj.DumpToNetworkBytes()
+        payload_string = payload_obj.DumpToString()
+        
+        return ( HydrusCompression.CompressStringToBytes( payload_string ), len( payload_string ) )
         
     
 def GetPayloadTypeString( payload_obj ):
@@ -234,43 +232,80 @@ def GetPayloadTypeString( payload_obj ):
     
 def GetPayloadDescriptionAndBytes( payload_obj ):
     
-    payload_bytes = GetPayloadBytes( payload_obj )
+    ( payload_bytes, payload_length ) = GetPayloadBytesAndLength( payload_obj )
     
-    payload_description = GetPayloadTypeString( payload_obj ) + ' - ' + HydrusData.ToHumanBytes( len( payload_bytes ) )
+    payload_description = GetPayloadTypeString( payload_obj ) + ' - ' + HydrusData.ToHumanBytes( payload_length )
     
     return ( payload_description, payload_bytes )
+    
+def LoadFromQtImage( qt_image: QG.QImage ):
+    
+    # assume this for now
+    depth = 3
+    
+    numpy_image = ClientGUIFunctions.ConvertQtImageToNumPy( qt_image )
+    
+    return LoadFromNumPyImage( numpy_image )
     
 def LoadFromPNG( path ):
     
     # this is to deal with unicode paths, which cv2 can't handle
-    ( os_file_handle, temp_path ) = HydrusPaths.GetTempPath()
+    ( os_file_handle, temp_path ) = HydrusTemp.GetTempPath()
     
     try:
         
         HydrusPaths.MirrorFile( path, temp_path )
         
-        numpy_image = cv2.imread( temp_path, flags = IMREAD_UNCHANGED )
-        
-    except Exception as e:
-        
-        HydrusData.ShowException( e )
-        
-        raise Exception( 'That did not appear to be a valid image!' )
+        try:
+            
+            # unchanged because we want exact byte data, no conversions or other gubbins
+            numpy_image = cv2.imread( temp_path, flags = IMREAD_UNCHANGED )
+            
+            if numpy_image is None:
+                
+                raise Exception()
+                
+            
+        except Exception as e:
+            
+            try:
+                
+                # dequantize = False because we don't want to convert to RGB
+                
+                pil_image = HydrusImageHandling.GeneratePILImage( temp_path, dequantize = False )
+                
+                numpy_image = HydrusImageHandling.GenerateNumPyImageFromPILImage( pil_image )
+                
+            except Exception as e:
+                
+                HydrusData.ShowException( e )
+                
+                raise Exception( '"{}" did not appear to be a valid image!'.format( path ) )
+                
+            
         
     finally:
         
-        HydrusPaths.CleanUpTempPath( os_file_handle, temp_path )
+        HydrusTemp.CleanUpTempPath( os_file_handle, temp_path )
         
+    
+    return LoadFromNumPyImage( numpy_image )
+    
+def LoadFromNumPyImage( numpy_image: numpy.array ):
     
     try:
         
-        try:
+        height = numpy_image.shape[0]
+        width = numpy_image.shape[1]
+        
+        if len( numpy_image.shape ) > 2:
             
-            ( height, width ) = numpy_image.shape
+            depth = numpy_image.shape[2]
             
-        except:
-            
-            raise Exception( 'The file did not appear to be monochrome!' )
+            if depth != 1:
+                
+                numpy_image = numpy_image[:,:,0] # let's fetch one channel. if the png is a perfect RGB conversion of the original (or, let's say, a Firefox bmp export), this actually works
+                
             
         
         try:
@@ -303,6 +338,8 @@ def LoadFromPNG( path ):
         
     except Exception as e:
         
+        HydrusData.PrintException( e )
+        
         message = 'The image loaded, but it did not seem to be a hydrus serialised png! The error was: {}'.format( str( e ) )
         message += os.linesep * 2
         message += 'If you believe this is a legit non-resized, non-converted hydrus serialised png, please send it to hydrus_dev.'
@@ -311,6 +348,22 @@ def LoadFromPNG( path ):
         
     
     return payload_bytes
+    
+def LoadStringFromPNG( path: str ) -> str:
+    
+    payload_bytes = LoadFromPNG( path )
+    
+    try:
+        
+        payload_string = HydrusCompression.DecompressBytesToString( payload_bytes )
+        
+    except:
+        
+        # older payloads were not compressed
+        payload_string = str( payload_bytes, 'utf-8' )
+        
+    
+    return payload_string
     
 def TextExceedsWidth( painter, text, width ):
     

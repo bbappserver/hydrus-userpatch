@@ -16,6 +16,7 @@ from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusTags
 
 from hydrus.client import ClientConstants as CC
+from hydrus.client import ClientLocation
 from hydrus.client import ClientSearch
 from hydrus.client import ClientSerialisable
 from hydrus.client.gui import ClientGUIAsync
@@ -967,11 +968,6 @@ class ListBox( QW.QScrollArea ):
         
         self.setFont( QW.QApplication.font() )
         
-        self._widget_event_filter = QP.WidgetEventFilter( self.widget() )
-        
-        self._widget_event_filter.EVT_LEFT_DOWN( self.EventMouseSelect )
-        self._widget_event_filter.EVT_RIGHT_DOWN( self.EventMouseSelect )
-        
     
     def __len__( self ):
         
@@ -983,12 +979,12 @@ class ListBox( QW.QScrollArea ):
         return QP.isValid( self )
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         return False
         
     
-    def _ActivateFromKeyboard( self, shift_down ):
+    def _ActivateFromKeyboard( self, ctrl_down, shift_down ):
         
         selected_indices = []
         
@@ -1006,7 +1002,7 @@ class ListBox( QW.QScrollArea ):
                 
             
         
-        action_occurred = self._Activate( shift_down )
+        action_occurred = self._Activate( ctrl_down, shift_down )
         
         if action_occurred and len( self._selected_terms ) == 0 and len( selected_indices ) > 0:
             
@@ -1210,7 +1206,23 @@ class ListBox( QW.QScrollArea ):
             or_predicate = None
             
         
-        return ( predicates, or_predicate, inverse_predicates )
+        namespace_predicate = None
+        inverse_namespace_predicate = None
+        
+        if False not in [ predicate.GetType() == ClientSearch.PREDICATE_TYPE_TAG for predicate in predicates ]:
+            
+            namespaces = { HydrusTags.SplitTag( predicate.GetValue() )[0] for predicate in predicates }
+            
+            if len( namespaces ) == 1:
+                
+                ( namespace, ) = namespaces
+                
+                namespace_predicate = ClientSearch.Predicate( ClientSearch.PREDICATE_TYPE_NAMESPACE, value = namespace )
+                inverse_namespace_predicate = namespace_predicate.GetInverseCopy()
+                
+            
+        
+        return ( predicates, or_predicate, inverse_predicates, namespace_predicate, inverse_namespace_predicate )
         
     
     def _GetSafeHitIndex( self, logical_index, direction = None ):
@@ -1750,7 +1762,7 @@ class ListBox( QW.QScrollArea ):
             
         elif key_code in ( QC.Qt.Key_Enter, QC.Qt.Key_Return ):
             
-            self._ActivateFromKeyboard( shift )
+            self._ActivateFromKeyboard( ctrl, shift )
             
         else:
             
@@ -1820,23 +1832,53 @@ class ListBox( QW.QScrollArea ):
             
         
     
-    def mouseDoubleClickEvent( self, event ):
+    def eventFilter( self, watched, event ):
         
-        if event.button() == QC.Qt.LeftButton:
+        # we do the event filter since we need to 'scroll' the click, so we capture the event on the widget, not ourselves
+        
+        if watched == self.widget():
             
-            shift_down = event.modifiers() & QC.Qt.ShiftModifier
-            
-            action_occurred = self._Activate( shift_down )
-            
-            if action_occurred:
+            if event.type() == QC.QEvent.MouseButtonPress:
                 
-                self.mouseActivationOccurred.emit()
+                self._HandleClick( event )
+                
+                event.accept()
+                
+                return True
+                
+            elif event.type() == QC.QEvent.MouseButtonRelease:
+                
+                self._last_drag_start_logical_index = None
+                self._drag_started = False
+                
+                event.ignore()
+                
+            elif event.type() == QC.QEvent.MouseButtonDblClick:
+                
+                if event.button() == QC.Qt.LeftButton:
+                    
+                    ctrl_down = event.modifiers() & QC.Qt.ControlModifier
+                    shift_down = event.modifiers() & QC.Qt.ShiftModifier
+                    
+                    action_occurred = self._Activate( ctrl_down, shift_down )
+                    
+                    if action_occurred:
+                        
+                        self.mouseActivationOccurred.emit()
+                        
+                    
+                else:
+                    
+                    QW.QScrollArea.mouseDoubleClickEvent( self, event )
+                    
+                
+                event.accept()
+                
+                return True
                 
             
-        else:
-            
-            QW.QScrollArea.mouseDoubleClickEvent( self, event )
-            
+        
+        return QW.QScrollArea.eventFilter( self, watched, event )
         
     
     def mouseMoveEvent( self, event ):
@@ -1869,21 +1911,6 @@ class ListBox( QW.QScrollArea ):
             
             event.ignore()
             
-        
-    
-    def mouseReleaseEvent( self, event ):
-        
-        self._last_drag_start_logical_index = None
-        self._drag_started = False
-        
-        event.ignore()
-        
-    
-    def EventMouseSelect( self, event ):
-        
-        self._HandleClick( event )
-        
-        return True # was: event.ignore()
         
     
     class _InnerWidget( QW.QWidget ):
@@ -2044,8 +2071,6 @@ class ListBoxTags( ListBox ):
         
         self._UpdateBackgroundColour()
         
-        self._widget_event_filter.EVT_MIDDLE_DOWN( self.EventMouseMiddleClick )
-        
         HG.client_controller.sub( self, 'ForceTagRecalc', 'refresh_all_tag_presentation_gui' )
         HG.client_controller.sub( self, '_UpdateBackgroundColour', 'notify_new_colourset' )
         
@@ -2089,9 +2114,9 @@ class ListBoxTags( ListBox ):
         return copyable_tag_strings
         
     
-    def _GetCurrentFileServiceKey( self ):
+    def _GetCurrentLocationContext( self ):
         
-        return CC.LOCAL_FILE_SERVICE_KEY
+        return ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY )
         
     
     def _GetCurrentPagePredicates( self ) -> typing.Set[ ClientSearch.Predicate ]:
@@ -2163,9 +2188,9 @@ class ListBoxTags( ListBox ):
             
             page_name = ', '.join( s )
             
-            file_service_key = self._GetCurrentFileServiceKey()
+            location_context = self._GetCurrentLocationContext()
             
-            HG.client_controller.pub( 'new_page_query', file_service_key, initial_predicates = predicates, page_name = page_name, activate_window = activate_window )
+            HG.client_controller.pub( 'new_page_query', location_context, initial_predicates = predicates, page_name = page_name, activate_window = activate_window )
             
             activate_window = False
             
@@ -2283,6 +2308,11 @@ class ListBoxTags( ListBox ):
             
         
     
+    def _SelectFilesWithTags( self, select_type ):
+        
+        pass
+        
+    
     def _UpdateBackgroundColour( self ):
         
         new_options = HG.client_controller.new_options
@@ -2292,26 +2322,9 @@ class ListBoxTags( ListBox ):
         self.widget().update()
         
     
-    def EventMouseMiddleClick( self, event ):
+    def AddAdditionalMenuItems( self, menu: QW.QMenu ):
         
-        self._HandleClick( event )
-        
-        if self.can_spawn_new_windows:
-            
-            ( predicates, or_predicate, inverse_predicates ) = self._GetSelectedPredicatesAndInverseCopies()
-            
-            if len( predicates ) > 0:
-                
-                shift_down = event.modifiers() & QC.Qt.ShiftModifier
-                
-                if shift_down and or_predicate is not None:
-                    
-                    predicates = ( or_predicate, )
-                    
-                
-                self._NewSearchPages( [ predicates ] )
-                
-            
+        pass
         
     
     def contextMenuEvent( self, event ):
@@ -2322,16 +2335,53 @@ class ListBoxTags( ListBox ):
             
         
     
-    def mouseReleaseEvent( self, event ):
+    def eventFilter( self, watched, event ):
         
-        if event.button() != QC.Qt.RightButton:
+        # we do the event filter since we need to 'scroll' the click, so we capture the event on the widget, not ourselves
+        
+        if watched == self.widget():
             
-            ListBox.mouseReleaseEvent( self, event )
-            
-            return
+            if event.type() == QC.QEvent.MouseButtonPress:
+                
+                if event.button() == QC.Qt.MiddleButton:
+                    
+                    self._HandleClick( event )
+                    
+                    if self.can_spawn_new_windows:
+                        
+                        (predicates, or_predicate, inverse_predicates, namespace_predicate, inverse_namespace_predicate) = self._GetSelectedPredicatesAndInverseCopies()
+                        
+                        if len( predicates ) > 0:
+                            
+                            shift_down = event.modifiers() & QC.Qt.ShiftModifier
+                            
+                            if shift_down and or_predicate is not None:
+                                
+                                predicates = (or_predicate,)
+                                
+                            self._NewSearchPages( [ predicates ] )
+                            
+                        
+                    
+                    event.accept()
+                    
+                    return True
+                    
+                
+            elif event.type() == QC.QEvent.MouseButtonRelease:
+                
+                if event.button() == QC.Qt.RightButton:
+                    
+                    self.ShowMenu()
+                    
+                    event.accept()
+                    
+                    return True
+                    
+                
             
         
-        self.ShowMenu()
+        return ListBox.eventFilter( self, watched, event )
         
     
     def ShowMenu( self ):
@@ -2624,7 +2674,7 @@ class ListBoxTags( ListBox ):
                                 
                                 ideal_label = 'ideal is "{}" on: {}'.format( ideal, convert_service_keys_to_name_string( ideals_to_service_keys[ ideal ] ) )
                                 
-                                ClientGUIMenus.AppendMenuItem( siblings_menu, ideal_label, ideal_label, HG.client_controller.pub, 'clipboard', 'text', ideal_tag )
+                                ClientGUIMenus.AppendMenuItem( siblings_menu, ideal_label, ideal_label, HG.client_controller.pub, 'clipboard', 'text', ideal )
                                 
                             
                             #
@@ -2693,7 +2743,7 @@ class ListBoxTags( ListBox ):
                 
                 ClientGUIMenus.AppendSeparator( menu )
                 
-                ( predicates, or_predicate, inverse_predicates ) = self._GetSelectedPredicatesAndInverseCopies()
+                ( predicates, or_predicate, inverse_predicates, namespace_predicate, inverse_namespace_predicate ) = self._GetSelectedPredicatesAndInverseCopies()
                 
                 if len( predicates ) > 0:
                     
@@ -2771,7 +2821,17 @@ class ListBoxTags( ListBox ):
                         
                         if some_selected_are_not_excluded_explicitly:
                             
-                            ClientGUIMenus.AppendMenuItem( search_menu, 'exclude {} from current search'.format( predicates_selection_string ), 'Disallow the selected predicates for the current search.', self._ProcessMenuPredicateEvent, 'add_inverse_predicates' )
+                            ClientGUIMenus.AppendMenuItem( search_menu, 'exclude {} from the current search'.format( predicates_selection_string ), 'Disallow the selected predicates for the current search.', self._ProcessMenuPredicateEvent, 'add_inverse_predicates' )
+                            
+                        
+                        if namespace_predicate is not None and namespace_predicate not in current_predicates:
+                            
+                            ClientGUIMenus.AppendMenuItem( search_menu, 'add {} to current search'.format( namespace_predicate.ToString( with_count = False ) ), 'Add the namespace predicate to the current search.', self._ProcessMenuPredicateEvent, 'add_namespace_predicate' )
+                            
+                        
+                        if inverse_namespace_predicate is not None and inverse_namespace_predicate not in current_predicates:
+                            
+                            ClientGUIMenus.AppendMenuItem( search_menu, 'exclude {} from the current search'.format( namespace_predicate.ToString( with_count = False ) ), 'Disallow the namespace predicate from the current search.', self._ProcessMenuPredicateEvent, 'add_inverse_namespace_predicate' )
                             
                         
                     
@@ -2809,13 +2869,13 @@ class ListBoxTags( ListBox ):
                         label = 'files with all of "{}"'.format( tags_sorted_to_show_on_menu_string )
                         
                     
-                    ClientGUIMenus.AppendMenuItem( select_menu, label, 'Select the files with these tags.', HG.client_controller.pub, 'select_files_with_tags', self._page_key, 'AND', set( selected_actual_tags ) )
+                    ClientGUIMenus.AppendMenuItem( select_menu, label, 'Select the files with these tags.', self._SelectFilesWithTags, 'AND' )
                     
                     if len( selected_actual_tags ) > 1:
                         
                         label = 'files with any of "{}"'.format( tags_sorted_to_show_on_menu_string )
                         
-                        ClientGUIMenus.AppendMenuItem( select_menu, label, 'Select the files with any of these tags.', HG.client_controller.pub, 'select_files_with_tags', self._page_key, 'OR', set( selected_actual_tags ) )
+                        ClientGUIMenus.AppendMenuItem( select_menu, label, 'Select the files with any of these tags.', self._SelectFilesWithTags, 'OR' )
                         
                     
                     ClientGUIMenus.AppendMenu( menu, select_menu, 'select' )
@@ -2877,6 +2937,8 @@ class ListBoxTags( ListBox ):
                 
                 m = ClientGUIMenus.AppendMenu( menu, favourites_menu, 'favourites' )
                 
+            
+            self.AddAdditionalMenuItems( menu )
             
             CGC.core().PopupMenu( self, menu )
             
@@ -2968,7 +3030,7 @@ class ListBoxTagsColourOptions( ListBoxTags ):
         self._DataHasChanged()
         
     
-    def _Activate( self, shift_down ):
+    def _Activate( self, ctrl_down, shift_down ):
         
         deletable_terms = [ term for term in self._selected_terms if term.GetNamespace() not in self.PROTECTED_TERMS ]
         
@@ -2993,9 +3055,10 @@ class ListBoxTagsColourOptions( ListBoxTags ):
     
     def _DeleteActivate( self ):
         
+        ctrl_down = False
         shift_down = False
         
-        self._Activate( shift_down )
+        self._Activate( ctrl_down, shift_down )
         
     
     def _GenerateTermFromNamespaceAndColour( self, namespace, colour ) -> ClientGUIListBoxesData.ListBoxItemNamespaceColour:
@@ -3052,7 +3115,7 @@ class ListBoxTagsFilter( ListBoxTags ):
         ListBoxTags.__init__( self, parent )
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         if len( self._selected_terms ) > 0:
             
@@ -3228,6 +3291,16 @@ class ListBoxTagsDisplayCapable( ListBoxTags ):
         return work_callable
         
     
+    def _SelectFilesWithTags( self, and_or_or ):
+        
+        if self._page_key is not None:
+            
+            selected_actual_tags = self._GetTagsFromTerms( self._selected_terms )
+            
+            HG.client_controller.pub( 'select_files_with_tags', self._page_key, self._service_key, and_or_or, set( selected_actual_tags ) )
+            
+        
+    
     def GetSelectedTags( self ):
         
         return set( self._GetTagsFromTerms( self._selected_terms ) )
@@ -3299,7 +3372,7 @@ class ListBoxTagsStringsAddRemove( ListBoxTagsStrings ):
     tagsAdded = QC.Signal()
     tagsRemoved = QC.Signal()
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         if len( self._selected_terms ) > 0:
             
@@ -3400,9 +3473,10 @@ class ListBoxTagsStringsAddRemove( ListBoxTagsStrings ):
         
         if key in ClientGUIShortcuts.DELETE_KEYS_QT:
             
+            ctrl_down = modifier == ClientGUIShortcuts.SHORTCUT_MODIFIER_CTRL
             shift_down = modifier == ClientGUIShortcuts.SHORTCUT_MODIFIER_SHIFT
             
-            action_occurred = self._Activate( shift_down )
+            action_occurred = self._Activate( ctrl_down, shift_down )
             
         else:
             
@@ -3428,7 +3502,7 @@ class ListBoxTagsMedia( ListBoxTagsDisplayCapable ):
         
         self._tag_sort = HG.client_controller.new_options.GetDefaultTagSort()
         
-        self._last_media = set()
+        self._last_media_results = set()
         
         self._include_counts = include_counts
         
@@ -3551,38 +3625,58 @@ class ListBoxTagsMedia( ListBoxTagsDisplayCapable ):
         self._RegenTermsToIndices()
         
     
-    def SetTagServiceKey( self, service_key ):
+    def AddAdditionalMenuItems( self, menu: QW.QMenu ):
         
-        ListBoxTagsDisplayCapable.SetTagServiceKey( self, service_key )
+        ListBoxTagsDisplayCapable.AddAdditionalMenuItems( self, menu )
         
-        self.SetTagsByMedia( self._last_media )
-        
-    
-    def SetSort( self, tag_sort: ClientTagSorting.TagSort ):
-        
-        self._tag_sort = tag_sort
-        
-        self._Sort()
-        
-        self._DataHasChanged()
-        
-    
-    def SetShow( self, show_type, value ):
-        
-        if show_type == 'current': self._show_current = value
-        elif show_type == 'deleted': self._show_deleted = value
-        elif show_type == 'pending': self._show_pending = value
-        elif show_type == 'petitioned': self._show_petitioned = value
-        
-        self._UpdateTerms()
+        if HG.client_controller.new_options.GetBoolean( 'advanced_mode' ):
+            
+            submenu = QW.QMenu( menu )
+            
+            for tag_display_type in ( ClientTags.TAG_DISPLAY_SELECTION_LIST, ClientTags.TAG_DISPLAY_ACTUAL, ClientTags.TAG_DISPLAY_STORAGE ):
+                
+                if tag_display_type == self._tag_display_type:
+                    
+                    checked = True
+                    
+                    callable = lambda: 1
+                    
+                else:
+                    
+                    checked = False
+                    
+                    callable = HydrusData.Call( self.SetTagDisplayType, tag_display_type )
+                    
+                
+                label = 'switch to "{}" tag display'.format( ClientTags.tag_display_str_lookup[ tag_display_type ] )
+                description = 'Switch which tags this list shows, this may not work!'
+                
+                ClientGUIMenus.AppendMenuCheckItem( submenu, label, description, checked, callable )
+                
+            
+            ClientGUIMenus.AppendMenu( menu, submenu, 'experimental' )
+            
         
     
     def IncrementTagsByMedia( self, media ):
         
-        media = set( media )
-        media = media.difference( self._last_media )
+        flat_media = ClientMedia.FlattenMedia( media )
         
-        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediasTagCount( media, self._service_key, self._tag_display_type )
+        media_results = [ m.GetMediaResult() for m in flat_media ]
+        
+        self.IncrementTagsByMediaResults( media_results )
+        
+    
+    def IncrementTagsByMediaResults( self, media_results ):
+        
+        if not isinstance( media_results, set ):
+            
+            media_results = set( media_results )
+            
+        
+        media_results = media_results.difference( self._last_media_results )
+        
+        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediaResultsTagCount( media_results, self._service_key, self._tag_display_type )
         
         tags_changed = set()
         
@@ -3601,16 +3695,28 @@ class ListBoxTagsMedia( ListBoxTagsDisplayCapable ):
             self._UpdateTerms( tags_changed )
             
         
-        self._last_media.update( media )
+        self._last_media_results.update( media_results )
         
         self._DataHasChanged()
         
     
     def SetTagsByMedia( self, media ):
         
-        media = set( media )
+        flat_media = ClientMedia.FlattenMedia( media )
         
-        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediasTagCount( media, self._service_key, self._tag_display_type )
+        media_results = [ m.GetMediaResult() for m in flat_media ]
+        
+        self.SetTagsByMediaResults( media_results )
+        
+    
+    def SetTagsByMediaResults( self, media_results ):
+        
+        if not isinstance( media_results, set ):
+            
+            media_results = set( media_results )
+            
+        
+        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediaResultsTagCount( media_results, self._service_key, self._tag_display_type )
         
         self._current_tags_to_count = current_tags_to_count
         self._deleted_tags_to_count = deleted_tags_to_count
@@ -3619,45 +3725,57 @@ class ListBoxTagsMedia( ListBoxTagsDisplayCapable ):
         
         self._UpdateTerms()
         
-        self._last_media = media
+        self._last_media_results = media_results
         
         self._DataHasChanged()
         
     
     def SetTagsByMediaFromMediaPanel( self, media, tags_changed ):
         
+        flat_media = ClientMedia.FlattenMedia( media )
+        
+        media_results = [ m.GetMediaResult() for m in flat_media ]
+        
+        self.SetTagsByMediaResultsFromMediaPanel( media_results, tags_changed )
+        
+    
+    def SetTagsByMediaResultsFromMediaPanel( self, media_results, tags_changed ):
+        
+        if not isinstance( media_results, set ):
+            
+            media_results = set( media_results )
+            
+        
         # this uses the last-set media and count cache to generate new numbers and is faster than re-counting from scratch when the tags have not changed
         
-        selection_shrank_a_lot = len( media ) < len( self._last_media ) // 10 # if we are dropping to a much smaller selection (e.g. 5000 -> 1), we should just recalculate from scratch
+        selection_shrank_a_lot = len( media_results ) < len( self._last_media_results ) // 10 # if we are dropping to a much smaller selection (e.g. 5000 -> 1), we should just recalculate from scratch
         
         if tags_changed or selection_shrank_a_lot:
             
-            self.SetTagsByMedia( media )
+            self.SetTagsByMediaResults( media_results )
             
             return
             
         
-        media = set( media )
-        
-        removees = self._last_media.difference( media )
+        removees = self._last_media_results.difference( media_results )
         
         if len( removees ) == 0:
             
-            self.IncrementTagsByMedia( media )
+            self.IncrementTagsByMediaResults( media_results )
             
             return
             
         
-        adds = media.difference( self._last_media )
+        adds = media_results.difference( self._last_media_results )
         
-        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediasTagCount( removees, self._service_key, self._tag_display_type )
+        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediaResultsTagCount( removees, self._service_key, self._tag_display_type )
         
         self._current_tags_to_count.subtract( current_tags_to_count )
         self._deleted_tags_to_count.subtract( deleted_tags_to_count )
         self._pending_tags_to_count.subtract( pending_tags_to_count )
         self._petitioned_tags_to_count.subtract( petitioned_tags_to_count )
         
-        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediasTagCount( adds, self._service_key, self._tag_display_type )
+        ( current_tags_to_count, deleted_tags_to_count, pending_tags_to_count, petitioned_tags_to_count ) = ClientMedia.GetMediaResultsTagCount( adds, self._service_key, self._tag_display_type )
         
         self._current_tags_to_count.update( current_tags_to_count )
         self._deleted_tags_to_count.update( deleted_tags_to_count )
@@ -3679,14 +3797,47 @@ class ListBoxTagsMedia( ListBoxTagsDisplayCapable ):
         
         self._UpdateTerms()
         
-        self._last_media = media
+        self._last_media_results = media_results
         
         self._DataHasChanged()
         
     
+    def SetTagDisplayType( self, tag_display_type: int ):
+        
+        self._tag_display_type = tag_display_type
+        
+        self.ForceTagRecalc()
+        
+    
+    def SetTagServiceKey( self, service_key ):
+        
+        ListBoxTagsDisplayCapable.SetTagServiceKey( self, service_key )
+        
+        self.SetTagsByMediaResults( self._last_media_results )
+        
+    
+    def SetSort( self, tag_sort: ClientTagSorting.TagSort ):
+        
+        self._tag_sort = tag_sort
+        
+        self._Sort()
+        
+        self._DataHasChanged()
+        
+    
+    def SetShow( self, show_type, value ):
+        
+        if show_type == 'current': self._show_current = value
+        elif show_type == 'deleted': self._show_deleted = value
+        elif show_type == 'pending': self._show_pending = value
+        elif show_type == 'petitioned': self._show_petitioned = value
+        
+        self._UpdateTerms()
+        
+    
     def ForceTagRecalc( self ):
         
-        self.SetTagsByMedia( self._last_media )
+        self.SetTagsByMediaResults( self._last_media_results )
         
     
 class StaticBoxSorterForListBoxTags( ClientGUICommon.StaticBox ):
@@ -3694,6 +3845,10 @@ class StaticBoxSorterForListBoxTags( ClientGUICommon.StaticBox ):
     def __init__( self, parent, title, show_siblings_sort = False ):
         
         ClientGUICommon.StaticBox.__init__( self, parent, title )
+        
+        self._original_title = title
+        
+        self._tags_box = None
         
         # make this its own panel
         self._tag_sort = ClientGUITagSorting.TagSortControl( self, HG.client_controller.new_options.GetDefaultTagSort(), show_siblings = show_siblings_sort )
@@ -3705,10 +3860,29 @@ class StaticBoxSorterForListBoxTags( ClientGUICommon.StaticBox ):
     
     def SetTagServiceKey( self, service_key ):
         
+        if self._tags_box is None:
+            
+            return
+            
+        
         self._tags_box.SetTagServiceKey( service_key )
+        
+        title = self._original_title
+        
+        if service_key != CC.COMBINED_TAG_SERVICE_KEY:
+            
+            title = '{} for {}'.format( title, HG.client_controller.services_manager.GetName( service_key ) )
+            
+        
+        self.SetTitle( title )
         
     
     def EventSort( self ):
+        
+        if self._tags_box is None:
+            
+            return
+            
         
         sort = self._tag_sort.GetValue()
         
@@ -3724,6 +3898,11 @@ class StaticBoxSorterForListBoxTags( ClientGUICommon.StaticBox ):
     
     def SetTagsByMedia( self, media ):
         
+        if self._tags_box is None:
+            
+            return
+            
+        
         self._tags_box.SetTagsByMedia( media )
         
     
@@ -3736,7 +3915,7 @@ class ListBoxTagsMediaHoverFrame( ListBoxTagsMedia ):
         self._canvas_key = canvas_key
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         HG.client_controller.pub( 'canvas_manage_tags', self._canvas_key )
         
@@ -3753,7 +3932,7 @@ class ListBoxTagsMediaTagsDialog( ListBoxTagsMedia ):
         self._delete_func = delete_func
         
     
-    def _Activate( self, shift_down ) -> bool:
+    def _Activate( self, ctrl_down, shift_down ) -> bool:
         
         if len( self._selected_terms ) > 0:
             

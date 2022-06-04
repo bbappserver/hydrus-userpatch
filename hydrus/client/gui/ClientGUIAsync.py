@@ -8,7 +8,6 @@ from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
 
-from hydrus.client import ClientData
 from hydrus.client.gui import QtPorting as QP
 
 # this does one thing neatly
@@ -72,7 +71,14 @@ class AsyncQtJob( object ):
                 c = self._errback_callable
                 
             
-            HG.client_controller.CallBlockingToQt( self._win, c, etype, value, tb )
+            try:
+                
+                HG.client_controller.CallBlockingToQt( self._win, c, etype, value, tb )
+                
+            except ( HydrusExceptions.QtDeadWindowException, HydrusExceptions.ShutdownException ):
+                
+                return
+                
             
             return
             
@@ -98,7 +104,14 @@ class AsyncQtJob( object ):
                 c = self._errback_callable
                 
             
-            HG.client_controller.CallBlockingToQt( self._win, c, etype, value, tb )
+            try:
+                
+                HG.client_controller.CallBlockingToQt( self._win, c, etype, value, tb )
+                
+            except ( HydrusExceptions.QtDeadWindowException, HydrusExceptions.ShutdownException ):
+                
+                return
+                
             
         
     
@@ -287,7 +300,7 @@ class FastThreadToGUIUpdater( object ):
                 
                 self._work_needs_to_restart = True
                 
-            elif not self._callafter_waiting:
+            elif not ( self._callafter_waiting or HG.view_shutdown ):
                 
                 QP.CallAfter( self.QtDoIt )
                 

@@ -19,9 +19,10 @@ from hydrus.client import ClientRendering
 
 class DataCache( object ):
     
-    def __init__( self, controller, cache_size, timeout = 1200 ):
+    def __init__( self, controller, name, cache_size, timeout = 1200 ):
         
         self._controller = controller
+        self._name = name
         self._cache_size = cache_size
         self._timeout = timeout
         
@@ -45,6 +46,11 @@ class DataCache( object ):
         del self._keys_to_data[ key ]
         
         self._RecalcMemoryUsage()
+        
+        if HG.cache_report_mode:
+            
+            HydrusData.ShowText( 'Cache "{}" removing "{}". Current size {}.'.format( self._name, key, HydrusData.ConvertValueRangeToBytes( self._total_estimated_memory_footprint, self._cache_size ) ) )
+            
         
     
     def _DeleteItem( self ):
@@ -98,6 +104,18 @@ class DataCache( object ):
                 
                 self._RecalcMemoryUsage()
                 
+                if HG.cache_report_mode:
+                    
+                    HydrusData.ShowText(
+                        'Cache "{}" adding "{}" ({}). Current size {}.'.format(
+                            self._name,
+                            key,
+                            HydrusData.ToHumanBytes( data.GetEstimatedMemoryFootprint() ),
+                            HydrusData.ConvertValueRangeToBytes( self._total_estimated_memory_footprint, self._cache_size )
+                        )
+                    )
+                    
+                
             
         
     
@@ -141,6 +159,14 @@ class DataCache( object ):
             
         
     
+    def GetSizeLimit( self ):
+        
+        with self._lock:
+            
+            return self._cache_size
+            
+        
+    
     def HasData( self, key ):
         
         with self._lock:
@@ -174,6 +200,17 @@ class DataCache( object ):
                     
                 
             
+        
+    
+    def SetCacheSizeAndTimeout( self, cache_size, timeout ):
+        
+        with self._lock:
+            
+            self._cache_size = cache_size
+            self._timeout = timeout
+            
+        
+        self.MaintainCache()
         
     
 class LocalBooruCache( object ):
@@ -433,16 +470,18 @@ class ParsingCache( object ):
             
         
     
-class RenderedImageCache( object ):
+class ImageRendererCache( object ):
     
     def __init__( self, controller ):
         
         self._controller = controller
         
-        cache_size = self._controller.options[ 'fullscreen_cache_size' ]
+        cache_size = self._controller.new_options.GetInteger( 'image_cache_size' )
         cache_timeout = self._controller.new_options.GetInteger( 'image_cache_timeout' )
         
-        self._data_cache = DataCache( self._controller, cache_size, timeout = cache_timeout )
+        self._data_cache = DataCache( self._controller, 'image cache', cache_size, timeout = cache_timeout )
+        
+        self._controller.sub( self, 'NotifyNewOptions', 'notify_new_options' )
         
     
     def Clear( self ):
@@ -462,7 +501,14 @@ class RenderedImageCache( object ):
             
             image_renderer = ClientRendering.ImageRenderer( media )
             
-            self._data_cache.AddData( key, image_renderer )
+            # we are no longer going to let big lads flush the whole cache. they can render on demand
+            
+            image_cache_storage_limit_percentage = self._controller.new_options.GetInteger( 'image_cache_storage_limit_percentage' )
+            
+            if image_renderer.GetEstimatedMemoryFootprint() < self._data_cache.GetSizeLimit() * ( image_cache_storage_limit_percentage / 100 ):
+                
+                self._data_cache.AddData( key, image_renderer )
+                
             
         else:
             
@@ -479,16 +525,97 @@ class RenderedImageCache( object ):
         return self._data_cache.HasData( key )
         
     
+    def NotifyNewOptions( self ):
+        
+        cache_size = self._controller.new_options.GetInteger( 'image_cache_size' )
+        cache_timeout = self._controller.new_options.GetInteger( 'image_cache_timeout' )
+        
+        self._data_cache.SetCacheSizeAndTimeout( cache_size, cache_timeout )
+        
+    
+    def PrefetchImageRenderer( self, media ):
+        
+        ( width, height ) = media.GetResolution()
+        
+        # essentially, we are not going to prefetch giganto images any more. they can render on demand and not mess our queue
+        
+        image_cache_prefetch_limit_percentage = self._controller.new_options.GetInteger( 'image_cache_prefetch_limit_percentage' )
+        
+        if width * height * 3 < self._data_cache.GetSizeLimit() * ( image_cache_prefetch_limit_percentage / 100 ):
+            
+            self.GetImageRenderer( media )
+            
+        
+    
+class ImageTileCache( object ):
+    
+    def __init__( self, controller ):
+        
+        self._controller = controller
+        
+        cache_size = self._controller.new_options.GetInteger( 'image_tile_cache_size' )
+        cache_timeout = self._controller.new_options.GetInteger( 'image_tile_cache_timeout' )
+        
+        self._data_cache = DataCache( self._controller, 'image tile cache', cache_size, timeout = cache_timeout )
+        
+        self._controller.sub( self, 'NotifyNewOptions', 'notify_new_options' )
+        
+    
+    def Clear( self ):
+        
+        self._data_cache.Clear()
+        
+    
+    def GetTile( self, image_renderer: ClientRendering.ImageRenderer, media, clip_rect, target_resolution ):
+        
+        hash = media.GetHash()
+        
+        key = (
+            hash,
+            clip_rect.left(),
+            clip_rect.top(),
+            clip_rect.right(),
+            clip_rect.bottom(),
+            target_resolution.width(),
+            target_resolution.height()
+        )
+        
+        result = self._data_cache.GetIfHasData( key )
+        
+        if result is None:
+            
+            qt_pixmap = image_renderer.GetQtPixmap( clip_rect = clip_rect, target_resolution = target_resolution )
+            
+            tile = ClientRendering.ImageTile( hash, clip_rect, qt_pixmap )
+            
+            self._data_cache.AddData( key, tile )
+            
+        else:
+            
+            tile = result
+            
+        
+        return tile
+        
+    
+    def NotifyNewOptions( self ):
+        
+        cache_size = self._controller.new_options.GetInteger( 'image_tile_cache_size' )
+        cache_timeout = self._controller.new_options.GetInteger( 'image_tile_cache_timeout' )
+        
+        self._data_cache.SetCacheSizeAndTimeout( cache_size, cache_timeout )
+        
+    
 class ThumbnailCache( object ):
     
     def __init__( self, controller ):
         
         self._controller = controller
         
-        cache_size = self._controller.options[ 'thumbnail_cache_size' ]
+        cache_size = self._controller.new_options.GetInteger( 'thumbnail_cache_size' )
         cache_timeout = self._controller.new_options.GetInteger( 'thumbnail_cache_timeout' )
         
-        self._data_cache = DataCache( self._controller, cache_size, timeout = cache_timeout )
+        self._data_cache = DataCache( self._controller, 'thumbnail cache', cache_size, timeout = cache_timeout )
         
         self._magic_mime_thumbnail_ease_score_lookup = {}
         
@@ -516,14 +643,23 @@ class ThumbnailCache( object ):
         
         self._controller.sub( self, 'Clear', 'reset_thumbnail_cache' )
         self._controller.sub( self, 'ClearThumbnails', 'clear_thumbnails' )
+        self._controller.sub( self, 'NotifyNewOptions', 'notify_new_options' )
         
     
     def _GetThumbnailHydrusBitmap( self, display_media ):
         
-        bounding_dimensions = self._controller.options[ 'thumbnail_dimensions' ]
-        
         hash = display_media.GetHash()
         mime = display_media.GetMime()
+        
+        thumbnail_mime = HC.IMAGE_JPEG
+        
+        # we don't actually know this, it comes down to detailed stuff, but since this is png vs jpeg it isn't a huge deal down in the guts of image loading
+        # only really matters with transparency, so anything that can be transparent we'll prime with a png thing
+        # ain't like I am encoding EXIF rotation in my jpeg thumbs
+        if mime in ( HC.IMAGE_APNG, HC.IMAGE_PNG, HC.IMAGE_GIF, HC.IMAGE_ICON, HC.IMAGE_WEBP ):
+            
+            thumbnail_mime = HC.IMAGE_PNG
+            
         
         locations_manager = display_media.GetLocationsManager()
         
@@ -545,7 +681,7 @@ class ThumbnailCache( object ):
         
         try:
             
-            numpy_image = ClientImageHandling.GenerateNumPyImage( path, mime )
+            numpy_image = ClientImageHandling.GenerateNumPyImage( path, thumbnail_mime )
             
         except Exception as e:
             
@@ -565,7 +701,7 @@ class ThumbnailCache( object ):
             
             try:
                 
-                numpy_image = ClientImageHandling.GenerateNumPyImage( path, mime )
+                numpy_image = ClientImageHandling.GenerateNumPyImage( path, thumbnail_mime )
                 
             except Exception as e:
                 
@@ -581,7 +717,11 @@ class ThumbnailCache( object ):
         
         ( media_width, media_height ) = display_media.GetResolution()
         
-        ( expected_width, expected_height ) = HydrusImageHandling.GetThumbnailResolution( ( media_width, media_height ), bounding_dimensions )
+        bounding_dimensions = self._controller.options[ 'thumbnail_dimensions' ]
+        
+        thumbnail_scale_type = self._controller.new_options.GetInteger( 'thumbnail_scale_type' )
+        
+        ( clip_rect, ( expected_width, expected_height ) ) = HydrusImageHandling.GetThumbnailResolutionAndClipRegion( ( media_width, media_height ), bounding_dimensions, thumbnail_scale_type )
         
         exactly_as_expected = current_width == expected_width and current_height == expected_height
         
@@ -591,117 +731,36 @@ class ThumbnailCache( object ):
         
         if not correct_size:
             
-            it_is_definitely_too_big = current_width >= expected_width and current_height >= expected_height
+            numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, ( expected_width, expected_height ) )
             
-            if it_is_definitely_too_big:
+            if locations_manager.IsLocal():
+                
+                # we have the master file, so we should regen the thumb from source
                 
                 if HG.file_report_mode:
                     
-                    HydrusData.ShowText( 'Thumbnail {} too big.'.format( hash.hex() ) )
+                    HydrusData.ShowText( 'Thumbnail {} too small, scheduling regeneration from source.'.format( hash.hex() ) )
                     
                 
-                # the thumb we have is larger than desired. we can use it to generate what we actually want without losing significant data
+                delayed_item = display_media.GetMediaResult()
                 
-                # this is _resize_, not _thumbnail_, because we already know the dimensions we want
-                # and in some edge cases, doing getthumbresolution on existing thumb dimensions results in float/int conversion imprecision and you get 90px/91px regen cycles that never get fixed
-                numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, ( expected_width, expected_height ) )
-                
-                if locations_manager.IsLocal():
+                with self._lock:
                     
-                    # we have the master file, so it is safe to save our resized thumb back to disk since we can regen from source if needed
-                    
-                    if HG.file_report_mode:
+                    if delayed_item not in self._delayed_regeneration_queue_quick:
                         
-                        HydrusData.ShowText( 'Thumbnail {} too big, saving back to disk.'.format( hash.hex() ) )
+                        self._delayed_regeneration_queue_quick.add( delayed_item )
                         
-                    
-                    try:
-                        
-                        try:
-                            
-                            thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesNumPy( numpy_image, mime )
-                            
-                        except HydrusExceptions.CantRenderWithCVException:
-                            
-                            thumbnail_bytes = HydrusImageHandling.GenerateThumbnailBytesFromStaticImagePath( path, ( expected_width, expected_height ), mime )
-                            
-                        
-                    except:
-                        
-                        summary = 'The thumbnail for file {} was too large, but an attempt to shrink it failed.'.format( hash.hex() )
-                        
-                        self._HandleThumbnailException( e, summary )
-                        
-                        return self._special_thumbs[ 'hydrus' ]
-                        
-                    
-                    try:
-                        
-                        self._controller.client_files_manager.AddThumbnailFromBytes( hash, thumbnail_bytes, silent = True )
-                        
-                        self._controller.files_maintenance_manager.ClearJobs( { hash }, ClientFiles.REGENERATE_FILE_DATA_JOB_REFIT_THUMBNAIL )
-                        
-                    except:
-                        
-                        summary = 'The thumbnail for file {} was too large, but an attempt to save back the shrunk file failed.'.format( hash.hex() )
-                        
-                        self._HandleThumbnailException( e, summary )
-                        
-                        return self._special_thumbs[ 'hydrus' ]
+                        self._delayed_regeneration_queue.append( delayed_item )
                         
                     
                 
             else:
                 
-                # the thumb we have is either too small or completely messed up due to a previous ratio misparse
+                # we do not have the master file, so we have to scale up from what we have
                 
-                media_is_same_size_as_current_thumb = current_width == media_width and current_height == media_height
-                
-                if media_is_same_size_as_current_thumb:
+                if HG.file_report_mode:
                     
-                    # the thumb is smaller than expected, but this is a 32x32 pixilart image or whatever, so no need to scale
-                    
-                    if HG.file_report_mode:
-                        
-                        HydrusData.ShowText( 'Thumbnail {} too small due to small source file.'.format( hash.hex() ) )
-                        
-                    
-                    pass
-                    
-                else:
-                    
-                    numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, ( expected_width, expected_height ) )
-                    
-                    if locations_manager.IsLocal():
-                        
-                        # we have the master file, so we should regen the thumb from source
-                        
-                        if HG.file_report_mode:
-                            
-                            HydrusData.ShowText( 'Thumbnail {} too small, scheduling regeneration from source.'.format( hash.hex() ) )
-                            
-                        
-                        delayed_item = display_media.GetMediaResult()
-                        
-                        with self._lock:
-                            
-                            if delayed_item not in self._delayed_regeneration_queue_quick:
-                                
-                                self._delayed_regeneration_queue_quick.add( delayed_item )
-                                
-                                self._delayed_regeneration_queue.append( delayed_item )
-                                
-                            
-                        
-                    else:
-                        
-                        # we do not have the master file, so we have to scale up from what we have
-                        
-                        if HG.file_report_mode:
-                            
-                            HydrusData.ShowText( 'Thumbnail {} was too small, only scaling up due to no local source.'.format( hash.hex() ) )
-                            
-                        
+                    HydrusData.ShowText( 'Stored thumbnail {} was the wrong size, only scaling due to no local source.'.format( hash.hex() ) )
                     
                 
             
@@ -836,6 +895,13 @@ class ThumbnailCache( object ):
         self._delayed_regeneration_queue.sort( key = sort_regen, reverse = True )
         
     
+    def _ShouldBeAbleToProvideThumb( self, media ):
+        
+        locations_manager = media.GetLocationsManager()
+        
+        return locations_manager.IsLocal() or not locations_manager.GetCurrent().isdisjoint( HG.client_controller.services_manager.GetServiceKeys( ( HC.FILE_REPOSITORY, ) ) )
+        
+    
     def CancelWaterfall( self, page_key: bytes, medias: list ):
         
         with self._lock:
@@ -872,16 +938,24 @@ class ThumbnailCache( object ):
             names = [ 'hydrus', 'pdf', 'psd', 'clip', 'audio', 'video', 'zip' ]
             
             bounding_dimensions = self._controller.options[ 'thumbnail_dimensions' ]
+            thumbnail_scale_type = self._controller.new_options.GetInteger( 'thumbnail_scale_type' )
+            
+            # it would be ideal to replace this with mimes_to_default_thumbnail_paths at a convenient point
             
             for name in names:
                 
-                path = os.path.join( HC.STATIC_DIR, name + '.png' )
+                path = os.path.join( HC.STATIC_DIR, '{}.png'.format( name ) )
                 
                 numpy_image = ClientImageHandling.GenerateNumPyImage( path, HC.IMAGE_PNG )
                 
                 numpy_image_resolution = HydrusImageHandling.GetResolutionNumPy( numpy_image )
                 
-                target_resolution = HydrusImageHandling.GetThumbnailResolution( numpy_image_resolution, bounding_dimensions )
+                ( clip_rect, target_resolution ) = HydrusImageHandling.GetThumbnailResolutionAndClipRegion( numpy_image_resolution, bounding_dimensions, thumbnail_scale_type )
+                
+                if clip_rect is not None:
+                    
+                    numpy_image = HydrusImageHandling.ClipNumPyImage( numpy_image, clip_rect )
+                    
                 
                 numpy_image = HydrusImageHandling.ResizeNumPyImage( numpy_image, target_resolution )
                 
@@ -914,7 +988,7 @@ class ThumbnailCache( object ):
         
         while True:
             
-            if HG.view_shutdown:
+            if HG.started_shutdown:
                 
                 raise HydrusExceptions.ShutdownException( 'Application shutting down!' )
                 
@@ -940,9 +1014,9 @@ class ThumbnailCache( object ):
             return self._special_thumbs[ 'hydrus' ]
             
         
-        locations_manager = display_media.GetLocationsManager()
+        can_provide = self._ShouldBeAbleToProvideThumb( display_media )
         
-        if locations_manager.ShouldIdeallyHaveThumbnail():
+        if can_provide:
             
             mime = display_media.GetMime()
             
@@ -976,7 +1050,6 @@ class ThumbnailCache( object ):
             elif mime in HC.VIDEO: return self._special_thumbs[ 'video' ]
             elif mime == HC.APPLICATION_PDF: return self._special_thumbs[ 'pdf' ]
             elif mime == HC.APPLICATION_PSD: return self._special_thumbs[ 'psd' ]
-            elif mime == HC.APPLICATION_CLIP: return self._special_thumbs[ 'clip' ]
             elif mime in HC.ARCHIVES: return self._special_thumbs[ 'zip' ]
             else: return self._special_thumbs[ 'hydrus' ]
             
@@ -999,14 +1072,30 @@ class ThumbnailCache( object ):
         
         if mime in HC.MIMES_WITH_THUMBNAILS:
             
-            hash = display_media.GetHash()
-            
-            return self._data_cache.HasData( hash )
+            if self._ShouldBeAbleToProvideThumb( display_media ):
+                
+                hash = display_media.GetHash()
+                
+                return self._data_cache.HasData( hash )
+                
+            else:
+                
+                # yes because we provide the hydrus icon instantly
+                return True
+                
             
         else:
             
             return True
             
+        
+    
+    def NotifyNewOptions( self ):
+        
+        cache_size = self._controller.new_options.GetInteger( 'thumbnail_cache_size' )
+        cache_timeout = self._controller.new_options.GetInteger( 'thumbnail_cache_timeout' )
+        
+        self._data_cache.SetCacheSizeAndTimeout( cache_size, cache_timeout )
         
     
     def Waterfall( self, page_key, medias ):

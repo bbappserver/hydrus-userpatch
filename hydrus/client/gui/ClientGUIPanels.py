@@ -37,7 +37,7 @@ class IPFSDaemonStatusAndInteractionPanel( ClientGUICommon.StaticBox ):
         QP.AddToLayout( gridbox, self._check_nocopy, CC.FLAGS_EXPAND_BOTH_WAYS )
         QP.AddToLayout( gridbox, self._nocopy_status, CC.FLAGS_CENTER_PERPENDICULAR )
         QP.AddToLayout( gridbox, self._enable_nocopy, CC.FLAGS_EXPAND_BOTH_WAYS )
-        QP.AddToLayout( gridbox, (20,20), CC.FLAGS_CENTER_PERPENDICULAR )
+        QP.AddToLayout( gridbox, ( 20, 20 ), CC.FLAGS_CENTER_PERPENDICULAR )
         
         self.Add( gridbox, CC.FLAGS_EXPAND_BOTH_WAYS )
         
@@ -48,7 +48,7 @@ class IPFSDaemonStatusAndInteractionPanel( ClientGUICommon.StaticBox ):
     
     def _CheckNoCopy( self ):
         
-        def qt_clean_up( result, nocopy_enabled ):
+        def qt_clean_up( result, nocopy_available ):
             
             if not self or not QP.isValid( self ):
                 
@@ -59,7 +59,7 @@ class IPFSDaemonStatusAndInteractionPanel( ClientGUICommon.StaticBox ):
             
             self._check_nocopy.setEnabled( True )
             
-            self._nocopy_enabled = nocopy_enabled
+            self._nocopy_enabled = nocopy_available
             
             if self._nocopy_enabled:
                 
@@ -75,26 +75,26 @@ class IPFSDaemonStatusAndInteractionPanel( ClientGUICommon.StaticBox ):
             
             try:
                 
-                nocopy_enabled = service.GetNoCopyEnabled()
+                nocopy_available = service.GetNoCopyAvailable()
                 
-                if nocopy_enabled:
+                if nocopy_available:
                     
-                    result = 'Nocopy is enabled.'
+                    result = 'Nocopy is available.'
                     
                 else:
                     
-                    result = 'Nocopy is not enabled.'
+                    result = 'Nocopy is not available.'
                     
                 
             except Exception as e:
                 
                 result = 'Problem: {}'.format( str( e ) )
                 
-                nocopy_enabled = False
+                nocopy_available = False
                 
             finally:
                 
-                QP.CallAfter( qt_clean_up, result, nocopy_enabled )
+                QP.CallAfter( qt_clean_up, result, nocopy_available )
                 
             
         

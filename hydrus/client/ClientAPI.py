@@ -1,4 +1,5 @@
 import threading
+import typing
 
 from hydrus.core import HydrusData
 from hydrus.core import HydrusExceptions
@@ -6,14 +7,18 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusSerialisable
 from hydrus.core import HydrusTags
 
+from hydrus.client import ClientSearch
+
 CLIENT_API_PERMISSION_ADD_URLS = 0
 CLIENT_API_PERMISSION_ADD_FILES = 1
 CLIENT_API_PERMISSION_ADD_TAGS = 2
 CLIENT_API_PERMISSION_SEARCH_FILES = 3
 CLIENT_API_PERMISSION_MANAGE_PAGES = 4
 CLIENT_API_PERMISSION_MANAGE_COOKIES = 5
+CLIENT_API_PERMISSION_MANAGE_DATABASE = 6
+CLIENT_API_PERMISSION_ADD_NOTES = 7
 
-ALLOWED_PERMISSIONS = ( CLIENT_API_PERMISSION_ADD_FILES, CLIENT_API_PERMISSION_ADD_TAGS, CLIENT_API_PERMISSION_ADD_URLS, CLIENT_API_PERMISSION_SEARCH_FILES, CLIENT_API_PERMISSION_MANAGE_PAGES, CLIENT_API_PERMISSION_MANAGE_COOKIES )
+ALLOWED_PERMISSIONS = ( CLIENT_API_PERMISSION_ADD_FILES, CLIENT_API_PERMISSION_ADD_TAGS, CLIENT_API_PERMISSION_ADD_URLS, CLIENT_API_PERMISSION_SEARCH_FILES, CLIENT_API_PERMISSION_MANAGE_PAGES, CLIENT_API_PERMISSION_MANAGE_COOKIES, CLIENT_API_PERMISSION_MANAGE_DATABASE, CLIENT_API_PERMISSION_ADD_NOTES )
 
 basic_permission_to_str_lookup = {}
 
@@ -23,6 +28,8 @@ basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_ADD_TAGS ] = 'add tags to 
 basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_SEARCH_FILES ] = 'search for files'
 basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_MANAGE_PAGES ] = 'manage pages'
 basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_MANAGE_COOKIES ] = 'manage cookies'
+basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_MANAGE_DATABASE ] = 'manage database'
+basic_permission_to_str_lookup[ CLIENT_API_PERMISSION_ADD_NOTES ] = 'add notes to files'
 
 SEARCH_RESULTS_CACHE_TIMEOUT = 4 * 3600
 
@@ -258,6 +265,17 @@ class APIPermissions( HydrusSerialisable.SerialisableBaseNamed ):
         self._search_tag_filter = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_search_tag_filter )
         
     
+    def CheckAtLeastOnePermission( self, permissions ):
+        
+        with self._lock:
+            
+            if True not in ( self._HasPermission( permission ) for permission in permissions ):
+                
+                raise HydrusExceptions.InsufficientCredentialsException( 'You need at least one these permissions: {}'.format( ', '.join( basic_permission_to_str_lookup[ permission ] for permission in permissions ) ) )
+                
+            
+        
+    
     def CheckCanSearchTags( self, tags ):
         
         with self._lock:
@@ -327,6 +345,19 @@ class APIPermissions( HydrusSerialisable.SerialisableBaseNamed ):
                 
             
             self._search_results_timeout = HydrusData.GetNow() + SEARCH_RESULTS_CACHE_TIMEOUT
+            
+        
+    
+    def FilterTagPredicateResponse( self, predicates: typing.List[ ClientSearch.Predicate ] ):
+        
+        with self._lock:
+            
+            if self._search_tag_filter.AllowsEverything():
+                
+                return predicates
+                
+            
+            return [ predicate for predicate in predicates if self._search_tag_filter.TagOK( predicate.GetValue() ) ]
             
         
     

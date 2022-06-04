@@ -1,9 +1,12 @@
-import collections
+import numpy
+import typing
 
 from qtpy import QtCore as QC
 from qtpy import QtWidgets as QW
 from qtpy import QtGui as QG
 
+from hydrus.core import HydrusConstants as HC
+from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusText
 
 from hydrus.client.gui import QtPorting as QP
@@ -12,7 +15,7 @@ def ClientToScreen( win: QW.QWidget, pos: QC.QPoint ) -> QC.QPoint:
     
     tlw = win.window()
     
-    if ( win.isVisible() and tlw.isVisible() ) or True:
+    if ( win.isVisible() and tlw.isVisible() ):
         
         return win.mapToGlobal( pos )
         
@@ -21,9 +24,6 @@ def ClientToScreen( win: QW.QWidget, pos: QC.QPoint ) -> QC.QPoint:
         return QC.QPoint( 50, 50 )
         
     
-
-MAGIC_TEXT_PADDING = 1.1
-
 def ColourIsBright( colour: QG.QColor ):
     
     it_is_bright = colour.valueF() > 0.75
@@ -36,29 +36,81 @@ def ColourIsGreyish( colour: QG.QColor ):
     
     return it_is_greyish
     
-def ConvertPixelsToTextWidth( window, pixels, round_down = False ):
+# OK, so we now have a fixed block for width, which we sometimes want to calculate in both directions.
+# by normalising our 'one character' width, the inverse calculation uses the same coefficient and we aren't losing so much in rounding
+NUM_CHARS_FOR_WIDTH_CALCULATIONS = 32
+MAGIC_TEXT_PADDING = 1.1
+
+def GetOneCharacterPixelHeight( window ) -> float:
     
-    twenty_chars_in_pixels = int( window.fontMetrics().boundingRect( 20 * 'x' ).width() * MAGIC_TEXT_PADDING )
-    one_char_in_pixels = twenty_chars_in_pixels / 20
+    return window.fontMetrics().height() * MAGIC_TEXT_PADDING
+    
+def GetOneCharacterPixelWidth( window ) -> float:
+    
+    char_block_width = window.fontMetrics().boundingRect( NUM_CHARS_FOR_WIDTH_CALCULATIONS * 'x' ).width() * MAGIC_TEXT_PADDING
+    
+    one_char_width = char_block_width / NUM_CHARS_FOR_WIDTH_CALCULATIONS
+    
+    return one_char_width
+    
+def ConvertPixelsToTextWidth( window, pixels, round_down = False ) -> int:
+    
+    one_char_width = GetOneCharacterPixelWidth( window )
     
     if round_down:
         
-        return int( pixels // one_char_in_pixels )
+        return int( pixels // one_char_width )
         
     else:
         
-        return round( pixels / one_char_in_pixels )
+        return round( pixels / one_char_width )
         
     
-def ConvertTextToPixels( window, char_dimensions ):
+def ConvertQtImageToNumPy( qt_image: QG.QImage ):
+    
+    width = qt_image.width()
+    height = qt_image.height()
+    
+    if qt_image.depth() == 1:
+        
+        # this is probably super wrong, but whatever for now
+        depth = 1
+        
+    else:
+        
+        # 8, 24, 32 etc...
+        depth = qt_image.depth() // 8
+        
+    
+    data_bytearray = qt_image.bits()
+    
+    if QP.qtpy.PYSIDE2:
+        
+        data_bytes = bytes( data_bytearray )
+        
+    elif QP.qtpy.PYQT5:
+        
+        data_bytes = data_bytearray.asstring( height * width * depth )
+        
+    
+    numpy_image = numpy.fromstring( data_bytes, dtype = 'uint8' ).reshape( ( height, width, depth ) )
+    
+    return numpy_image
+    
+def ConvertTextToPixels( window, char_dimensions ) -> typing.Tuple[ int, int ]:
     
     ( char_cols, char_rows ) = char_dimensions
     
-    return ( int( window.fontMetrics().boundingRect( char_cols * 'x' ).width() * MAGIC_TEXT_PADDING ), int( char_rows * window.fontMetrics().height() * MAGIC_TEXT_PADDING ) )
+    one_char_width = GetOneCharacterPixelWidth( window )
+    one_char_height = GetOneCharacterPixelHeight( window )
     
-def ConvertTextToPixelWidth( window, char_cols ):
+    return ( round( char_cols * one_char_width ), round( char_rows * one_char_height ) )
     
-    return int( window.fontMetrics().boundingRect( char_cols * 'x' ).width() * MAGIC_TEXT_PADDING )
+def ConvertTextToPixelWidth( window, char_cols ) -> int:
+    
+    one_char_width = GetOneCharacterPixelWidth( window )
+    
+    return round( char_cols * one_char_width )
     
 def DialogIsOpen():
     
@@ -240,6 +292,18 @@ def MouseIsOnMyDisplay( window ):
     
     return mouse_screen is window_screen
     
+def MouseIsOverWidget( win: QW.QWidget ):
+    
+    # note this is different from win.underMouse(), which in different situations seems to be more complicated than just a rect test
+    
+    # I also had QWidget.underMouse() do flicker on the border edge between two lads next to each other. I guess there might be a frameGeometry vs geometry issue, but dunno. not like I test that here
+    
+    global_mouse_pos = QG.QCursor.pos()
+    
+    local_mouse_pos = win.mapFromGlobal( global_mouse_pos )
+    
+    return win.rect().contains( local_mouse_pos )
+    
 def NotebookScreenToHitTest( notebook, screen_position ):
     
     tab_pos = notebook.tabBar().mapFromGlobal( screen_position )    
@@ -266,6 +330,10 @@ def SetBitmapButtonBitmap( button, bitmap ):
     
     button.last_bitmap = bitmap
     
+def SetFocusLater( win: QW.QWidget ):
+    
+    HG.client_controller.CallAfterQtSafe( win, 'set focus to a window', win.setFocus, QC.Qt.OtherFocusReason )
+    
 def TLWIsActive( window ):
     
     return window.window() == QW.QApplication.activeWindow()
@@ -290,6 +358,24 @@ def TLWOrChildIsActive( win ):
         
     
     return False
+    
+def UpdateAppDisplayName():
+    
+    app_display_name = HG.client_controller.new_options.GetString( 'app_display_name' )
+    
+    QW.QApplication.instance().setApplicationDisplayName( '{} {}'.format( app_display_name, HC.SOFTWARE_VERSION ) )
+    
+    for tlw in QW.QApplication.topLevelWidgets():
+        
+        window_title = tlw.windowTitle()
+        
+        if window_title != '':
+            
+            tlw.setWindowTitle( '' )
+            
+            tlw.setWindowTitle( window_title )
+            
+        
     
 def WidgetOrAnyTLWChildHasFocus( window ):
     

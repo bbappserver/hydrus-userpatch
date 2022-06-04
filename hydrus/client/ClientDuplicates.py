@@ -156,7 +156,7 @@ class DuplicatesManager( object ):
             
             job_key = ClientThreading.JobKey( cancellable = True )
             
-            job_key.SetVariable( 'popup_title', 'searching for potential duplicates' )
+            job_key.SetStatusTitle( 'searching for potential duplicates' )
             
             HG.client_controller.pub( 'message', job_key )
             
@@ -166,9 +166,32 @@ class DuplicatesManager( object ):
                 
                 search_distance = HG.client_controller.new_options.GetInteger( 'similar_files_duplicate_pairs_search_distance' )
                 
+                start_time = HydrusData.GetNowPrecise()
+                
                 ( still_work_to_do, num_done ) = HG.client_controller.WriteSynchronous( 'maintain_similar_files_search_for_potential_duplicates', search_distance, maintenance_mode = HC.MAINTENANCE_FORCED, job_key = job_key, work_time_float = 0.5 )
                 
+                time_it_took = HydrusData.GetNowPrecise() - start_time
+                
                 num_searched_estimate += num_done
+                
+                if num_searched_estimate > total_num_files:
+                    
+                    similar_files_maintenance_status = HG.client_controller.Read( 'similar_files_maintenance_status' )
+                    
+                    if similar_files_maintenance_status is None:
+                        
+                        break
+                        
+                    
+                    with self._lock:
+                        
+                        self._similar_files_maintenance_status = similar_files_maintenance_status
+                        
+                        searched_distances_to_count = self._similar_files_maintenance_status
+                        
+                        total_num_files = max( num_searched_estimate, sum( searched_distances_to_count.values() ) )
+                        
+                    
                 
                 text = 'searching: {}'.format( HydrusData.ConvertValueRangeToPrettyString( num_searched_estimate, total_num_files ) )
                 job_key.SetVariable( 'popup_text_1', text )
@@ -179,7 +202,7 @@ class DuplicatesManager( object ):
                     break
                     
                 
-                time.sleep( 0.5 )
+                time.sleep( min( 5, time_it_took ) ) # ideally 0.5s, but potentially longer
                 
             
             job_key.Delete()
@@ -196,13 +219,17 @@ class DuplicatesManager( object ):
             
         
     
+SYNC_ARCHIVE_NONE = 0
+SYNC_ARCHIVE_IF_ONE_DO_BOTH = 1
+SYNC_ARCHIVE_DO_BOTH_REGARDLESS = 2
+
 class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_DUPLICATE_ACTION_OPTIONS
     SERIALISABLE_NAME = 'Duplicate Action Options'
-    SERIALISABLE_VERSION = 4
+    SERIALISABLE_VERSION = 5
     
-    def __init__( self, tag_service_actions = None, rating_service_actions = None, sync_archive = False, sync_urls_action = None ):
+    def __init__( self, tag_service_actions = None, rating_service_actions = None, sync_archive_action = False, sync_urls_action = None ):
         
         if tag_service_actions is None:
             
@@ -218,7 +245,7 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
         
         self._tag_service_actions = tag_service_actions
         self._rating_service_actions = rating_service_actions
-        self._sync_archive = sync_archive
+        self._sync_archive_action = sync_archive_action
         self._sync_urls_action = sync_urls_action
         
     
@@ -235,12 +262,12 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
         serialisable_tag_service_actions = [ ( service_key.hex(), action, tag_filter.GetSerialisableTuple() ) for ( service_key, action, tag_filter ) in self._tag_service_actions ]
         serialisable_rating_service_actions = [ ( service_key.hex(), action ) for ( service_key, action ) in self._rating_service_actions ]
         
-        return ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive, self._sync_urls_action )
+        return ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive_action, self._sync_urls_action )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive, self._sync_urls_action ) = serialisable_info
+        ( serialisable_tag_service_actions, serialisable_rating_service_actions, self._sync_archive_action, self._sync_urls_action ) = serialisable_info
         
         self._tag_service_actions = [ ( bytes.fromhex( serialisable_service_key ), action, HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_filter ) ) for ( serialisable_service_key, action, serialisable_tag_filter ) in serialisable_tag_service_actions ]
         self._rating_service_actions = [ ( bytes.fromhex( serialisable_service_key ), action ) for ( serialisable_service_key, action ) in serialisable_rating_service_actions ]
@@ -299,18 +326,36 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
             return ( 4, new_serialisable_info )
             
         
+        if version == 4:
+            
+            ( serialisable_tag_service_actions, serialisable_rating_service_actions, sync_archive, sync_urls_action ) = old_serialisable_info
+            
+            if sync_archive:
+                
+                sync_archive_action = SYNC_ARCHIVE_IF_ONE_DO_BOTH
+                
+            else:
+                
+                sync_archive_action = SYNC_ARCHIVE_NONE
+                
+            
+            new_serialisable_info = ( serialisable_tag_service_actions, serialisable_rating_service_actions, sync_archive_action, sync_urls_action )
+            
+            return ( 5, new_serialisable_info )
+            
+        
     
-    def SetTuple( self, tag_service_actions, rating_service_actions, sync_archive, sync_urls_action ):
+    def SetTuple( self, tag_service_actions, rating_service_actions, sync_archive_action, sync_urls_action ):
         
         self._tag_service_actions = tag_service_actions
         self._rating_service_actions = rating_service_actions
-        self._sync_archive = sync_archive
+        self._sync_archive_action = sync_archive_action
         self._sync_urls_action = sync_urls_action
         
     
     def ToTuple( self ):
         
-        return ( self._tag_service_actions, self._rating_service_actions, self._sync_archive, self._sync_urls_action )
+        return ( self._tag_service_actions, self._rating_service_actions, self._sync_archive_action, self._sync_urls_action )
         
     
     def ProcessPairIntoContentUpdates( self, first_media, second_media, delete_first = False, delete_second = False, delete_both = False, file_deletion_reason = None ):
@@ -455,19 +500,29 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
         
         #
         
-        if self._sync_archive:
+        content_update_archive_first = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ARCHIVE, first_hashes )
+        content_update_archive_second = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ARCHIVE, second_hashes )
+        
+        if self._sync_archive_action == SYNC_ARCHIVE_IF_ONE_DO_BOTH:
             
             if first_media.HasInbox() and second_media.HasArchive():
                 
-                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ARCHIVE, first_hashes )
-                
-                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update )
+                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update_archive_first )
                 
             elif first_media.HasArchive() and second_media.HasInbox():
                 
-                content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ARCHIVE, second_hashes )
+                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update_archive_second )
                 
-                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update )
+            
+        elif self._sync_archive_action == SYNC_ARCHIVE_DO_BOTH_REGARDLESS:
+            
+            if first_media.HasInbox():
+                
+                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update_archive_first )
+                
+            if second_media.HasInbox():
+                
+                service_keys_to_content_updates[ CC.COMBINED_LOCAL_FILE_SERVICE_KEY ].append( content_update_archive_second )
                 
             
         
@@ -528,24 +583,27 @@ class DuplicateActionOptions( HydrusSerialisable.SerialisableBase ):
                 
             
         
+        delete_lock_for_archived_files = HG.client_controller.new_options.GetBoolean( 'delete_lock_for_archived_files' )
+        
         for media in deletee_media:
             
-            current_locations = media.GetLocationsManager().GetCurrent()
+            if delete_lock_for_archived_files and not media.HasInbox():
+                
+                continue
+                
             
-            if CC.LOCAL_FILE_SERVICE_KEY in current_locations:
+            if media.GetLocationsManager().IsTrashed():
                 
-                deletee_service_key = CC.LOCAL_FILE_SERVICE_KEY
-                
-            elif CC.TRASH_SERVICE_KEY in current_locations:
-                
-                deletee_service_key = CC.TRASH_SERVICE_KEY
+                deletee_service_keys = ( CC.COMBINED_LOCAL_FILE_SERVICE_KEY, )
                 
             else:
                 
-                deletee_service_key = None
+                local_file_service_keys = HG.client_controller.services_manager.GetServiceKeys( ( HC.LOCAL_FILE_DOMAIN, ) )
+                
+                deletee_service_keys = media.GetLocationsManager().GetCurrent().intersection( local_file_service_keys )
                 
             
-            if deletee_service_key is not None:
+            for deletee_service_key in deletee_service_keys:
                 
                 content_update = HydrusData.ContentUpdate( HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_DELETE, media.GetHashes(), reason = file_deletion_reason )
                 

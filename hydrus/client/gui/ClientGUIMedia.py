@@ -12,6 +12,7 @@ from hydrus.core import HydrusPaths
 from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 
+from hydrus.client import ClientApplicationCommand as CAC
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientPaths
 from hydrus.client import ClientThreading
@@ -141,7 +142,7 @@ def DoClearFileViewingStats( win: QW.QWidget, flat_medias: typing.Collection[ Cl
         insert = 'these {} files'.format( HydrusData.ToHumanInt( len( flat_medias ) ) )
         
     
-    message = 'Clear the file viewing stats for {}?'.format( insert )
+    message = 'Clear the file viewing count/duration and \'last viewed time\' for {}?'.format( insert )
     
     result = ClientGUIDialogsQuick.GetYesNo( win, message )
     
@@ -262,7 +263,7 @@ def OpenURLs( urls ):
             
             job_key = ClientThreading.JobKey( pausable = True, cancellable = True )
             
-            job_key.SetVariable( 'popup_title', 'Opening URLs' )
+            job_key.SetStatusTitle( 'Opening URLs' )
             
             HG.client_controller.pub( 'message', job_key )
             
@@ -362,14 +363,14 @@ def AddFileViewingStatsMenu( menu, medias: typing.Collection[ ClientMedia.Media 
     
     if view_style == CC.FILE_VIEWING_STATS_MENU_DISPLAY_MEDIA_AND_PREVIEW_SUMMED:
         
-        combined_line = fvsm.GetPrettyCombinedLine()
+        combined_line = fvsm.GetPrettyViewsLine( ( CC.CANVAS_MEDIA_VIEWER, CC.CANVAS_PREVIEW ) )
         
         ClientGUIMenus.AppendMenuLabel( menu, combined_line )
         
     else:
         
-        media_line = fvsm.GetPrettyMediaLine()
-        preview_line = fvsm.GetPrettyPreviewLine()
+        media_line = fvsm.GetPrettyViewsLine( ( CC.CANVAS_MEDIA_VIEWER, ) )
+        preview_line = fvsm.GetPrettyViewsLine( ( CC.CANVAS_PREVIEW, ) )
         
         if view_style == CC.FILE_VIEWING_STATS_MENU_DISPLAY_MEDIA_ONLY:
             
@@ -593,6 +594,77 @@ def AddKnownURLsViewCopyMenu( win, menu, focus_media, selected_media = None ):
         ClientGUIMenus.AppendMenu( menu, urls_menu, 'known urls' )
         
     
+def AddLocalFilesMoveAddToMenu( win: QW.QWidget, menu: QW.QMenu, local_duplicable_to_file_service_keys: typing.Collection[ bytes ], local_moveable_from_and_to_file_service_keys: typing.Collection[ typing.Tuple[ bytes, bytes ] ], multiple_selected: bool, process_application_command_call ):
+    
+    if len( local_duplicable_to_file_service_keys ) == 0 and len( local_moveable_from_and_to_file_service_keys ) == 0:
+        
+        return
+        
+    
+    local_action_menu = QW.QMenu( menu )
+    
+    if len( local_duplicable_to_file_service_keys ) > 0:
+        
+        menu_tuples = []
+        
+        for s_k in local_duplicable_to_file_service_keys:
+            
+            application_command = CAC.ApplicationCommand(
+                command_type = CAC.APPLICATION_COMMAND_TYPE_CONTENT,
+                data = ( s_k, HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_ADD, None )
+            )
+            
+            label = HG.client_controller.services_manager.GetName( s_k )
+            description = 'Duplicate the files to this local file service.'
+            call = HydrusData.Call( process_application_command_call, application_command )
+            
+            menu_tuples.append( ( label, description, call ) )
+            
+        
+        if multiple_selected:
+            
+            submenu_name = 'add selected to'
+            
+        else:
+            
+            submenu_name = 'add to'
+            
+        
+        ClientGUIMenus.AppendMenuOrItem( local_action_menu, submenu_name, menu_tuples )
+        
+    
+    if len( local_moveable_from_and_to_file_service_keys ) > 0:
+        
+        menu_tuples = []
+        
+        for ( source_s_k, dest_s_k ) in local_moveable_from_and_to_file_service_keys:
+            
+            application_command = CAC.ApplicationCommand(
+                command_type = CAC.APPLICATION_COMMAND_TYPE_CONTENT,
+                data = ( dest_s_k, HC.CONTENT_TYPE_FILES, HC.CONTENT_UPDATE_MOVE, source_s_k )
+            )
+            
+            label = 'from {} to {}'.format( HG.client_controller.services_manager.GetName( source_s_k ), HG.client_controller.services_manager.GetName( dest_s_k ) )
+            description = 'Add the files to the destination and delete from the source.'
+            call = HydrusData.Call( process_application_command_call, application_command )
+            
+            menu_tuples.append( ( label, description, call ) )
+            
+        
+        if multiple_selected:
+            
+            submenu_name = 'move selected'
+            
+        else:
+            
+            submenu_name = 'move'
+            
+        
+        ClientGUIMenus.AppendMenuOrItem( local_action_menu, submenu_name, menu_tuples )
+        
+    
+    ClientGUIMenus.AppendMenu( menu, local_action_menu, 'local services' )
+    
 def AddManageFileViewingStatsMenu( win: QW.QWidget, menu: QW.QMenu, flat_medias: typing.Collection[ ClientMedia.MediaSingleton ] ):
     
     # add test here for if media actually has stats, edit them, all that
@@ -631,31 +703,20 @@ def AddServiceKeyLabelsToMenu( menu, service_keys, phrase ):
         ClientGUIMenus.AppendMenu( menu, submenu, phrase + '\u2026' )
         
     
-def AddServiceKeysToMenu( event_handler, menu, service_keys, phrase, description, call ):
+def AddServiceKeysToMenu( menu, service_keys, submenu_name, description, bare_call ):
+    
+    menu_tuples = []
     
     services_manager = HG.client_controller.services_manager
     
-    if len( service_keys ) == 1:
+    for service_key in service_keys:
         
-        ( service_key, ) = service_keys
+        label = services_manager.GetName( service_key )
         
-        name = services_manager.GetName( service_key )
+        this_call = HydrusData.Call( bare_call, service_key )
         
-        label = phrase + ' ' + name
+        menu_tuples.append( ( label, description, this_call ) )
         
-        ClientGUIMenus.AppendMenuItem( menu, label, description, call, service_key )
-        
-    else:
-        
-        submenu = QW.QMenu( menu )
-        
-        for service_key in service_keys: 
-            
-            name = services_manager.GetName( service_key )
-            
-            ClientGUIMenus.AppendMenuItem( submenu, name, description, call, service_key )
-            
-        
-        ClientGUIMenus.AppendMenu( menu, submenu, phrase + '\u2026' )
-        
+    
+    ClientGUIMenus.AppendMenuOrItem( menu, submenu_name, menu_tuples )
     

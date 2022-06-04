@@ -4,7 +4,6 @@ from qtpy import QtCore as QC
 from qtpy import QtWidgets as QW
 
 from hydrus.core import HydrusConstants as HC
-from hydrus.core import HydrusExceptions
 from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
@@ -135,7 +134,7 @@ class PredicateSystemRatingNumericalControl( QW.QWidget ):
         
         self._rated_checkbox = QW.QCheckBox( 'rated', self )
         self._not_rated_checkbox = QW.QCheckBox( 'not rated', self )
-        self._operator = QP.RadioBox( self, choices = [ '>', '<', '=', '\u2248'] )
+        self._operator = QP.RadioBox( self, choices = [ '>', '<', '=', CC.UNICODE_ALMOST_EQUAL_TO ] )
         self._rating_control = ClientGUIRatings.RatingNumericalDialog( self, service_key )
         
         self._operator.Select( 2 )

@@ -138,7 +138,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         
         help_button = ClientGUIMenuButton.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
         
-        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', QG.QColor( 0, 0, 255 ) )
+        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', object_name = 'HydrusIndeterminate' )
         
         #
         
@@ -148,6 +148,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         #
         
         ( name, gug_key_and_name, query_headers, checker_options, initial_file_limit, periodic_file_limit, paused, file_import_options, tag_import_options, self._no_work_until, self._no_work_until_reason ) = subscription.ToTuple()
+        this_is_a_random_sample_sub = subscription.ThisIsARandomSampleSubscription()
         
         self._query_panel = ClientGUICommon.StaticBox( self, 'site and queries' )
         
@@ -196,15 +197,18 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
             limits_max = 1000
             
         
-        self._initial_file_limit = QP.MakeQSpinBox( self._file_limits_panel, min=1, max=limits_max )
+        self._initial_file_limit = ClientGUICommon.BetterSpinBox( self._file_limits_panel, min=1, max=limits_max )
         self._initial_file_limit.setToolTip( 'The first sync will add no more than this many URLs.' )
         
-        self._periodic_file_limit = QP.MakeQSpinBox( self._file_limits_panel, min=1, max=limits_max )
+        self._periodic_file_limit = ClientGUICommon.BetterSpinBox( self._file_limits_panel, min=1, max=limits_max )
         self._periodic_file_limit.setToolTip( 'Normal syncs will add no more than this many URLs, stopping early if they find several URLs the query has seen before.' )
+        
+        self._this_is_a_random_sample_sub = QW.QCheckBox( self._file_limits_panel )
+        self._this_is_a_random_sample_sub.setToolTip( 'If you check this, you will not get warnings if the normal file limit is hit. Useful if you have a randomly sorted gallery, or you just want a recurring small sample of files.' )
         
         self._checker_options = ClientGUIImport.CheckerOptionsButton( self._file_limits_panel, checker_options, update_callable = self._CheckerOptionsUpdated )
         
-        self._file_presentation_panel = ClientGUICommon.StaticBox( self, 'presentation' )
+        self._file_presentation_panel = ClientGUICommon.StaticBox( self, 'file publication' )
         
         self._show_a_popup_while_working = QW.QCheckBox( self._file_presentation_panel )
         self._show_a_popup_while_working.setToolTip( 'Careful with this! Leave it on to begin with, just in case it goes wrong!' )
@@ -245,6 +249,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._initial_file_limit.setValue( initial_file_limit )
         self._periodic_file_limit.setValue( periodic_file_limit )
+        self._this_is_a_random_sample_sub.setChecked( this_is_a_random_sample_sub )
         
         ( show_a_popup_while_working, publish_files_to_popup_button, publish_files_to_page, publish_label_override, merge_query_publish_events ) = subscription.GetPresentationOptions()
         
@@ -267,6 +272,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         
         rows.append( ( 'on first check, get at most this many files: ', self._initial_file_limit ) )
         rows.append( ( 'on normal checks, get at most this many newer files: ', self._periodic_file_limit ) )
+        rows.append( ( 'do not worry about subscription gaps: ', self._this_is_a_random_sample_sub ) )
         
         gridbox = ClientGUICommon.WrapInGrid( self._file_limits_panel, rows )
         
@@ -276,11 +282,19 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         
         #
         
+        label = 'If you like, the subscription can send its files to popup buttons or pages directly. The files it sends are shaped by the \'presentation\' options in _file import options_.'
+        
+        st = ClientGUICommon.BetterStaticText( self._file_presentation_panel, label = label )
+        
+        st.setWordWrap( True )
+        
+        self._file_presentation_panel.Add( st, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
         rows = []
         
         rows.append( ( 'show a popup while working: ', self._show_a_popup_while_working ) )
-        rows.append( ( 'publish new files to a popup button: ', self._publish_files_to_popup_button ) )
-        rows.append( ( 'publish new files to a page: ', self._publish_files_to_page ) )
+        rows.append( ( 'publish presented files to a popup button: ', self._publish_files_to_popup_button ) )
+        rows.append( ( 'publish presented files to a page: ', self._publish_files_to_page ) )
         rows.append( ( 'publish to a specific label: ', self._publish_label_override ) )
         rows.append( ( 'publish all queries to the same page/popup button: ', self._merge_query_publish_events ) )
         
@@ -371,7 +385,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             else:
                 
-                query_header.SetQueryLogContainerStatus( ClientImportSubscriptionQuery.LOG_CONTAINER_UNSYNCED )
+                query_header.SetQueryLogContainerStatus( ClientImportSubscriptionQuery.LOG_CONTAINER_UNSYNCED, pretty_velocity_override = 'will recalculate on next run' )
                 
             
         
@@ -547,6 +561,8 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _EditQuery( self ):
         
+        edited_datas = []
+        
         selected_query_headers = self._query_headers.GetData( only_selected = True )
         
         for old_query_header in selected_query_headers:
@@ -596,6 +612,8 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     self._query_headers.AddDatas( ( edited_query_header, ) )
                     
+                    edited_datas.append( edited_query_header )
+                    
                     self._names_to_edited_query_log_containers[ query_log_container_name ] = edited_query_log_container
                     
                 else:
@@ -604,6 +622,8 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                 
             
+        
+        self._query_headers.SelectDatas( edited_datas )
         
         self._query_headers.Sort()
         
@@ -770,7 +790,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _PasteQueries( self ):
         
-        message = 'This will add new queries by pulling them from your clipboard. It assumes they are currently in your clipboard and newline separated. Queries that are already in the subscription (with any combination of upper/lower case) will not be re-added. Is that ok?'
+        message = 'This will add new queries by pulling them from your clipboard. It assumes they are currently in your clipboard and newline separated. Queries that are already in the subscription (with any combination of upper/lower case) will not be duplicated, but if they are DEAD, they will be revived. Is that ok?'
         
         result = ClientGUIDialogsQuick.GetYesNo( self, message )
         
@@ -827,6 +847,8 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
                 
             
         
+        DEAD_query_headers = { query_header for query_header in self._query_headers.GetData() if query_header.GetQueryText() in already_existing_query_texts and query_header.IsDead() }
+        
         already_existing_query_texts = sorted( already_existing_query_texts )
         new_query_texts = sorted( new_query_texts )
         
@@ -854,6 +876,35 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
                 message += aeqt_separator.join( already_existing_query_texts )
                 message += os.linesep * 2
                 message += 'Were already in the subscription.'
+                
+            
+            if len( DEAD_query_headers ) > 0:
+                
+                message += os.linesep * 2
+                
+                if len( DEAD_query_headers ) > 50:
+                    
+                    message += '{} DEAD queries were revived.'.format( HydrusData.ToHumanInt( len( DEAD_query_headers ) ) )
+                    
+                else:
+                    
+                    DEAD_query_texts = sorted( query_header.GetQueryText() for query_header in DEAD_query_headers )
+                    
+                    if len( DEAD_query_texts ) > 5:
+                        
+                        aeqt_separator = ', '
+                        
+                    else:
+                        
+                        aeqt_separator = os.linesep
+                        
+                    
+                    message += 'The DEAD queries:'
+                    message += os.linesep * 2
+                    message += aeqt_separator.join( DEAD_query_texts )
+                    message += os.linesep * 2
+                    message += 'Were revived.'
+                    
                 
             
         
@@ -909,8 +960,14 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
             self._names_to_edited_query_log_containers[ query_log_container_name ] = query_log_container
             
         
+        for query_header in DEAD_query_headers:
+            
+            query_header.CheckNow()
+            
+        
         self._query_headers.AddDatas( query_headers )
         
+        self._query_headers.UpdateDatas( DEAD_query_headers )
         
     
     def _PausePlay( self ):
@@ -998,16 +1055,25 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _STARTRetryIgnored( self ):
         
+        try:
+            
+            ignored_regex = ClientGUIFileSeedCache.GetRetryIgnoredParam( self )
+            
+        except HydrusExceptions.CancelledException:
+            
+            return
+            
+        
         selected_query_headers = self._query_headers.GetData( only_selected = True )
         
         query_headers = [ query_header for query_header in selected_query_headers if query_header.CanRetryIgnored() ]
         
-        call = HydrusData.Call( self._RetryIgnored, query_headers )
+        call = HydrusData.Call( self._RetryIgnored, query_headers, ignored_regex )
         
         self._DoAsyncGetQueryLogContainers( query_headers, call )
         
     
-    def _RetryIgnored( self, query_headers: typing.Collection[ ClientImportSubscriptionQuery.SubscriptionQueryHeader ] ):
+    def _RetryIgnored( self, query_headers: typing.Collection[ ClientImportSubscriptionQuery.SubscriptionQueryHeader ], ignored_regex = typing.Optional[ str ] ):
         
         for query_header in query_headers:
             
@@ -1020,7 +1086,7 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
             
             query_log_container = self._names_to_edited_query_log_containers[ query_log_container_name ]
             
-            query_log_container.GetFileSeedCache().RetryIgnored()
+            query_log_container.GetFileSeedCache().RetryIgnored( ignored_regex = ignored_regex )
             
             query_header.UpdateFileStatus( query_log_container )
             
@@ -1068,11 +1134,11 @@ class EditSubscriptionPanel( ClientGUIScrolledPanels.EditPanel ):
         file_import_options = self._file_import_options.GetValue()
         tag_import_options = self._tag_import_options.GetValue()
         
-        query_headers = self._query_headers.GetData()
-        
         subscription.SetTuple( gug_key_and_name, checker_options, initial_file_limit, periodic_file_limit, paused, file_import_options, tag_import_options, self._no_work_until )
         
-        subscription.SetQueryHeaders( query_headers )
+        subscription.SetThisIsARandomSampleSubscription( self._this_is_a_random_sample_sub.isChecked() )
+        
+        subscription.SetQueryHeaders( self._query_headers.GetData() )
         
         show_a_popup_while_working = self._show_a_popup_while_working.isChecked()
         publish_files_to_popup_button = self._publish_files_to_popup_button.isChecked()
@@ -1110,7 +1176,7 @@ class EditSubscriptionQueryPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._file_seed_cache_control = ClientGUIFileSeedCache.FileSeedCacheStatusControl( self, HG.client_controller )
         
-        self._gallery_seed_log_control = ClientGUIGallerySeedLog.GallerySeedLogStatusControl( self, HG.client_controller, True, True )
+        self._gallery_seed_log_control = ClientGUIGallerySeedLog.GallerySeedLogStatusControl( self, HG.client_controller, True, True, 'search' )
         
         tag_import_options = query_header.GetTagImportOptions()
         show_downloader_options = False # just for additional tags, no parsing gubbins needed
@@ -1157,7 +1223,17 @@ class EditSubscriptionQueryPanel( ClientGUIScrolledPanels.EditPanel ):
         QP.AddToLayout( vbox, self._file_seed_cache_control, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._gallery_seed_log_control, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, gridbox, CC.FLAGS_EXPAND_SIZER_PERPENDICULAR )
+        
+        label = 'The tag import options here is only for setting \'additional tags\' for this single query! If you want to change the parsed tags or do subscription-wide \'additional tags\', jump up a level to the edit subscriptions dialog.'
+        
+        st = ClientGUICommon.BetterStaticText( self, label = label )
+        
+        st.setWordWrap( True )
+        
+        QP.AddToLayout( vbox, st, CC.FLAGS_EXPAND_PERPENDICULAR )
         QP.AddToLayout( vbox, self._tag_import_options, CC.FLAGS_EXPAND_PERPENDICULAR )
+        
+        vbox.addStretch( 1 )
         
         self.widget().setLayout( vbox )
         
@@ -1170,7 +1246,7 @@ class EditSubscriptionQueryPanel( ClientGUIScrolledPanels.EditPanel ):
         
         self._query_text.selectAll()
         
-        HG.client_controller.CallAfterQtSafe( self._query_text, self._query_text.setFocus, QC.Qt.OtherFocusReason )
+        ClientGUIFunctions.SetFocusLater( self._query_text )
         
     
     def _GetValue( self ) -> typing.Tuple[ ClientImportSubscriptionQuery.SubscriptionQueryHeader, ClientImportSubscriptionQuery.SubscriptionQueryLogContainer ]:
@@ -1209,7 +1285,7 @@ class EditSubscriptionQueryPanel( ClientGUIScrolledPanels.EditPanel ):
     
 class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
-    def __init__( self, parent: QW.QWidget, subscriptions: typing.Collection[ ClientImportSubscriptions.Subscription ], subs_are_globally_paused: bool = False ):
+    def __init__( self, parent: QW.QWidget, subscriptions: typing.Collection[ ClientImportSubscriptions.Subscription ] ):
         
         subscriptions = [ subscription.Duplicate() for subscription in subscriptions ]
         
@@ -1240,7 +1316,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         help_button = ClientGUIMenuButton.MenuBitmapButton( self, CC.global_pixmaps().help, menu_items )
         
-        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', QG.QColor( 0, 0, 255 ) )
+        help_hbox = ClientGUICommon.WrapInText( help_button, self, 'help for this panel -->', object_name = 'HydrusIndeterminate' )
         
         self._subscriptions_panel = ClientGUIListCtrl.BetterListCtrlPanel( self )
         
@@ -1293,7 +1369,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         QP.AddToLayout( vbox, help_hbox, CC.FLAGS_ON_RIGHT )
         
-        if subs_are_globally_paused:
+        if HG.client_controller.new_options.GetBoolean( 'pause_subs_sync' ):
             
             message = 'SUBSCRIPTIONS ARE CURRENTLY GLOBALLY PAUSED! CHECK THE NETWORK MENU TO UNPAUSE THEM.'
             
@@ -1889,6 +1965,15 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def _STARTRetryIgnored( self ):
         
+        try:
+            
+            ignored_regex = ClientGUIFileSeedCache.GetRetryIgnoredParam( self )
+            
+        except HydrusExceptions.CancelledException:
+            
+            return
+            
+        
         query_headers = []
         
         subscriptions = self._subscriptions.GetData( only_selected = True )
@@ -1900,12 +1985,12 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
         query_headers = [ query_header for query_header in query_headers if query_header.CanRetryIgnored() ]
         
-        call = HydrusData.Call( self._RetryIgnored, query_headers )
+        call = HydrusData.Call( self._RetryIgnored, query_headers, ignored_regex )
         
         self._DoAsyncGetQueryLogContainers( query_headers, call )
         
     
-    def _RetryIgnored( self, query_headers: typing.Iterable[ ClientImportSubscriptionQuery.SubscriptionQueryHeader ] ):
+    def _RetryIgnored( self, query_headers: typing.Iterable[ ClientImportSubscriptionQuery.SubscriptionQueryHeader ], ignored_regex: typing.Optional[ str ] ):
         
         for query_header in query_headers:
             
@@ -1918,7 +2003,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             query_log_container = self._names_to_edited_query_log_containers[ query_log_container_name ]
             
-            query_log_container.GetFileSeedCache().RetryIgnored()
+            query_log_container.GetFileSeedCache().RetryIgnored( ignored_regex = ignored_regex )
             
             query_header.UpdateFileStatus( query_log_container )
             
@@ -2277,6 +2362,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     def Edit( self ):
         
         subs_to_edit = self._subscriptions.GetData( only_selected = True )
+        edited_datas = []
         
         for subscription in subs_to_edit:
             
@@ -2300,6 +2386,8 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                     self._subscriptions.AddDatas( ( edited_subscription, ) )
                     
+                    edited_datas.append( edited_subscription )
+                    
                     self._RegenDupeData()
                     
                 elif dlg.WasCancelled():
@@ -2308,6 +2396,8 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
                     
                 
             
+        
+        self._subscriptions.SelectDatas( edited_datas )
         
         self._subscriptions.Sort()
         
@@ -2357,6 +2447,8 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
         
     
     def Merge( self ):
+        
+        edited_datas = []
         
         message = 'Are you sure you want to merge the selected subscriptions? This will combine all selected subscriptions that share the same downloader, wrapping all their different queries into one subscription.'
         message += os.linesep * 2
@@ -2452,14 +2544,20 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             self._subscriptions.AddDatas( unmergeable_subs )
             
+            edited_datas.extend( unmergeable_subs )
+            
             for merged_sub in merged_subs:
                 
                 merged_sub.SetNonDupeName( self._GetExistingNames() )
                 
                 self._subscriptions.AddDatas( ( merged_sub, ) )
                 
+                edited_datas.append( merged_sub )
+                
             
             self._RegenDupeData()
+            
+            self._subscriptions.SelectDatas( edited_datas )
             
             self._subscriptions.Sort()
             
@@ -2518,6 +2616,8 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
     
     def Separate( self ):
         
+        edited_datas = []
+        
         subscriptions = self._subscriptions.GetData( only_selected = True )
         
         if len( subscriptions ) != 1:
@@ -2538,20 +2638,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             return
             
         
-        if num_queries > 100:
-            
-            message = 'This is a large subscription. It is difficult to separate it on a per-query basis, so instead the system will automatically cut it into two halves. Is this ok?'
-            
-            result = ClientGUIDialogsQuick.GetYesNo( self, message )
-            
-            if result != QW.QDialog.Accepted:
-                
-                return
-                
-            
-            action = 'half'
-            
-        elif num_queries > 2:
+        if num_queries > 2:
             
             message = 'Are you sure you want to separate the selected subscriptions? Separating breaks merged subscriptions apart into smaller pieces.'
             yes_tuples = [ ( 'break it in half', 'half' ), ( 'break it all into single-query subscriptions', 'whole' ), ( 'only extract some of the subscription', 'part' ) ]
@@ -2675,7 +2762,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
         elif action == 'half':
             
-            query_headers = subscription.GetQueryHeaders()
+            query_headers = sorted( subscription.GetQueryHeaders(), key = lambda q: q.GetQueryText() )
             
             query_headers_to_extract = query_headers[ : len( query_headers ) // 2 ]
             
@@ -2702,8 +2789,12 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
             
             self._subscriptions.AddDatas( ( final_subscription, ) )
             
+            edited_datas.append( final_subscription )
+            
         
         self._RegenDupeData()
+        
+        self._subscriptions.SelectDatas( edited_datas )
         
         self._subscriptions.Sort()
         
@@ -2731,7 +2822,7 @@ class EditSubscriptionsPanel( ClientGUIScrolledPanels.EditPanel ):
                 
                 for subscription in subscriptions:
                     
-                    subscription.SetCheckerOptions( checker_options )
+                    subscription.SetCheckerOptions( checker_options, names_to_query_log_containers = self._names_to_edited_query_log_containers )
                     
                 
                 self._subscriptions.UpdateDatas( subscriptions )

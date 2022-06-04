@@ -12,11 +12,11 @@ from hydrus.core import HydrusImageHandling
 from hydrus.core import HydrusPaths
 
 from hydrus.client import ClientApplicationCommand as CAC
+from hydrus.client import ClientConstants as CC
 from hydrus.client.gui import ClientGUIMedia
 from hydrus.client.gui import ClientGUIMediaControls
 from hydrus.client.gui import ClientGUIShortcuts
 from hydrus.client.gui import QtPorting as QP
-from hydrus.client.gui.widgets import ClientGUICommon
 
 mpv_failed_reason = 'MPV seems ok!'
 
@@ -67,17 +67,22 @@ def GetClientAPIVersionString():
         
     '''
 
+def log_handler( loglevel, component, message ):
+    
+    HydrusData.DebugPrint( '[{}] {}: {}'.format( loglevel, component, message ) )
+    
 #Not sure how well this works with hardware acceleration. This just renders to a QWidget. In my tests it seems fine, even with vdpau video out, but I'm not 100% sure it actually uses hardware acceleration.
 #Here is an example on how to render into a QOpenGLWidget instead: https://gist.github.com/cosven/b313de2acce1b7e15afda263779c0afc
-class mpvWidget( QW.QWidget ):
+class mpvWidget( QW.QWidget, CAC.ApplicationCommandProcessorMixin ):
     
     launchMediaViewer = QC.Signal()
     
     def __init__( self, parent ):
         
+        CAC.ApplicationCommandProcessorMixin.__init__( self )
         QW.QWidget.__init__( self, parent )
         
-        self._canvas_type = ClientGUICommon.CANVAS_PREVIEW
+        self._canvas_type = CC.CANVAS_PREVIEW
         
         self._stop_for_slideshow = False
         
@@ -88,8 +93,10 @@ class mpvWidget( QW.QWidget ):
         self.setAttribute( QC.Qt.WA_DontCreateNativeAncestors )
         self.setAttribute( QC.Qt.WA_NativeWindow )
         
+        loglevel = 'debug' if HG.mpv_report_mode else 'fatal'
+        
         # loglevels: fatal, error, debug
-        self._player = mpv.MPV( wid = str( int( self.winId() ) ), log_handler = print, loglevel = 'fatal' )
+        self._player = mpv.MPV( wid = str( int( self.winId() ) ), log_handler = log_handler, loglevel = loglevel )
         
         # hydev notes on OSC:
         # OSC is by default off, default input bindings are by default off
@@ -130,20 +137,21 @@ class mpvWidget( QW.QWidget ):
         HG.client_controller.sub( self, 'UpdateAudioMute', 'new_audio_mute' )
         HG.client_controller.sub( self, 'UpdateAudioVolume', 'new_audio_volume' )
         HG.client_controller.sub( self, 'UpdateConf', 'notify_new_options' )
+        HG.client_controller.sub( self, 'SetLogLevel', 'set_mpv_log_level' )
         
         self._my_shortcut_handler = ClientGUIShortcuts.ShortcutsHandler( self, [], catch_mouse = True )
         
     
     def _GetAudioOptionNames( self ):
         
-        if self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
+        if self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
             
             if HG.client_controller.new_options.GetBoolean( 'media_viewer_uses_its_own_audio_volume' ):
                 
                 return ClientGUIMediaControls.volume_types_to_option_names[ ClientGUIMediaControls.AUDIO_MEDIA_VIEWER ]
                 
             
-        elif self._canvas_type == ClientGUICommon.CANVAS_PREVIEW:
+        elif self._canvas_type == CC.CANVAS_PREVIEW:
             
             if HG.client_controller.new_options.GetBoolean( 'preview_uses_its_own_audio_volume' ):
                 
@@ -160,11 +168,11 @@ class mpvWidget( QW.QWidget ):
         
         mute_option_name = global_mute_option_name
         
-        if self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
+        if self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
             
             ( mute_option_name, volume_option_name ) = ClientGUIMediaControls.volume_types_to_option_names[ ClientGUIMediaControls.AUDIO_MEDIA_VIEWER ]
             
-        elif self._canvas_type == ClientGUICommon.CANVAS_PREVIEW:
+        elif self._canvas_type == CC.CANVAS_PREVIEW:
             
             ( mute_option_name, volume_option_name ) = ClientGUIMediaControls.volume_types_to_option_names[ ClientGUIMediaControls.AUDIO_PREVIEW ]
             
@@ -176,14 +184,14 @@ class mpvWidget( QW.QWidget ):
         
         ( mute_option_name, volume_option_name ) = ClientGUIMediaControls.volume_types_to_option_names[ ClientGUIMediaControls.AUDIO_GLOBAL ]
         
-        if self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
+        if self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
             
             if HG.client_controller.new_options.GetBoolean( 'media_viewer_uses_its_own_audio_volume' ):
                 
                 ( mute_option_name, volume_option_name ) = ClientGUIMediaControls.volume_types_to_option_names[ ClientGUIMediaControls.AUDIO_MEDIA_VIEWER ]
                 
             
-        elif self._canvas_type == ClientGUICommon.CANVAS_PREVIEW:
+        elif self._canvas_type == CC.CANVAS_PREVIEW:
             
             if HG.client_controller.new_options.GetBoolean( 'preview_uses_its_own_audio_volume' ):
                 
@@ -218,7 +226,9 @@ class mpvWidget( QW.QWidget ):
                 return
                 
             
-            if self._media is not None and self._player.time_pos <= 1.0:
+            current_timestamp_s = self._player.time_pos
+            
+            if self._media is not None and current_timestamp_s is not None and current_timestamp_s <= 1.0:
                 
                 self._current_seek_to_start_count += 1
                 
@@ -288,6 +298,10 @@ class mpvWidget( QW.QWidget ):
                     
                     current_frame_index = int( round( ( current_timestamp_ms / self._media.GetDuration() ) * num_frames ) )
                     
+                    current_frame_index = min( current_frame_index, num_frames - 1 )
+                    
+                
+                current_timestamp_ms = min( current_timestamp_ms, self._media.GetDuration() )
                 
             
             paused = self._player.pause
@@ -321,10 +335,10 @@ class mpvWidget( QW.QWidget ):
         
         return self._current_seek_to_start_count > 0
         
-
-    def IsPlaying( self ):
+    
+    def IsPaused( self ):
         
-        return not self._player.pause
+        return self._player.pause
         
     
     def Pause( self ):
@@ -346,11 +360,9 @@ class mpvWidget( QW.QWidget ):
         
         command_processed = True
         
-        data = command.GetData()
-        
         if command.IsSimpleCommand():
             
-            action = data
+            action = command.GetSimpleAction()
             
             if action == CAC.SIMPLE_PAUSE_MEDIA:
                 
@@ -360,6 +372,12 @@ class mpvWidget( QW.QWidget ):
                 
                 self.PausePlay()
                 
+            elif action == CAC.SIMPLE_MEDIA_SEEK_DELTA:
+                
+                ( direction, duration_ms ) = command.GetSimpleData()
+                
+                self.SeekDelta( direction, duration_ms )
+                
             elif action == CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM:
                 
                 if self._media is not None:
@@ -367,11 +385,11 @@ class mpvWidget( QW.QWidget ):
                     ClientGUIMedia.OpenExternally( self._media )
                     
                 
-            elif action == CAC.SIMPLE_CLOSE_MEDIA_VIEWER and self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
+            elif action == CAC.SIMPLE_CLOSE_MEDIA_VIEWER and self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
                 
                 self.window().close()
                 
-            elif action == CAC.SIMPLE_LAUNCH_MEDIA_VIEWER and self._canvas_type == ClientGUICommon.CANVAS_PREVIEW:
+            elif action == CAC.SIMPLE_LAUNCH_MEDIA_VIEWER and self._canvas_type == CC.CANVAS_PREVIEW:
                 
                 self.launchMediaViewer.emit()
                 
@@ -386,22 +404,6 @@ class mpvWidget( QW.QWidget ):
             
         
         return command_processed
-        
-    
-    def SetCanvasType( self, canvas_type ):
-        
-        self._canvas_type = canvas_type
-        
-        if self._canvas_type == ClientGUICommon.CANVAS_MEDIA_VIEWER:
-            
-            shortcut_set = 'media_viewer_media_window'
-            
-        else:
-            
-            shortcut_set = 'preview_media_window'
-            
-        
-        self._my_shortcut_handler.SetShortcuts( [ shortcut_set ] )
         
     
     def Seek( self, time_index_ms ):
@@ -429,6 +431,46 @@ class mpvWidget( QW.QWidget ):
             # on some files, this seems to fail with a SystemError lmaoooo
             # with the same elegance, we will just pass all errors
             
+        
+    
+    def SeekDelta( self, direction, duration_ms ):
+        
+        if not self._file_is_loaded:
+            
+            return
+            
+        
+        current_timestamp_s = self._player.time_pos
+        
+        new_timestamp_ms = max( 0, ( current_timestamp_s * 1000 ) + ( direction * duration_ms ) )
+        
+        if new_timestamp_ms > self._media.GetDuration():
+            
+            new_timestamp_ms = 0
+            
+        
+        self.Seek( new_timestamp_ms )
+        
+    
+    def SetCanvasType( self, canvas_type ):
+        
+        self._canvas_type = canvas_type
+        
+        if self._canvas_type in CC.CANVAS_MEDIA_VIEWER_TYPES:
+            
+            shortcut_set = 'media_viewer_media_window'
+            
+        else:
+            
+            shortcut_set = 'preview_media_window'
+            
+        
+        self._my_shortcut_handler.SetShortcuts( [ shortcut_set ] )
+        
+    
+    def SetLogLevel( self, level: str ):
+        
+        self._player.set_loglevel( level )
         
     
     def SetMedia( self, media, start_paused = False ):

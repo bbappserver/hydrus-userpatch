@@ -15,6 +15,7 @@ from hydrus.core import HydrusText
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
+from hydrus.client import ClientLocation
 from hydrus.client.metadata import ClientTags
 from hydrus.client.metadata import ClientTagsHandling
 
@@ -59,6 +60,9 @@ PREDICATE_TYPE_SYSTEM_NUM_FRAMES = 37
 PREDICATE_TYPE_SYSTEM_NUM_NOTES = 38
 PREDICATE_TYPE_SYSTEM_NOTES = 39
 PREDICATE_TYPE_SYSTEM_HAS_NOTE_NAME = 40
+PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE = 41
+PREDICATE_TYPE_SYSTEM_TIME = 42
+PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME = 43
 
 SYSTEM_PREDICATE_TYPES = {
     PREDICATE_TYPE_SYSTEM_EVERYTHING,
@@ -69,6 +73,7 @@ SYSTEM_PREDICATE_TYPES = {
     PREDICATE_TYPE_SYSTEM_LIMIT,
     PREDICATE_TYPE_SYSTEM_SIZE,
     PREDICATE_TYPE_SYSTEM_AGE,
+    PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME,
     PREDICATE_TYPE_SYSTEM_MODIFIED_TIME,
     PREDICATE_TYPE_SYSTEM_HASH,
     PREDICATE_TYPE_SYSTEM_WIDTH,
@@ -78,6 +83,7 @@ SYSTEM_PREDICATE_TYPES = {
     PREDICATE_TYPE_SYSTEM_FRAMERATE,
     PREDICATE_TYPE_SYSTEM_NUM_FRAMES,
     PREDICATE_TYPE_SYSTEM_HAS_AUDIO,
+    PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE,
     PREDICATE_TYPE_SYSTEM_MIME,
     PREDICATE_TYPE_SYSTEM_RATING,
     PREDICATE_TYPE_SYSTEM_SIMILAR_TO,
@@ -95,7 +101,8 @@ SYSTEM_PREDICATE_TYPES = {
     PREDICATE_TYPE_SYSTEM_FILE_RELATIONSHIPS_COUNT,
     PREDICATE_TYPE_SYSTEM_FILE_RELATIONSHIPS_KING,
     PREDICATE_TYPE_SYSTEM_KNOWN_URLS,
-    PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS
+    PREDICATE_TYPE_SYSTEM_FILE_VIEWING_STATS,
+    PREDICATE_TYPE_SYSTEM_TIME
 }
 
 IGNORED_TAG_SEARCH_CHARACTERS = '[](){}/\\"\'-_'
@@ -160,7 +167,7 @@ def IsComplexWildcard( search_text ):
     
 def SortPredicates( predicates ):
     
-    key = lambda p: p.GetCount()
+    key = lambda p: p.GetCount().GetMinCount()
     
     predicates.sort( key = key, reverse = True )
     
@@ -170,12 +177,14 @@ NUMBER_TEST_OPERATOR_LESS_THAN = 0
 NUMBER_TEST_OPERATOR_GREATER_THAN = 1
 NUMBER_TEST_OPERATOR_EQUAL = 2
 NUMBER_TEST_OPERATOR_APPROXIMATE = 3
+NUMBER_TEST_OPERATOR_NOT_EQUAL = 4
 
 number_test_operator_to_str_lookup = {
     NUMBER_TEST_OPERATOR_LESS_THAN : '<',
     NUMBER_TEST_OPERATOR_GREATER_THAN : '>',
     NUMBER_TEST_OPERATOR_EQUAL : '=',
-    NUMBER_TEST_OPERATOR_APPROXIMATE : '\u2248'
+    NUMBER_TEST_OPERATOR_APPROXIMATE : CC.UNICODE_ALMOST_EQUAL_TO,
+    NUMBER_TEST_OPERATOR_NOT_EQUAL : CC.UNICODE_NOT_EQUAL_TO
 }
 
 number_test_str_to_operator_lookup = { value : key for ( key, value ) in number_test_operator_to_str_lookup.items() }
@@ -277,7 +286,7 @@ HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIAL
 
 class FileSystemPredicates( object ):
     
-    def __init__( self, system_predicates, apply_implicit_limit = True ):
+    def __init__( self, system_predicates: typing.Collection[ "Predicate" ], apply_implicit_limit = True ):
         
         self._has_system_everything = False
         
@@ -291,10 +300,8 @@ class FileSystemPredicates( object ):
         self._limit = None
         self._similar_to = None
         
-        self._file_services_to_include_current = []
-        self._file_services_to_include_pending = []
-        self._file_services_to_exclude_current = []
-        self._file_services_to_exclude_pending = []
+        self._required_file_service_statuses = collections.defaultdict( set )
+        self._excluded_file_service_statuses = collections.defaultdict( set )
         
         self._ratings_predicates = []
         
@@ -338,19 +345,31 @@ class FileSystemPredicates( object ):
                 self._common_info[ 'has_audio' ] = has_audio
                 
             
+            if predicate_type == PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE:
+                
+                has_icc_profile = value
+                
+                self._common_info[ 'has_icc_profile' ] = has_icc_profile
+                
+            
             if predicate_type == PREDICATE_TYPE_SYSTEM_HASH:
                 
                 ( hashes, hash_type ) = value
                 
-                self._common_info[ 'hash' ] = ( hashes, hash_type )
+                self._common_info[ 'hash' ] = ( hashes, hash_type, predicate.IsInclusive() )
                 
             
-            if predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
+            if predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
                 
                 if predicate_type == PREDICATE_TYPE_SYSTEM_AGE:
                     
                     min_label = 'min_import_timestamp'
                     max_label = 'max_import_timestamp'
+                    
+                elif predicate_type == PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME:
+                    
+                    min_label = 'min_last_viewed_timestamp'
+                    max_label = 'max_last_viewed_timestamp'
                     
                 elif predicate_type == PREDICATE_TYPE_SYSTEM_MODIFIED_TIME:
                     
@@ -364,7 +383,7 @@ class FileSystemPredicates( object ):
                     
                     ( years, months, days, hours ) = age_value
                     
-                    age = ( ( ( ( ( ( ( years * 12 ) + months ) * 30 ) + days ) * 24 ) + hours ) * 3600 )
+                    age = ( years * 365 * 86400 ) + ( ( ( ( ( months * 30 ) + days ) * 24 ) + hours ) * 3600 )
                     
                     now = HydrusData.GetNow()
                     
@@ -378,7 +397,7 @@ class FileSystemPredicates( object ):
                         
                         self._common_info[ max_label ] = now - age
                         
-                    elif operator == '\u2248':
+                    elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                         
                         self._common_info[ min_label ] = now - int( age * 1.15 )
                         self._common_info[ max_label ] = now - int( age * 0.85 )
@@ -406,7 +425,7 @@ class FileSystemPredicates( object ):
                         self._common_info[ min_label ] = timestamp
                         self._common_info[ max_label ] = timestamp + 86400
                         
-                    elif operator == '\u2248':
+                    elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                         
                         self._common_info[ min_label ] = timestamp - 86400 * 30
                         self._common_info[ max_label ] = timestamp + 86400 * 30
@@ -430,7 +449,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_duration' ] = duration
                 elif operator == '>': self._common_info[ 'min_duration' ] = duration
                 elif operator == '=': self._common_info[ 'duration' ] = duration
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_duration' ] = duration
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     if duration == 0:
                         
@@ -451,6 +471,7 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_framerate' ] = framerate
                 elif operator == '>': self._common_info[ 'min_framerate' ] = framerate
                 elif operator == '=': self._common_info[ 'framerate' ] = framerate
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_framerate' ] = framerate
                 
             
             if predicate_type == PREDICATE_TYPE_SYSTEM_NUM_FRAMES:
@@ -460,7 +481,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_num_frames' ] = num_frames
                 elif operator == '>': self._common_info[ 'min_num_frames' ] = num_frames
                 elif operator == '=': self._common_info[ 'num_frames' ] = num_frames
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_num_frames' ] = num_frames
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     if num_frames == 0:
                         
@@ -494,7 +516,11 @@ class FileSystemPredicates( object ):
                     
                     self._common_info[ 'max_ratio' ] = ( ratio_width, ratio_height )
                     
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO:
+                    
+                    self._common_info[ 'not_ratio' ] = ( ratio_width, ratio_height )
+                    
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     self._common_info[ 'min_ratio' ] = ( ratio_width * 0.85, ratio_height )
                     self._common_info[ 'max_ratio' ] = ( ratio_width * 1.15, ratio_height )
@@ -510,7 +536,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_size' ] = size
                 elif operator == '>': self._common_info[ 'min_size' ] = size
                 elif operator == '=': self._common_info[ 'size' ] = size
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_size' ] = size
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     self._common_info[ 'min_size' ] = int( size * 0.85 )
                     self._common_info[ 'max_size' ] = int( size * 1.15 )
@@ -528,7 +555,7 @@ class FileSystemPredicates( object ):
                 
                 if operator == '<': self._common_info[ 'max_tag_as_number' ] = ( namespace, num )
                 elif operator == '>': self._common_info[ 'min_tag_as_number' ] = ( namespace, num )
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     self._common_info[ 'min_tag_as_number' ] = ( namespace, int( num * 0.85 ) )
                     self._common_info[ 'max_tag_as_number' ] = ( namespace, int( num * 1.15 ) )
@@ -542,7 +569,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_width' ] = width
                 elif operator == '>': self._common_info[ 'min_width' ] = width
                 elif operator == '=': self._common_info[ 'width' ] = width
-                elif operator == '\u2248':
+                elif operator == '\u2260': self._common_info[ 'not_width' ] = width
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     if width == 0: self._common_info[ 'width' ] = 0
                     else:
@@ -562,7 +590,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_num_pixels' ] = num_pixels
                 elif operator == '>': self._common_info[ 'min_num_pixels' ] = num_pixels
                 elif operator == '=': self._common_info[ 'num_pixels' ] = num_pixels
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_num_pixels' ] = num_pixels
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     self._common_info[ 'min_num_pixels' ] = int( num_pixels * 0.85 )
                     self._common_info[ 'max_num_pixels' ] = int( num_pixels * 1.15 )
@@ -576,9 +605,13 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_height' ] = height
                 elif operator == '>': self._common_info[ 'min_height' ] = height
                 elif operator == '=': self._common_info[ 'height' ] = height
-                elif operator == '\u2248':
+                elif operator == '\u2260': self._common_info[ 'not_height' ] = height
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
-                    if height == 0: self._common_info[ 'height' ] = 0
+                    if height == 0:
+                        
+                        self._common_info[ 'height' ] = 0
+                        
                     else:
                         
                         self._common_info[ 'min_height' ] = int( height * 0.85 )
@@ -624,7 +657,8 @@ class FileSystemPredicates( object ):
                 if operator == '<': self._common_info[ 'max_num_words' ] = num_words
                 elif operator == '>': self._common_info[ 'min_num_words' ] = num_words
                 elif operator == '=': self._common_info[ 'num_words' ] = num_words
-                elif operator == '\u2248':
+                elif operator == CC.UNICODE_NOT_EQUAL_TO: self._common_info[ 'not_num_words' ] = num_words
+                elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                     
                     if num_words == 0: self._common_info[ 'num_words' ] = 0
                     else:
@@ -651,17 +685,15 @@ class FileSystemPredicates( object ):
             
             if predicate_type == PREDICATE_TYPE_SYSTEM_FILE_SERVICE:
                 
-                ( operator, current_or_pending, service_key ) = value
+                ( operator, status, service_key ) = value
                 
                 if operator == True:
                     
-                    if current_or_pending == HC.CONTENT_STATUS_CURRENT: self._file_services_to_include_current.append( service_key )
-                    else: self._file_services_to_include_pending.append( service_key )
+                    self._required_file_service_statuses[ service_key ].add( status )
                     
                 else:
                     
-                    if current_or_pending == HC.CONTENT_STATUS_CURRENT: self._file_services_to_exclude_current.append( service_key )
-                    else: self._file_services_to_exclude_pending.append( service_key )
+                    self._excluded_file_service_statuses[ service_key ].add( status )
                     
                 
             
@@ -700,9 +732,9 @@ class FileSystemPredicates( object ):
         return self._duplicate_count_predicates
         
     
-    def GetFileServiceInfo( self ):
+    def GetFileServiceStatuses( self ):
         
-        return ( self._file_services_to_include_current, self._file_services_to_include_pending, self._file_services_to_exclude_current, self._file_services_to_exclude_pending )
+        return ( self._required_file_service_statuses, self._excluded_file_service_statuses )
         
     
     def GetFileViewingStatsPredicates( self ):
@@ -768,6 +800,11 @@ class FileSystemPredicates( object ):
         return self._has_system_everything
         
     
+    def HasSystemLimit( self ):
+        
+        return self._limit is not None
+        
+    
     def MustBeArchive( self ): return self._archive
     
     def MustBeInbox( self ): return self._inbox
@@ -783,9 +820,14 @@ class FileSearchContext( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_FILE_SEARCH_CONTEXT
     SERIALISABLE_NAME = 'File Search Context'
-    SERIALISABLE_VERSION = 4
+    SERIALISABLE_VERSION = 5
     
-    def __init__( self, file_service_key = CC.COMBINED_FILE_SERVICE_KEY, tag_search_context = None, search_type = SEARCH_TYPE_AND, predicates = None ):
+    def __init__( self, location_context = None, tag_search_context = None, search_type = SEARCH_TYPE_AND, predicates = None ):
+        
+        if location_context is None:
+            
+            location_context = ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY )
+            
         
         if tag_search_context is None:
             
@@ -797,7 +839,7 @@ class FileSearchContext( HydrusSerialisable.SerialisableBase ):
             predicates = []
             
         
-        self._file_service_key = file_service_key
+        self._location_context = location_context
         self._tag_search_context = tag_search_context
         
         self._search_type = search_type
@@ -812,26 +854,17 @@ class FileSearchContext( HydrusSerialisable.SerialisableBase ):
     def _GetSerialisableInfo( self ):
         
         serialisable_predicates = [ predicate.GetSerialisableTuple() for predicate in self._predicates ]
+        serialisable_location_context = self._location_context.GetSerialisableTuple()
         
-        return ( self._file_service_key.hex(), self._tag_search_context.GetSerialisableTuple(), self._search_type, serialisable_predicates, self._search_complete )
+        return ( serialisable_location_context, self._tag_search_context.GetSerialisableTuple(), self._search_type, serialisable_predicates, self._search_complete )
         
     
     def _InitialiseFromSerialisableInfo( self, serialisable_info ):
         
-        ( file_service_key, serialisable_tag_search_context, self._search_type, serialisable_predicates, self._search_complete ) = serialisable_info
+        ( serialisable_location_context, serialisable_tag_search_context, self._search_type, serialisable_predicates, self._search_complete ) = serialisable_info
         
-        self._file_service_key = bytes.fromhex( file_service_key )
+        self._location_context = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_location_context )
         self._tag_search_context = HydrusSerialisable.CreateFromSerialisableTuple( serialisable_tag_search_context )
-        
-        if HG.client_controller.IsBooted():
-            
-            services_manager = HG.client_controller.services_manager
-            
-            if not services_manager.ServiceExists( self._file_service_key ):
-                
-                self._file_service_key = CC.COMBINED_LOCAL_FILE_SERVICE_KEY
-                
-            
         
         self._predicates = [ HydrusSerialisable.CreateFromSerialisableTuple( pred_tuple ) for pred_tuple in serialisable_predicates ]
         
@@ -929,27 +962,44 @@ class FileSearchContext( HydrusSerialisable.SerialisableBase ):
             return ( 4, new_serialisable_info )
             
         
-    
-    def FixMissingServices( self, services_manager ):
-        
-        if not HG.client_controller.services_manager.ServiceExists( self._file_service_key ) or not HG.client_controller.services_manager.ServiceExists( self._tag_search_context.service_key ):
+        if version == 4:
             
-            self._file_service_key = CC.COMBINED_LOCAL_FILE_SERVICE_KEY
-            self._tag_search_context.service_key = CC.COMBINED_TAG_SERVICE_KEY
+            ( file_service_key_hex, serialisable_tag_search_context, search_type, serialisable_predicates, search_complete ) = old_serialisable_info
+            
+            file_service_key = bytes.fromhex( file_service_key_hex )
+            
+            location_context = ClientLocation.LocationContext.STATICCreateSimple( file_service_key )
+            
+            serialisable_location_context = location_context.GetSerialisableTuple()
+            
+            new_serialisable_info = ( serialisable_location_context, serialisable_tag_search_context, search_type, serialisable_predicates, search_complete )
+            
+            return ( 5, new_serialisable_info )
             
         
     
-    def GetFileServiceKey( self ): return self._file_service_key
+    def FixMissingServices( self, filter_method ):
+        
+        self._location_context.FixMissingServices( filter_method )
+        self._tag_search_context.FixMissingServices( filter_method )
+        
+    
+    def GetLocationContext( self ) -> ClientLocation.LocationContext:
+        
+        return self._location_context
+        
+    
     def GetNamespacesToExclude( self ): return self._namespaces_to_exclude
     def GetNamespacesToInclude( self ): return self._namespaces_to_include
     def GetORPredicates( self ): return self._or_predicates
     def GetPredicates( self ): return self._predicates
+    
     def GetSystemPredicates( self ) -> FileSystemPredicates:
         
         return self._system_predicates
         
     
-    def GetTagSearchContext( self ):
+    def GetTagSearchContext( self ) -> "TagSearchContext":
         
         return self._tag_search_context
         
@@ -964,18 +1014,24 @@ class FileSearchContext( HydrusSerialisable.SerialisableBase ):
         return len( self._predicates ) == 0
         
     
-    def IsComplete( self ): return self._search_complete
+    def IsComplete( self ):
+        
+        return self._search_complete
+        
     
     def IsJustSystemEverything( self ):
         
         return len( self._predicates ) == 1 and self._system_predicates.HasSystemEverything()
         
     
-    def SetComplete( self ): self._search_complete = True
-    
-    def SetFileServiceKey( self, file_service_key ):
+    def SetComplete( self ):
         
-        self._file_service_key = file_service_key
+        self._search_complete = True
+        
+    
+    def SetLocationContext( self, location_context: ClientLocation.LocationContext ):
+        
+        self._location_context = location_context
         
     
     def SetIncludeCurrentTags( self, value ):
@@ -1051,6 +1107,19 @@ class TagSearchContext( HydrusSerialisable.SerialisableBase ):
             
             return ( 2, new_serialisable_info )
             
+        
+    
+    def FixMissingServices( self, filter_method ):
+        
+        if len( filter_method( [ self.service_key ] ) ) == 0:
+            
+            self.service_key = CC.COMBINED_TAG_SERVICE_KEY
+            
+        
+    
+    def IsAllKnownTags( self ):
+        
+        return self.service_key == CC.COMBINED_TAG_SERVICE_KEY
         
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_TAG_SEARCH_CONTEXT ] = TagSearchContext
@@ -1213,6 +1282,138 @@ class FavouriteSearchManager( HydrusSerialisable.SerialisableBase ):
     
 HydrusSerialisable.SERIALISABLE_TYPES_TO_OBJECT_TYPES[ HydrusSerialisable.SERIALISABLE_TYPE_FAVOURITE_SEARCH_MANAGER ] = FavouriteSearchManager
 
+class PredicateCount( object ):
+    
+    def __init__(
+        self,
+        min_current_count: int,
+        min_pending_count: int,
+        max_current_count: typing.Optional[ int ],
+        max_pending_count: typing.Optional[ int ]
+        ):
+        
+        self.min_current_count = min_current_count
+        self.min_pending_count = min_pending_count
+        self.max_current_count = max_current_count if max_current_count is not None else min_current_count
+        self.max_pending_count = max_pending_count if max_pending_count is not None else min_pending_count
+        
+    
+    def __eq__( self, other ):
+        
+        if isinstance( other, PredicateCount ):
+            
+            return self.__hash__() == other.__hash__()
+            
+        
+        return NotImplemented
+        
+    
+    def __hash__( self ):
+        
+        return (
+            self.min_current_count,
+            self.min_pending_count,
+            self.max_current_count,
+            self.max_pending_count
+        ).__hash__()
+        
+    
+    def __repr__( self ):
+        
+        return 'Predicate Count: {}-{} +{}-{}'.format( self.min_current_count, self.max_current_count, self.min_pending_count, self.max_pending_count )
+        
+    
+    def AddCounts( self, count: "PredicateCount" ):
+        
+        ( self.min_current_count, self.max_current_count ) = ClientData.MergeCounts( self.min_current_count, self.max_current_count, count.min_current_count, count.max_current_count )
+        ( self.min_pending_count, self.max_pending_count) = ClientData.MergeCounts( self.min_pending_count, self.max_pending_count, count.min_pending_count, count.max_pending_count )
+        
+    
+    def Duplicate( self ):
+        
+        return PredicateCount(
+            self.min_current_count,
+            self.min_pending_count,
+            self.max_current_count,
+            self.max_pending_count
+        )
+        
+    
+    def GetMinCount( self, current_or_pending = None ):
+        
+        if current_or_pending is None:
+            
+            return self.min_current_count + self.min_pending_count
+            
+        elif current_or_pending == HC.CONTENT_STATUS_CURRENT:
+            
+            return self.min_current_count
+            
+        elif current_or_pending == HC.CONTENT_STATUS_PENDING:
+            
+            return self.min_pending_count
+            
+        
+    
+    def GetSuffixString( self ) -> str:
+        
+        suffix_components = []
+        
+        if self.min_current_count > 0 or self.max_current_count > 0:
+            
+            number_text = HydrusData.ToHumanInt( self.min_current_count )
+            
+            if self.max_current_count > self.min_current_count:
+                
+                number_text = '{}-{}'.format( number_text, HydrusData.ToHumanInt( self.max_current_count ) )
+                
+            
+            suffix_components.append( '({})'.format( number_text ) )
+            
+        
+        if self.min_pending_count > 0 or self.max_pending_count > 0:
+            
+            number_text = HydrusData.ToHumanInt( self.min_pending_count )
+            
+            if self.max_pending_count > self.min_pending_count:
+                
+                number_text = '{}-{}'.format( number_text, HydrusData.ToHumanInt( self.max_pending_count ) )
+                
+            
+            suffix_components.append( '(+{})'.format( number_text ) )
+            
+        
+        return ' '.join( suffix_components )
+        
+    
+    def HasNonZeroCount( self ):
+        
+        return self.min_current_count > 0 or self.min_pending_count > 0 or self.max_current_count > 0 or self.max_pending_count > 0
+        
+    
+    def HasZeroCount( self ):
+        
+        return not self.HasNonZeroCount()
+        
+    
+    @staticmethod
+    def STATICCreateCurrentCount( current_count ) -> "PredicateCount":
+        
+        return PredicateCount( current_count, 0, None, None )
+        
+    
+    @staticmethod
+    def STATICCreateNullCount() -> "PredicateCount":
+        
+        return PredicateCount( 0, 0, None, None )
+        
+    
+    @staticmethod
+    def STATICCreateStaticCount( current_count, pending_count ) -> "PredicateCount":
+        
+        return PredicateCount( current_count, pending_count, None, None )
+        
+    
 class Predicate( HydrusSerialisable.SerialisableBase ):
     
     SERIALISABLE_TYPE = HydrusSerialisable.SERIALISABLE_TYPE_PREDICATE
@@ -1224,10 +1425,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
         predicate_type: int = None,
         value: object = None,
         inclusive: bool = True,
-        min_current_count: HC.noneable_int = 0,
-        min_pending_count: HC.noneable_int = 0,
-        max_current_count: HC.noneable_int = None,
-        max_pending_count: HC.noneable_int = None
+        count = None
         ):
         
         if isinstance( value, ( list, set ) ):
@@ -1235,15 +1433,19 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             value = tuple( value )
             
         
+        if count is None:
+            
+            count = PredicateCount.STATICCreateNullCount()
+            
+        
         self._predicate_type = predicate_type
         self._value = value
         
         self._inclusive = inclusive
         
-        self._min_current_count = min_current_count
-        self._min_pending_count = min_pending_count
-        self._max_current_count = max_current_count
-        self._max_pending_count = max_pending_count
+        self._count = count
+        
+        self._count_text_suffix = ''
         
         self._ideal_sibling = None
         self._siblings = None
@@ -1268,6 +1470,10 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             self._matchable_search_texts = set()
             
         
+        #
+        
+        self._RecalcPythonHash()
+        
     
     def __eq__( self, other ):
         
@@ -1286,17 +1492,24 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
     
     def __hash__( self ):
         
-        if self._predicate_type == PREDICATE_TYPE_PARENT:
-            
-            return self._parent_key.__hash__()
-            
-        
-        return ( self._predicate_type, self._value, self._inclusive ).__hash__()
+        return self._python_hash
         
     
     def __repr__( self ):
         
-        return 'Predicate: ' + str( ( self._predicate_type, self._value, self._inclusive, self.GetCount() ) )
+        return 'Predicate: ' + str( ( self._predicate_type, self._value, self._inclusive, self._count.GetMinCount() ) )
+        
+    
+    def _RecalcPythonHash( self ):
+        
+        if self._predicate_type == PREDICATE_TYPE_PARENT:
+            
+            self._python_hash = self._parent_key.__hash__()
+            
+        else:
+            
+            self._python_hash = ( self._predicate_type, self._value, self._inclusive ).__hash__()
+            
         
     
     def _GetSerialisableInfo( self ):
@@ -1385,7 +1598,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
             self._value = ( tuple( [ bytes.fromhex( serialisable_hash ) for serialisable_hash in serialisable_hashes ] ), hash_type )
             
-        elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
+        elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
             
             ( operator, age_type, age_value ) = serialisable_value
             
@@ -1412,6 +1625,8 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
             self._value = tuple( self._value )
             
+        
+        self._RecalcPythonHash()
         
     
     def _UpdateSerialisableInfo( self, version, old_serialisable_info ):
@@ -1471,51 +1686,19 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def AddCounts( self, predicate ):
-        
-        ( min_current_count, max_current_count, min_pending_count, max_pending_count ) = predicate.GetAllCounts()
-        
-        ( self._min_current_count, self._max_current_count ) = ClientData.MergeCounts( self._min_current_count, self._max_current_count, min_current_count, max_current_count )
-        ( self._min_pending_count, self._max_pending_count) = ClientData.MergeCounts( self._min_pending_count, self._max_pending_count, min_pending_count, max_pending_count )
-        
-    
-    def ClearCounts( self ):
-        
-        self._min_current_count = 0
-        self._min_pending_count = 0
-        self._max_current_count = None
-        self._max_pending_count = None
-        
-    
-    def GetAllCounts( self ):
-        
-        return ( self._min_current_count, self._max_current_count, self._min_pending_count, self._max_pending_count )
-        
-    
     def GetCopy( self ):
         
-        return Predicate( self._predicate_type, self._value, self._inclusive, self._min_current_count, self._min_pending_count, self._max_current_count, self._max_pending_count )
+        return Predicate( self._predicate_type, self._value, self._inclusive, count = self._count.Duplicate() )
+        
+    
+    def GetCount( self ):
+        
+        return self._count
         
     
     def GetCountlessCopy( self ):
         
         return Predicate( self._predicate_type, self._value, self._inclusive )
-        
-    
-    def GetCount( self, current_or_pending = None ):
-        
-        if current_or_pending is None:
-            
-            return self._min_current_count + self._min_pending_count
-            
-        elif current_or_pending == HC.CONTENT_STATUS_CURRENT:
-            
-            return self._min_current_count
-            
-        elif current_or_pending == HC.CONTENT_STATUS_PENDING:
-            
-            return self._min_pending_count
-            
         
     
     def GetNamespace( self ):
@@ -1574,7 +1757,12 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                 
                 self._inclusive = operator == '+'
                 
-            else: self._inclusive = True
+            else:
+                
+                self._inclusive = True
+                
+            
+            self._RecalcPythonHash()
             
         
         return self._inclusive
@@ -1607,7 +1795,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
             return Predicate( self._predicate_type, self._value, not self._inclusive )
             
-        elif self._predicate_type == PREDICATE_TYPE_SYSTEM_HAS_AUDIO:
+        elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_HAS_AUDIO, PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE ):
             
             return Predicate( self._predicate_type, not self._value )
             
@@ -1670,7 +1858,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
             ( namespace, subtag ) = HydrusTags.SplitTag( self._value )
             
-            return Predicate( self._predicate_type, subtag, self._inclusive, self._min_current_count, self._min_pending_count, self._max_current_count, self._max_pending_count )
+            return Predicate( self._predicate_type, subtag, self._inclusive, count = self._count.Duplicate() )
             
         
         return self.GetCopy()
@@ -1679,11 +1867,6 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
     def GetValue( self ):
         
         return self._value
-        
-    
-    def HasNonZeroCount( self ):
-        
-        return self._min_current_count > 0 or self._min_pending_count > 0
         
     
     def HasIdealSibling( self ):
@@ -1748,7 +1931,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             return False
             
         
-        if self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
+        if self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
             
             # age_type
             if self._value[1] != ideal_value[1]:
@@ -1776,6 +1959,11 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
         return True
         
     
+    def SetCountTextSuffix( self, suffix: str ):
+        
+        self._count_text_suffix = suffix
+        
+    
     def SetIdealSibling( self, tag: str ):
         
         self._ideal_sibling = tag
@@ -1784,6 +1972,8 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
     def SetInclusive( self, inclusive ):
         
         self._inclusive = inclusive
+        
+        self._RecalcPythonHash()
         
     
     def SetKnownParents( self, parents: typing.Set[ str ] ):
@@ -1807,34 +1997,23 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             
         
     
-    def ToString( self, with_count: bool = True, tag_display_type: int = ClientTags.TAG_DISPLAY_ACTUAL, render_for_user: bool = False, or_under_construction: bool = False ):
+    def ToString( self, with_count: bool = True, tag_display_type: int = ClientTags.TAG_DISPLAY_ACTUAL, render_for_user: bool = False, or_under_construction: bool = False ) -> str:
         
+        base = ''
         count_text = ''
         
         if with_count:
             
-            if self._min_current_count > 0:
+            suffix = self._count.GetSuffixString()
+            
+            if len( suffix ) > 0:
                 
-                number_text = HydrusData.ToHumanInt( self._min_current_count )
-                
-                if self._max_current_count is not None:
-                    
-                    number_text += '-' + HydrusData.ToHumanInt( self._max_current_count )
-                    
-                
-                count_text += ' (' + number_text + ')'
+                count_text += ' {}'.format( suffix )
                 
             
-            if self._min_pending_count > 0:
+            if self._count_text_suffix != '':
                 
-                number_text = HydrusData.ToHumanInt( self._min_pending_count )
-                
-                if self._max_pending_count is not None:
-                    
-                    number_text += '-' + HydrusData.ToHumanInt( self._max_pending_count )
-                    
-                
-                count_text += ' (+' + number_text + ')'
+                count_text += ' ({})'.format( self._count_text_suffix )
                 
             
         
@@ -1847,6 +2026,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_LOCAL: base = 'local'
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_NOT_LOCAL: base = 'not local'
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_DIMENSIONS: base = 'dimensions'
+            elif self._predicate_type == PREDICATE_TYPE_SYSTEM_TIME: base = 'time'
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_NOTES: base = 'notes'
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_FILE_RELATIONSHIPS: base = 'file relationships'
             elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_WIDTH, PREDICATE_TYPE_SYSTEM_HEIGHT, PREDICATE_TYPE_SYSTEM_NUM_NOTES, PREDICATE_TYPE_SYSTEM_NUM_WORDS, PREDICATE_TYPE_SYSTEM_NUM_FRAMES ):
@@ -2028,11 +2208,15 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                     base += ' is ' + HydrusData.ToHumanInt( value )
                     
                 
-            elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
+            elif self._predicate_type in ( PREDICATE_TYPE_SYSTEM_AGE, PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME, PREDICATE_TYPE_SYSTEM_MODIFIED_TIME ):
                 
                 if self._predicate_type == PREDICATE_TYPE_SYSTEM_AGE:
                     
-                    base = 'time imported'
+                    base = 'import time'
+                    
+                elif self._predicate_type == PREDICATE_TYPE_SYSTEM_LAST_VIEWED_TIME:
+                    
+                    base = 'last view time'
                     
                 elif self._predicate_type == PREDICATE_TYPE_SYSTEM_MODIFIED_TIME:
                     
@@ -2049,7 +2233,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                         
                         DAY = 86400
                         MONTH = DAY * 30
-                        YEAR = MONTH * 12
+                        YEAR = DAY * 365
                         
                         time_delta = 0
                         
@@ -2066,7 +2250,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                             
                             pretty_operator = 'before '
                             
-                        elif operator == '\u2248':
+                        elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                             
                             pretty_operator = 'around '
                             
@@ -2094,7 +2278,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                             
                             pretty_operator = 'on the day of '
                             
-                        elif operator == '\u2248':
+                        elif operator == CC.UNICODE_ALMOST_EQUAL_TO:
                             
                             pretty_operator = 'a month either side of '
                             
@@ -2106,7 +2290,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                 
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_NUM_PIXELS:
                 
-                base = 'num_pixels'
+                base = 'number of pixels'
                 
                 if self._value is not None:
                     
@@ -2140,6 +2324,20 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                         
                     
                 
+            elif self._predicate_type == PREDICATE_TYPE_SYSTEM_HAS_ICC_PROFILE:
+                
+                base = 'has icc profile'
+                
+                if self._value is not None:
+                    
+                    has_icc_profile = self._value
+                    
+                    if not has_icc_profile:
+                        
+                        base = 'no icc profile'
+                        
+                    
+                
             elif self._predicate_type == PREDICATE_TYPE_SYSTEM_HASH:
                 
                 base = 'hash'
@@ -2148,13 +2346,22 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                     
                     ( hashes, hash_type ) = self._value
                     
-                    if len( hashes ) == 1:
+                    if self._inclusive:
                         
-                        base = '{} hash is {}'.format( hash_type, hashes[0].hex() )
+                        is_phrase = 'is'
                         
                     else:
                         
-                        base = '{} hash is in {} hashes'.format( hash_type, HydrusData.ToHumanInt( len( hashes ) ) )
+                        is_phrase = 'is not'
+                        
+                    
+                    if len( hashes ) == 1:
+                        
+                        base = '{} hash {} {}'.format( hash_type, is_phrase, hashes[0].hex() )
+                        
+                    else:
+                        
+                        base = '{} hash {} in {} hashes'.format( hash_type, is_phrase, HydrusData.ToHumanInt( len( hashes ) ) )
                         
                     
                 
@@ -2252,13 +2459,27 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                     
                 else:
                     
-                    ( operator, current_or_pending, service_key ) = self._value
+                    ( operator, status, service_key ) = self._value
                     
                     if operator == True: base = 'is'
                     else: base = 'is not'
                     
-                    if current_or_pending == HC.CONTENT_STATUS_PENDING: base += ' pending to '
-                    else: base += ' currently in '
+                    if status == HC.CONTENT_STATUS_CURRENT:
+                        
+                        base += ' currently in '
+                        
+                    elif status == HC.CONTENT_STATUS_DELETED:
+                        
+                        base += ' deleted from '
+                        
+                    elif status == HC.CONTENT_STATUS_PENDING:
+                        
+                        base += ' pending to '
+                        
+                    elif status == HC.CONTENT_STATUS_PETITIONED:
+                        
+                        base += ' petitioned from '
+                        
                     
                     try:
                         
@@ -2291,7 +2512,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                         n_text = namespace
                         
                     
-                    if operator == '\u2248':
+                    if operator == CC.UNICODE_ALMOST_EQUAL_TO:
                         
                         o_text = ' about '
                         
@@ -2315,7 +2536,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                     
                     ( operator, num_relationships, dupe_type ) = self._value
                     
-                    if operator == '\u2248':
+                    if operator == CC.UNICODE_ALMOST_EQUAL_TO:
                         
                         o_text = ' about '
                         
@@ -2368,19 +2589,19 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                     
                     if include_media and include_previews:
                         
-                        domain = 'all '
+                        domain = 'all'
                         
                     elif include_media:
                         
-                        domain = 'media '
+                        domain = 'media'
                         
                     elif include_previews:
                         
-                        domain = 'preview '
+                        domain = 'preview'
                         
                     else:
                         
-                        domain = 'unknown '
+                        domain = 'unknown'
                         
                     
                     if view_type == 'views':
@@ -2392,7 +2613,7 @@ class Predicate( HydrusSerialisable.SerialisableBase ):
                         value_string = HydrusData.TimeDeltaToPrettyTimeDelta( viewing_value )
                         
                     
-                    base = domain + view_type + operator + value_string
+                    base = '{} {} {} {}'.format( domain, view_type, operator, value_string )
                     
                 
             
@@ -2564,6 +2785,64 @@ def FilterPredicatesBySearchText( service_key, search_text, predicates: typing.C
         
     
     return matches
+    
+def MergePredicates( predicates, add_namespaceless = False ):
+    
+    master_predicate_dict = {}
+    
+    for predicate in predicates:
+        
+        # this works because predicate.__hash__ exists
+        
+        if predicate in master_predicate_dict:
+            
+            master_predicate_dict[ predicate ].GetCount().AddCounts( predicate.GetCount() )
+            
+        else:
+            
+            master_predicate_dict[ predicate ] = predicate
+            
+        
+    
+    if add_namespaceless:
+        
+        # we want to include the count for namespaced tags in the namespaceless version when:
+        # there exists more than one instance of the subtag with different namespaces, including '', that has nonzero count
+        
+        unnamespaced_predicate_dict = {}
+        subtag_nonzero_instance_counter = collections.Counter()
+        
+        for predicate in master_predicate_dict.values():
+            
+            if predicate.GetCount().HasNonZeroCount():
+                
+                unnamespaced_predicate = predicate.GetUnnamespacedCopy()
+                
+                subtag_nonzero_instance_counter[ unnamespaced_predicate ] += 1
+                
+                if unnamespaced_predicate in unnamespaced_predicate_dict:
+                    
+                    unnamespaced_predicate_dict[ unnamespaced_predicate ].GetCount().AddCounts( unnamespaced_predicate.GetCount() )
+                    
+                else:
+                    
+                    unnamespaced_predicate_dict[ unnamespaced_predicate ] = unnamespaced_predicate
+                    
+                
+            
+        
+        for ( unnamespaced_predicate, count ) in subtag_nonzero_instance_counter.items():
+            
+            # if there were indeed several instances of this subtag, overwrte the master dict's instance with our new count total
+            
+            if count > 1:
+                
+                master_predicate_dict[ unnamespaced_predicate ] = unnamespaced_predicate_dict[ unnamespaced_predicate ]
+                
+            
+        
+    
+    return list( master_predicate_dict.values() )
     
 def SearchTextIsFetchAll( search_text: str ):
     

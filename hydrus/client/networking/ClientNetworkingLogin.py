@@ -12,9 +12,10 @@ from hydrus.core import HydrusSerialisable
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientParsing
+from hydrus.client import ClientStrings
 from hydrus.client import ClientThreading
 from hydrus.client.networking import ClientNetworkingContexts
-from hydrus.client.networking import ClientNetworkingDomain
+from hydrus.client.networking import ClientNetworkingFunctions
 from hydrus.client.networking import ClientNetworkingJobs
 
 VALIDITY_VALID = 0
@@ -61,8 +62,6 @@ class NetworkLoginManager( HydrusSerialisable.SerialisableBase ):
         
         HydrusSerialisable.SerialisableBase.__init__( self )
         
-        # needs _dirty and setdirty and be on that serialisation check and so on
-        
         self.engine = None
         
         self._dirty = False
@@ -104,7 +103,7 @@ class NetworkLoginManager( HydrusSerialisable.SerialisableBase ):
         
         domain = network_context.context_data
         
-        potential_login_domains = ClientNetworkingDomain.ConvertDomainIntoAllApplicableDomains( domain, discard_www = False )
+        potential_login_domains = ClientNetworkingFunctions.ConvertDomainIntoAllApplicableDomains( domain, discard_www = False )
         
         for potential_login_domain in potential_login_domains:
             
@@ -818,7 +817,7 @@ class LoginCredentialDefinition( HydrusSerialisable.SerialisableBaseNamed ):
         
         if string_match is None:
             
-            string_match = ClientParsing.StringMatch()
+            string_match = ClientStrings.StringMatch()
             
         
         HydrusSerialisable.SerialisableBaseNamed.__init__( self, name )
@@ -933,7 +932,7 @@ class LoginProcessDomain( LoginProcess ):
         
         job_key = ClientThreading.JobKey( cancellable = True )
         
-        job_key.SetVariable( 'popup_title', 'Logging in ' + login_domain )
+        job_key.SetStatusTitle( 'Logging in ' + login_domain )
         
         HG.client_controller.pub( 'message', job_key )
         
@@ -997,6 +996,8 @@ class LoginScriptHydrus( object ):
         network_job = ClientNetworkingJobs.NetworkJobHydrus( service_key, 'GET', url )
         
         network_job.SetForLogin( True )
+        
+        network_job.OnlyTryConnectionOnce()
         
         network_job.AddAdditionalHeader( 'Hydrus-Key', access_key.hex() )
         
@@ -1103,7 +1104,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
             
             for ( name, value_string_match ) in list(old_required_cookies_info.items()):
                 
-                key_string_match = ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = name, example_string = name )
+                key_string_match = ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = name, example_string = name )
                 
                 new_required_cookies_info[ key_string_match ] = value_string_match
                 
@@ -1130,7 +1131,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
             
             try:
                 
-                cookie = ClientNetworkingDomain.GetCookie( cookies, search_domain, cookie_name_string_match )
+                cookie = ClientNetworkingFunctions.GetCookie( cookies, search_domain, cookie_name_string_match )
                 
             except HydrusExceptions.DataMissing as e:
                 
@@ -1280,7 +1281,7 @@ class LoginScriptDomain( HydrusSerialisable.SerialisableBaseNamed ):
             
             try:
                 
-                cookie = ClientNetworkingDomain.GetCookie( cookies, search_domain, cookie_name_string_match )
+                cookie = ClientNetworkingFunctions.GetCookie( cookies, search_domain, cookie_name_string_match )
                 
             except HydrusExceptions.DataMissing as e:
                 
@@ -1536,7 +1537,7 @@ class LoginStep( HydrusSerialisable.SerialisableBaseNamed ):
             
             for ( name, value_string_match ) in list(old_required_cookies_info.items()):
                 
-                key_string_match = ClientParsing.StringMatch( match_type = ClientParsing.STRING_MATCH_FIXED, match_value = name, example_string = name )
+                key_string_match = ClientStrings.StringMatch( match_type = ClientStrings.STRING_MATCH_FIXED, match_value = name, example_string = name )
                 
                 new_required_cookies_info[ key_string_match ] = value_string_match
                 
@@ -1652,9 +1653,11 @@ class LoginStep( HydrusSerialisable.SerialisableBaseNamed ):
             params = ''
             fragment = ''
             
+            single_value_parameters = []
+            
             if self._method == 'GET':
                 
-                query = ClientNetworkingDomain.ConvertQueryDictToText( query_dict )
+                query = ClientNetworkingFunctions.ConvertQueryDictToText( query_dict, single_value_parameters )
                 body = None
                 test_result_body = ''
                 
@@ -1662,7 +1665,7 @@ class LoginStep( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 query = ''
                 body = query_dict
-                test_result_body = ClientNetworkingDomain.ConvertQueryDictToText( query_dict )
+                test_result_body = ClientNetworkingFunctions.ConvertQueryDictToText( query_dict, single_value_parameters )
                 
             
             r = urllib.parse.ParseResult( scheme, netloc, path, params, query, fragment )
@@ -1673,7 +1676,7 @@ class LoginStep( HydrusSerialisable.SerialisableBaseNamed ):
             
             if self._method == 'POST' and referral_url is not None:
                 
-                p = ClientNetworkingDomain.ParseURL( url )
+                p = ClientNetworkingFunctions.ParseURL( url )
                 
                 r = urllib.parse.ParseResult( p.scheme, p.netloc, '', '', '', '' )
                 
@@ -1706,7 +1709,7 @@ class LoginStep( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 try:
                     
-                    cookie = ClientNetworkingDomain.GetCookie( cookies, domain, cookie_name_string_match )
+                    cookie = ClientNetworkingFunctions.GetCookie( cookies, domain, cookie_name_string_match )
                     
                 except HydrusExceptions.DataMissing as e:
                     

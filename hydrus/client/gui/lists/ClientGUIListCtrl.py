@@ -242,6 +242,8 @@ class BetterListCtrl( QW.QTreeWidget ):
         
         LAST_COLUMN_SNAP_DISTANCE_CHARS = 5
         
+        total_fixed_columns_width = 0
+        
         for visual_index in range( num_columns ):
             
             logical_index = header.logicalIndex( visual_index )
@@ -252,18 +254,22 @@ class BetterListCtrl( QW.QTreeWidget ):
             
             if visual_index == last_column_index:
                 
-                if self.verticalScrollBar().isVisible():
-                    
-                    width_pixels += max( 0, min( self.verticalScrollBar().width(), 20 ) )
-                    
+                # testing if scrollbar is visible is unreliable, since we don't know if it is laid out correct yet (we could be doing that now!)
+                # so let's just hack it
+                
+                width_pixels = self.width() - ( self.frameWidth() * 2 ) - total_fixed_columns_width
+                
+            else:
+                
+                total_fixed_columns_width += width_pixels
                 
             
             width_chars = ClientGUIFunctions.ConvertPixelsToTextWidth( main_tlw, width_pixels )
             
             if visual_index == last_column_index:
                 
-                # here's the snap magic
-                width_chars = round( width_chars // LAST_COLUMN_SNAP_DISTANCE_CHARS ) * LAST_COLUMN_SNAP_DISTANCE_CHARS
+                # here's the snap magic. final width_chars is always a multiple of 5
+                width_chars = round( width_chars / LAST_COLUMN_SNAP_DISTANCE_CHARS ) * LAST_COLUMN_SNAP_DISTANCE_CHARS
                 
             
             columns.append( ( column_type, width_chars, shown ) )
@@ -553,6 +559,10 @@ class BetterListCtrl( QW.QTreeWidget ):
             
             self.ProcessDeleteAction()
             
+        elif key in ( QC.Qt.Key_Enter, QC.Qt.Key_Return ):
+            
+            self.ProcessActivateAction()
+            
         elif key in ( ord( 'A' ), ord( 'a' ) ) and modifier == QC.Qt.ControlModifier:
             
             self.selectAll()
@@ -627,6 +637,14 @@ class BetterListCtrl( QW.QTreeWidget ):
         return len( self.selectedItems() ) > 0 
         
     
+    def ProcessActivateAction( self ):
+        
+        if self._activation_callback is not None:
+            
+            self._activation_callback()
+            
+        
+    
     def ProcessDeleteAction( self ):
         
         if self._use_simple_delete:
@@ -640,6 +658,8 @@ class BetterListCtrl( QW.QTreeWidget ):
         
     
     def SelectDatas( self, datas: typing.Iterable[ object ] ):
+        
+        self.clearFocus()
         
         for data in datas:
             
@@ -751,6 +771,8 @@ class BetterListCtrl( QW.QTreeWidget ):
         
         width = 0
         
+        width += self.frameWidth() * 2
+        
         # all but last column
         
         for i in range( self.columnCount() - 1 ):
@@ -772,6 +794,10 @@ class BetterListCtrl( QW.QTreeWidget ):
             
             width += self.columnWidth( self.columnCount() - 1 )
             
+            # this is a hack to stop the thing suddenly growing to screen width in a weird resize loop
+            # I couldn't reproduce this error, so I assume it is a QSS or whatever font/style/scrollbar on some systems that caused inaccurate columnWidth result
+            width = min( width, self.width() )
+            
         else:
             
             last_column_chars = self._original_column_list_status.GetColumnWidth( last_column_type )
@@ -782,8 +808,6 @@ class BetterListCtrl( QW.QTreeWidget ):
             
         
         #
-        
-        width += self.frameWidth() * 2
         
         if self._forced_height_num_chars is None:
             
@@ -1133,30 +1157,75 @@ class BetterListCtrlPanel( QW.QWidget ):
     
     def _ImportFromClipboard( self ):
         
-        try:
+        if HG.client_controller.ClipboardHasImage():
             
-            raw_text = HG.client_controller.GetClipboardText()
+            try:
+                
+                qt_image = HG.client_controller.GetClipboardImage()
+                
+            except:
+                
+                # no image on clipboard obviously
+                do_text = True
+                
             
-        except HydrusExceptions.DataMissing as e:
+            try:
+                
+                payload = ClientSerialisable.LoadFromQtImage( qt_image )
+                
+                obj = HydrusSerialisable.CreateFromNetworkBytes( payload, raise_error_on_future_version = True )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                QW.QMessageBox.critical( self, 'Problem loading', 'Problem loading that object: {}'.format( str( e ) ) )
+                
+                return
+                
+            except Exception as e:
+                
+                QW.QMessageBox.critical( self, 'Error', 'I could not understand what was in the clipboard: {}'.format( str( e ) ) )
+                
+                return
+                
             
-            QW.QMessageBox.critical( self, 'Error', str(e) )
+        else:
             
-            return
+            try:
+                
+                raw_text = HG.client_controller.GetClipboardText()
+                
+            except HydrusExceptions.DataMissing as e:
+                
+                QW.QMessageBox.critical( self, 'Error', str(e) )
+                
+                return
+                
+            
+            try:
+                
+                obj = HydrusSerialisable.CreateFromString( raw_text, raise_error_on_future_version = True )
+                
+            except HydrusExceptions.SerialisationException as e:
+                
+                QW.QMessageBox.critical( self, 'Problem loading', 'Problem loading that object: {}'.format( str( e ) ) )
+                
+                return
+                
+            except Exception as e:
+                
+                QW.QMessageBox.critical( self, 'Error', 'I could not understand what was in the clipboard: {}'.format( str( e ) ) )
+                
+                return
+                
             
         
         try:
             
-            obj = HydrusSerialisable.CreateFromString( raw_text, raise_error_on_future_version = True )
-            
             self._ImportObject( obj )
-            
-        except HydrusExceptions.SerialisationException as e:
-            
-            QW.QMessageBox.critical( self, 'Problem loading', str( e ) )
             
         except Exception as e:
             
-            QW.QMessageBox.critical( self, 'Error', 'I could not understand what was in the clipboard' )
+            QW.QMessageBox.critical( self, 'Error', 'Problem importing: {}'.format( str( e ) ) )
             
         
         self._listctrl.Sort()

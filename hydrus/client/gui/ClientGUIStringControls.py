@@ -8,6 +8,7 @@ from hydrus.core import HydrusText
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientParsing
+from hydrus.client import ClientStrings
 from hydrus.client.gui import ClientGUIDialogs
 from hydrus.client.gui import ClientGUIScrolledPanels
 from hydrus.client.gui import ClientGUIStringPanels
@@ -21,7 +22,7 @@ class StringConverterButton( ClientGUICommon.BetterButton ):
     
     valueChanged = QC.Signal()
     
-    def __init__( self, parent, string_converter: ClientParsing.StringConverter ):
+    def __init__( self, parent, string_converter: ClientStrings.StringConverter ):
         
         ClientGUICommon.BetterButton.__init__( self, parent, 'edit string converter', self._Edit )
         
@@ -62,7 +63,7 @@ class StringConverterButton( ClientGUICommon.BetterButton ):
         self.setText( elided_label )
         
     
-    def GetValue( self ) -> ClientParsing.StringConverter:
+    def GetValue( self ) -> ClientStrings.StringConverter:
         
         return self._string_converter
         
@@ -72,7 +73,7 @@ class StringConverterButton( ClientGUICommon.BetterButton ):
         self._example_string_override = example_string
         
     
-    def SetValue( self, string_converter: ClientParsing.StringConverter ):
+    def SetValue( self, string_converter: ClientStrings.StringConverter ):
         
         self._string_converter = string_converter
         
@@ -85,7 +86,7 @@ class StringMatchButton( ClientGUICommon.BetterButton ):
     
     valueChanged = QC.Signal()
     
-    def __init__( self, parent, string_match: ClientParsing.StringMatch ):
+    def __init__( self, parent, string_match: ClientStrings.StringMatch ):
         
         ClientGUICommon.BetterButton.__init__( self, parent, 'edit string match', self._Edit )
         
@@ -108,6 +109,8 @@ class StringMatchButton( ClientGUICommon.BetterButton ):
                 
                 self._UpdateLabel()
                 
+                self.valueChanged.emit()
+                
             
         
     
@@ -118,12 +121,12 @@ class StringMatchButton( ClientGUICommon.BetterButton ):
         self.setText( label )
         
     
-    def GetValue( self ) -> ClientParsing.StringMatch:
+    def GetValue( self ) -> ClientStrings.StringMatch:
         
         return self._string_match
         
     
-    def SetValue( self, string_match: ClientParsing.StringMatch ):
+    def SetValue( self, string_match: ClientStrings.StringMatch ):
         
         self._string_match = string_match
         
@@ -132,7 +135,7 @@ class StringMatchButton( ClientGUICommon.BetterButton ):
     
 class StringProcessorButton( ClientGUICommon.BetterButton ):
     
-    def __init__( self, parent, string_processor: ClientParsing.StringProcessor, test_data_callable: typing.Callable[ [], ClientParsing.ParsingTestData ] ):
+    def __init__( self, parent, string_processor: ClientStrings.StringProcessor, test_data_callable: typing.Callable[ [], ClientParsing.ParsingTestData ] ):
         
         ClientGUICommon.BetterButton.__init__( self, parent, 'edit string processor', self._Edit )
         
@@ -179,12 +182,12 @@ class StringProcessorButton( ClientGUICommon.BetterButton ):
         self.setText( label )
         
     
-    def GetValue( self ) -> ClientParsing.StringProcessor:
+    def GetValue( self ) -> ClientStrings.StringProcessor:
         
         return self._string_processor
         
     
-    def SetValue( self, string_processor: ClientParsing.StringProcessor ):
+    def SetValue( self, string_processor: ClientStrings.StringProcessor ):
         
         self._string_processor = string_processor
         
@@ -193,7 +196,7 @@ class StringProcessorButton( ClientGUICommon.BetterButton ):
     
 class StringMatchToStringMatchDictControl( QW.QWidget ):
     
-    def __init__( self, parent, initial_dict: typing.Dict[ ClientParsing.StringMatch, ClientParsing.StringMatch ], min_height = 10, key_name = 'key' ):
+    def __init__( self, parent, initial_dict: typing.Dict[ ClientStrings.StringMatch, ClientStrings.StringMatch ], min_height = 10, key_name = 'key' ):
         
         QW.QWidget.__init__( self, parent )
         
@@ -243,7 +246,7 @@ class StringMatchToStringMatchDictControl( QW.QWidget ):
         
         with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit ' + self._key_name ) as dlg:
             
-            string_match = ClientParsing.StringMatch()
+            string_match = ClientStrings.StringMatch()
             
             panel = ClientGUIStringPanels.EditStringMatchPanel( dlg, string_match )
             
@@ -261,7 +264,7 @@ class StringMatchToStringMatchDictControl( QW.QWidget ):
         
         with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit match' ) as dlg:
             
-            string_match = ClientParsing.StringMatch()
+            string_match = ClientStrings.StringMatch()
             
             panel = ClientGUIStringPanels.EditStringMatchPanel( dlg, string_match )
             
@@ -279,6 +282,8 @@ class StringMatchToStringMatchDictControl( QW.QWidget ):
         
     
     def _Edit( self ):
+        
+        edited_datas = []
         
         for data in self._listctrl.GetData( only_selected = True ):
             
@@ -322,11 +327,15 @@ class StringMatchToStringMatchDictControl( QW.QWidget ):
             
             self._listctrl.AddDatas( ( edited_data, ) )
             
+            edited_datas.append( edited_data )
+            
+        
+        self._listctrl.SelectDatas( edited_datas )
         
         self._listctrl.Sort()
         
     
-    def GetValue( self ) -> typing.Dict[ str, ClientParsing.StringMatch ]:
+    def GetValue( self ) -> typing.Dict[ str, ClientStrings.StringMatch ]:
         
         value_dict = dict( self._listctrl.GetData() )
         
@@ -464,6 +473,8 @@ class StringToStringDictControl( QW.QWidget ):
     
     def _Edit( self ):
         
+        edited_datas = []
+        
         for data in self._listctrl.GetData( only_selected = True ):
             
             ( key, value ) = data
@@ -512,6 +523,10 @@ class StringToStringDictControl( QW.QWidget ):
             
             self._listctrl.AddDatas( ( edited_data, ) )
             
+            edited_datas.append( edited_data )
+            
+        
+        self._listctrl.SelectDatas( edited_datas )
         
         self._listctrl.Sort()
         
@@ -530,7 +545,7 @@ class StringToStringDictControl( QW.QWidget ):
     
 class StringToStringMatchDictControl( QW.QWidget ):
     
-    def __init__( self, parent, initial_dict: typing.Dict[ str, ClientParsing.StringMatch ], min_height = 10, key_name = 'key' ):
+    def __init__( self, parent, initial_dict: typing.Dict[ str, ClientStrings.StringMatch ], min_height = 10, key_name = 'key' ):
         
         QW.QWidget.__init__( self, parent )
         
@@ -592,7 +607,7 @@ class StringToStringMatchDictControl( QW.QWidget ):
                 
                 with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit match' ) as dlg:
                     
-                    string_match = ClientParsing.StringMatch()
+                    string_match = ClientStrings.StringMatch()
                     
                     panel = ClientGUIStringPanels.EditStringMatchPanel( dlg, string_match )
                     
@@ -612,6 +627,8 @@ class StringToStringMatchDictControl( QW.QWidget ):
         
     
     def _Edit( self ):
+        
+        edited_datas = []
         
         for data in self._listctrl.GetData( only_selected = True ):
             
@@ -638,7 +655,7 @@ class StringToStringMatchDictControl( QW.QWidget ):
             
             with ClientGUITopLevelWindowsPanels.DialogEdit( self, 'edit match' ) as dlg:
                 
-                string_match = ClientParsing.StringMatch()
+                string_match = ClientStrings.StringMatch()
                 
                 panel = ClientGUIStringPanels.EditStringMatchPanel( dlg, string_match )
                 
@@ -660,6 +677,10 @@ class StringToStringMatchDictControl( QW.QWidget ):
             
             self._listctrl.AddDatas( ( edited_data, ) )
             
+            edited_datas.append( edited_data )
+            
+        
+        self._listctrl.SelectDatas( edited_datas )
         
         self._listctrl.Sort()
         
@@ -669,7 +690,7 @@ class StringToStringMatchDictControl( QW.QWidget ):
         return { key for ( key, value ) in self._listctrl.GetData() }
         
     
-    def GetValue( self ) -> typing.Dict[ str, ClientParsing.StringMatch ]:
+    def GetValue( self ) -> typing.Dict[ str, ClientStrings.StringMatch ]:
         
         value_dict = dict( self._listctrl.GetData() )
         

@@ -10,7 +10,6 @@ from hydrus.core import HydrusGlobals as HG
 from hydrus.core import HydrusSerialisable
 
 from hydrus.client import ClientApplicationCommand as CAC
-from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
 from hydrus.client.gui import ClientGUICore as CGC
 from hydrus.client.gui import ClientGUIFunctions
@@ -25,12 +24,12 @@ SHORTCUT_PRESS_TYPE_RELEASE = 1
 SHORTCUT_PRESS_TYPE_DOUBLE_CLICK = 2
 SHORTCUT_PRESS_TYPE_DRAG = 3
 
-shortcut_press_type_str_lookup = {}
-
-shortcut_press_type_str_lookup[ SHORTCUT_PRESS_TYPE_PRESS ] = 'press'
-shortcut_press_type_str_lookup[ SHORTCUT_PRESS_TYPE_RELEASE ] = 'release'
-shortcut_press_type_str_lookup[ SHORTCUT_PRESS_TYPE_DOUBLE_CLICK ] = 'double'
-shortcut_press_type_str_lookup[ SHORTCUT_PRESS_TYPE_DRAG ] = 'drag'
+shortcut_press_type_str_lookup = {
+    SHORTCUT_PRESS_TYPE_PRESS: 'press',
+    SHORTCUT_PRESS_TYPE_RELEASE: 'release',
+    SHORTCUT_PRESS_TYPE_DOUBLE_CLICK: 'double',
+    SHORTCUT_PRESS_TYPE_DRAG: 'drag'
+}
 
 SHORTCUT_MODIFIER_CTRL = 0
 SHORTCUT_MODIFIER_ALT = 1
@@ -80,69 +79,69 @@ else:
     DELETE_KEYS_HYDRUS = ( SHORTCUT_KEY_SPECIAL_DELETE, )
     
 
-special_key_shortcut_enum_lookup = {}
+special_key_shortcut_enum_lookup = {
+    QC.Qt.Key_Space : SHORTCUT_KEY_SPECIAL_SPACE,
+    QC.Qt.Key_Backspace : SHORTCUT_KEY_SPECIAL_BACKSPACE,
+    QC.Qt.Key_Tab : SHORTCUT_KEY_SPECIAL_TAB,
+    QC.Qt.Key_Return : SHORTCUT_KEY_SPECIAL_RETURN,
+    QC.Qt.Key_Enter : SHORTCUT_KEY_SPECIAL_ENTER,
+    QC.Qt.Key_Pause : SHORTCUT_KEY_SPECIAL_PAUSE,
+    QC.Qt.Key_Escape : SHORTCUT_KEY_SPECIAL_ESCAPE,
+    QC.Qt.Key_Insert : SHORTCUT_KEY_SPECIAL_INSERT,
+    QC.Qt.Key_Delete : SHORTCUT_KEY_SPECIAL_DELETE,
+    QC.Qt.Key_Up : SHORTCUT_KEY_SPECIAL_UP,
+    QC.Qt.Key_Down : SHORTCUT_KEY_SPECIAL_DOWN,
+    QC.Qt.Key_Left : SHORTCUT_KEY_SPECIAL_LEFT,
+    QC.Qt.Key_Right : SHORTCUT_KEY_SPECIAL_RIGHT,
+    QC.Qt.Key_Home : SHORTCUT_KEY_SPECIAL_HOME,
+    QC.Qt.Key_End : SHORTCUT_KEY_SPECIAL_END,
+    QC.Qt.Key_PageUp : SHORTCUT_KEY_SPECIAL_PAGE_UP,
+    QC.Qt.Key_PageDown : SHORTCUT_KEY_SPECIAL_PAGE_DOWN,
+    QC.Qt.Key_F1 : SHORTCUT_KEY_SPECIAL_F1,
+    QC.Qt.Key_F2 : SHORTCUT_KEY_SPECIAL_F2,
+    QC.Qt.Key_F3 : SHORTCUT_KEY_SPECIAL_F3,
+    QC.Qt.Key_F4 : SHORTCUT_KEY_SPECIAL_F4,
+    QC.Qt.Key_F5 : SHORTCUT_KEY_SPECIAL_F5,
+    QC.Qt.Key_F6 : SHORTCUT_KEY_SPECIAL_F6,
+    QC.Qt.Key_F7 : SHORTCUT_KEY_SPECIAL_F7,
+    QC.Qt.Key_F8 : SHORTCUT_KEY_SPECIAL_F8,
+    QC.Qt.Key_F9 : SHORTCUT_KEY_SPECIAL_F9,
+    QC.Qt.Key_F10 : SHORTCUT_KEY_SPECIAL_F10,
+    QC.Qt.Key_F11 : SHORTCUT_KEY_SPECIAL_F11,
+    QC.Qt.Key_F12 : SHORTCUT_KEY_SPECIAL_F12
+}
 
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Space ] = SHORTCUT_KEY_SPECIAL_SPACE
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Backspace ] = SHORTCUT_KEY_SPECIAL_BACKSPACE
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Tab ] = SHORTCUT_KEY_SPECIAL_TAB
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Return ] = SHORTCUT_KEY_SPECIAL_RETURN
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Enter ] = SHORTCUT_KEY_SPECIAL_ENTER
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Pause ] = SHORTCUT_KEY_SPECIAL_PAUSE
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Escape ] = SHORTCUT_KEY_SPECIAL_ESCAPE
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Insert ] = SHORTCUT_KEY_SPECIAL_INSERT
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Delete ] = SHORTCUT_KEY_SPECIAL_DELETE
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Up ] = SHORTCUT_KEY_SPECIAL_UP
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Down ] = SHORTCUT_KEY_SPECIAL_DOWN
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Left ] = SHORTCUT_KEY_SPECIAL_LEFT
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Right ] = SHORTCUT_KEY_SPECIAL_RIGHT
-special_key_shortcut_enum_lookup[ QC.Qt.Key_Home ] = SHORTCUT_KEY_SPECIAL_HOME
-special_key_shortcut_enum_lookup[ QC.Qt.Key_End ] = SHORTCUT_KEY_SPECIAL_END
-special_key_shortcut_enum_lookup[ QC.Qt.Key_PageUp ] = SHORTCUT_KEY_SPECIAL_PAGE_UP
-special_key_shortcut_enum_lookup[ QC.Qt.Key_PageDown ] = SHORTCUT_KEY_SPECIAL_PAGE_DOWN
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F1 ] = SHORTCUT_KEY_SPECIAL_F1
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F2 ] = SHORTCUT_KEY_SPECIAL_F2
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F3 ] = SHORTCUT_KEY_SPECIAL_F3
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F4 ] = SHORTCUT_KEY_SPECIAL_F4
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F5 ] = SHORTCUT_KEY_SPECIAL_F5
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F6 ] = SHORTCUT_KEY_SPECIAL_F6
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F7 ] = SHORTCUT_KEY_SPECIAL_F7
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F8 ] = SHORTCUT_KEY_SPECIAL_F8
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F9 ] = SHORTCUT_KEY_SPECIAL_F9
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F10 ] = SHORTCUT_KEY_SPECIAL_F10
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F11 ] = SHORTCUT_KEY_SPECIAL_F11
-special_key_shortcut_enum_lookup[ QC.Qt.Key_F12 ] = SHORTCUT_KEY_SPECIAL_F12
-
-special_key_shortcut_str_lookup = {}
-
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_SPACE ] = 'space'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_BACKSPACE ] = 'backspace'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_TAB ] = 'tab'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_RETURN ] = 'return'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_ENTER ] = 'enter'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_PAUSE ] = 'pause'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_ESCAPE ] = 'escape'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_INSERT ] = 'insert'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_DELETE ] = 'delete'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_UP ] = 'up'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_DOWN ] = 'down'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_LEFT ] = 'left'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_RIGHT ] = 'right'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_HOME ] = 'home'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_END ] = 'end'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_PAGE_DOWN ] = 'page down'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_PAGE_UP ] = 'page up'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F1 ] = 'f1'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F2 ] = 'f2'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F3 ] = 'f3'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F4 ] = 'f4'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F5 ] = 'f5'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F6 ] = 'f6'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F7 ] = 'f7'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F8 ] = 'f8'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F9 ] = 'f9'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F10 ] = 'f10'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F11 ] = 'f11'
-special_key_shortcut_str_lookup[ SHORTCUT_KEY_SPECIAL_F12 ] = 'f12'
+special_key_shortcut_str_lookup = {
+    SHORTCUT_KEY_SPECIAL_SPACE : 'space',
+    SHORTCUT_KEY_SPECIAL_BACKSPACE : 'backspace',
+    SHORTCUT_KEY_SPECIAL_TAB : 'tab',
+    SHORTCUT_KEY_SPECIAL_RETURN : 'return',
+    SHORTCUT_KEY_SPECIAL_ENTER : 'enter',
+    SHORTCUT_KEY_SPECIAL_PAUSE : 'pause',
+    SHORTCUT_KEY_SPECIAL_ESCAPE : 'escape',
+    SHORTCUT_KEY_SPECIAL_INSERT : 'insert',
+    SHORTCUT_KEY_SPECIAL_DELETE : 'delete',
+    SHORTCUT_KEY_SPECIAL_UP : 'up',
+    SHORTCUT_KEY_SPECIAL_DOWN : 'down',
+    SHORTCUT_KEY_SPECIAL_LEFT : 'left',
+    SHORTCUT_KEY_SPECIAL_RIGHT : 'right',
+    SHORTCUT_KEY_SPECIAL_HOME : 'home',
+    SHORTCUT_KEY_SPECIAL_END : 'end',
+    SHORTCUT_KEY_SPECIAL_PAGE_DOWN : 'page down',
+    SHORTCUT_KEY_SPECIAL_PAGE_UP : 'page up',
+    SHORTCUT_KEY_SPECIAL_F1 : 'f1',
+    SHORTCUT_KEY_SPECIAL_F2 : 'f2',
+    SHORTCUT_KEY_SPECIAL_F3 : 'f3',
+    SHORTCUT_KEY_SPECIAL_F4 : 'f4',
+    SHORTCUT_KEY_SPECIAL_F5 : 'f5',
+    SHORTCUT_KEY_SPECIAL_F6 : 'f6',
+    SHORTCUT_KEY_SPECIAL_F7 : 'f7',
+    SHORTCUT_KEY_SPECIAL_F8 : 'f8',
+    SHORTCUT_KEY_SPECIAL_F9 : 'f9',
+    SHORTCUT_KEY_SPECIAL_F10 : 'f10',
+    SHORTCUT_KEY_SPECIAL_F11 : 'f11',
+    SHORTCUT_KEY_SPECIAL_F12 : 'f12'
+}
 
 SHORTCUT_MOUSE_LEFT = 0
 SHORTCUT_MOUSE_RIGHT = 1
@@ -156,38 +155,51 @@ SHORTCUT_MOUSE_FORWARD = 8
 
 SHORTCUT_MOUSE_CLICKS = { SHORTCUT_MOUSE_LEFT, SHORTCUT_MOUSE_MIDDLE, SHORTCUT_MOUSE_RIGHT, SHORTCUT_MOUSE_BACK, SHORTCUT_MOUSE_FORWARD }
 
-qt_mouse_buttons_to_hydrus_mouse_buttons = {}
+qt_mouse_buttons_to_hydrus_mouse_buttons = {
+    QC.Qt.LeftButton : SHORTCUT_MOUSE_LEFT,
+    QC.Qt.MiddleButton : SHORTCUT_MOUSE_MIDDLE,
+    QC.Qt.RightButton : SHORTCUT_MOUSE_RIGHT,
+    QC.Qt.BackButton : SHORTCUT_MOUSE_BACK,
+    QC.Qt.ForwardButton : SHORTCUT_MOUSE_FORWARD
+}
 
-qt_mouse_buttons_to_hydrus_mouse_buttons[ QC.Qt.LeftButton ] = SHORTCUT_MOUSE_LEFT
-qt_mouse_buttons_to_hydrus_mouse_buttons[ QC.Qt.MiddleButton ] = SHORTCUT_MOUSE_MIDDLE
-qt_mouse_buttons_to_hydrus_mouse_buttons[ QC.Qt.RightButton ] = SHORTCUT_MOUSE_RIGHT
-qt_mouse_buttons_to_hydrus_mouse_buttons[ QC.Qt.BackButton ] = SHORTCUT_MOUSE_BACK
-qt_mouse_buttons_to_hydrus_mouse_buttons[ QC.Qt.ForwardButton ] = SHORTCUT_MOUSE_FORWARD
+shortcut_mouse_string_lookup = {
+    SHORTCUT_MOUSE_LEFT : 'left-click',
+    SHORTCUT_MOUSE_RIGHT : 'right-click',
+    SHORTCUT_MOUSE_MIDDLE : 'middle-click',
+    SHORTCUT_MOUSE_BACK : 'back',
+    SHORTCUT_MOUSE_FORWARD : 'forward',
+    SHORTCUT_MOUSE_SCROLL_UP : 'scroll up',
+    SHORTCUT_MOUSE_SCROLL_DOWN : 'scroll down',
+    SHORTCUT_MOUSE_SCROLL_LEFT : 'scroll left',
+    SHORTCUT_MOUSE_SCROLL_RIGHT : 'scroll right'
+}
 
-shortcut_mouse_string_lookup = {}
-
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_LEFT ] = 'left-click'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_RIGHT ] = 'right-click'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_MIDDLE ] = 'middle-click'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_BACK ] = 'back'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_FORWARD ] = 'forward'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_SCROLL_UP ] = 'scroll up'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_SCROLL_DOWN ] = 'scroll down'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_SCROLL_LEFT ] = 'scroll left'
-shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_SCROLL_RIGHT ] = 'scroll right'
-
-shortcut_names_to_pretty_names = {}
-
-shortcut_names_to_pretty_names[ 'global' ] = 'global'
-shortcut_names_to_pretty_names[ 'main_gui' ] = 'the main window'
-shortcut_names_to_pretty_names[ 'tags_autocomplete' ] = 'tag autocomplete'
-shortcut_names_to_pretty_names[ 'media' ] = 'media actions, either thumbnails or the viewer'
-shortcut_names_to_pretty_names[ 'media_viewer' ] = 'media viewers - all (zoom and pan)'
-shortcut_names_to_pretty_names[ 'media_viewer_browser' ] = 'media viewer - \'normal\' browser'
-shortcut_names_to_pretty_names[ 'archive_delete_filter' ] = 'media viewer - archive/delete filter'
-shortcut_names_to_pretty_names[ 'duplicate_filter' ] = 'media viewer - duplicate filter'
-shortcut_names_to_pretty_names[ 'preview_media_window' ] = 'media viewer - the preview window'
-shortcut_names_to_pretty_names[ 'media_viewer_media_window' ] = 'the actual media in a media viewer'
+def SetMouseLabels( call_mouse_buttons_primary_secondary ):
+    
+    if call_mouse_buttons_primary_secondary:
+        
+        shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_LEFT ] = 'primary-click'
+        shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_RIGHT ] = 'secondary-click'
+        
+    else:
+        
+        shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_LEFT ] = 'left-click'
+        shortcut_mouse_string_lookup[ SHORTCUT_MOUSE_RIGHT ] = 'right-click'
+        
+    
+shortcut_names_to_pretty_names = {
+    'global' : 'global',
+    'main_gui' : 'the main window',
+    'tags_autocomplete' : 'tag autocomplete',
+    'media' : 'media actions, either thumbnails or the viewer',
+    'media_viewer' : 'media viewers - all',
+    'media_viewer_browser' : 'media viewers - \'normal\' browser',
+    'archive_delete_filter' : 'media viewers - archive/delete filter',
+    'duplicate_filter' : 'media viewers - duplicate filter',
+    'preview_media_window' : 'the actual media in a preview window (mouse only)',
+    'media_viewer_media_window' : 'the actual media in a media viewer (mouse only)'
+}
 
 shortcut_names_sorted = [
     'global',
@@ -202,47 +214,49 @@ shortcut_names_sorted = [
     'media_viewer_media_window'
 ]
 
-shortcut_names_to_descriptions = {}
-
-shortcut_names_to_descriptions[ 'global' ] = 'Actions for the whole program. Should work in the main gui or a media viewer.'
-shortcut_names_to_descriptions[ 'archive_delete_filter' ] = 'Navigation actions for the media viewer during an archive/delete filter. Mouse shortcuts should work.'
-shortcut_names_to_descriptions[ 'duplicate_filter' ] = 'Navigation actions for the media viewer during a duplicate filter. Mouse shortcuts should work.'
-shortcut_names_to_descriptions[ 'media' ] = 'Actions to alter metadata for media in the media viewer or the thumbnail grid.'
-shortcut_names_to_descriptions[ 'main_gui' ] = 'Actions to control pages in the main window of the program.'
-shortcut_names_to_descriptions[ 'tags_autocomplete' ] = 'Actions to control tag autocomplete when its input text box is focused.'
-shortcut_names_to_descriptions[ 'media_viewer_browser' ] = 'Navigation actions for the regular browsable media viewer.'
-shortcut_names_to_descriptions[ 'media_viewer' ] = 'Zoom and pan and player actions for any media viewer.'
-shortcut_names_to_descriptions[ 'media_viewer_media_window' ] = 'Actions for any video or audio player in a media viewer window.'
-shortcut_names_to_descriptions[ 'preview_media_window' ] = 'Actions for any video or audio player in a preview window.'
+shortcut_names_to_descriptions = {
+    'global' : 'Actions for the whole program. Should work in the main gui or a media viewer.',
+    'archive_delete_filter' : 'Navigation actions for the media viewer during an archive/delete filter. Mouse shortcuts should work.',
+    'duplicate_filter' : 'Navigation actions for the media viewer during a duplicate filter. Mouse shortcuts should work.',
+    'media' : 'Actions to alter metadata for media in the media viewer or the thumbnail grid.',
+    'main_gui' : 'Actions to control pages in the main window of the program.',
+    'tags_autocomplete' : 'Actions to control tag autocomplete when its input text box is focused.',
+    'media_viewer_browser' : 'Navigation actions for the regular browsable media viewer.',
+    'media_viewer' : 'Zoom and pan and player actions for any media viewer.',
+    'media_viewer_media_window' : 'Actions for any video or audio player in a media viewer window. Mouse only!',
+    'preview_media_window' : 'Actions for any video or audio player in a preview window. Mouse only!'
+}
 
 # shortcut commands
 
 SHORTCUTS_RESERVED_NAMES = [ 'global', 'archive_delete_filter', 'duplicate_filter', 'media', 'tags_autocomplete', 'main_gui', 'media_viewer_browser', 'media_viewer', 'media_viewer_media_window', 'preview_media_window' ]
 
-SHORTCUTS_GLOBAL_ACTIONS = [ CAC.SIMPLE_GLOBAL_AUDIO_MUTE, CAC.SIMPLE_GLOBAL_AUDIO_UNMUTE, CAC.SIMPLE_GLOBAL_AUDIO_MUTE_FLIP, CAC.SIMPLE_EXIT_APPLICATION, CAC.SIMPLE_EXIT_APPLICATION_FORCE_MAINTENANCE, CAC.SIMPLE_RESTART_APPLICATION, CAC.SIMPLE_HIDE_TO_SYSTEM_TRAY ]
-SHORTCUTS_MEDIA_ACTIONS = [ CAC.SIMPLE_MANAGE_FILE_TAGS, CAC.SIMPLE_MANAGE_FILE_RATINGS, CAC.SIMPLE_MANAGE_FILE_URLS, CAC.SIMPLE_MANAGE_FILE_NOTES, CAC.SIMPLE_ARCHIVE_FILE, CAC.SIMPLE_INBOX_FILE, CAC.SIMPLE_DELETE_FILE, CAC.SIMPLE_UNDELETE_FILE, CAC.SIMPLE_EXPORT_FILES, CAC.SIMPLE_EXPORT_FILES_QUICK_AUTO_EXPORT, CAC.SIMPLE_REMOVE_FILE_FROM_VIEW, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_OPEN_SELECTION_IN_NEW_PAGE, CAC.SIMPLE_LAUNCH_THE_ARCHIVE_DELETE_FILTER, CAC.SIMPLE_COPY_BMP, CAC.SIMPLE_COPY_BMP_OR_FILE_IF_NOT_BMPABLE, CAC.SIMPLE_COPY_FILE, CAC.SIMPLE_COPY_PATH, CAC.SIMPLE_COPY_SHA256_HASH, CAC.SIMPLE_COPY_MD5_HASH, CAC.SIMPLE_COPY_SHA1_HASH, CAC.SIMPLE_COPY_SHA512_HASH, CAC.SIMPLE_GET_SIMILAR_TO_EXACT, CAC.SIMPLE_GET_SIMILAR_TO_VERY_SIMILAR, CAC.SIMPLE_GET_SIMILAR_TO_SIMILAR, CAC.SIMPLE_GET_SIMILAR_TO_SPECULATIVE, CAC.SIMPLE_DUPLICATE_MEDIA_SET_ALTERNATE, CAC.SIMPLE_DUPLICATE_MEDIA_SET_ALTERNATE_COLLECTIONS, CAC.SIMPLE_DUPLICATE_MEDIA_SET_CUSTOM, CAC.SIMPLE_DUPLICATE_MEDIA_SET_FOCUSED_BETTER, CAC.SIMPLE_DUPLICATE_MEDIA_SET_FOCUSED_KING, CAC.SIMPLE_DUPLICATE_MEDIA_SET_SAME_QUALITY, CAC.SIMPLE_OPEN_KNOWN_URL ]
-SHORTCUTS_MEDIA_VIEWER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_MOVE_ANIMATION_TO_PREVIOUS_FRAME, CAC.SIMPLE_MOVE_ANIMATION_TO_NEXT_FRAME, CAC.SIMPLE_SWITCH_BETWEEN_FULLSCREEN_BORDERLESS_AND_REGULAR_FRAMED_WINDOW, CAC.SIMPLE_PAN_UP, CAC.SIMPLE_PAN_DOWN, CAC.SIMPLE_PAN_LEFT, CAC.SIMPLE_PAN_RIGHT, CAC.SIMPLE_PAN_TOP_EDGE, CAC.SIMPLE_PAN_BOTTOM_EDGE, CAC.SIMPLE_PAN_LEFT_EDGE, CAC.SIMPLE_PAN_RIGHT_EDGE, CAC.SIMPLE_PAN_VERTICAL_CENTER, CAC.SIMPLE_PAN_HORIZONTAL_CENTER, CAC.SIMPLE_ZOOM_IN, CAC.SIMPLE_ZOOM_OUT, CAC.SIMPLE_SWITCH_BETWEEN_100_PERCENT_AND_CANVAS_ZOOM, CAC.SIMPLE_FLIP_DARKMODE, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
+SHORTCUTS_GLOBAL_ACTIONS = [ CAC.SIMPLE_GLOBAL_AUDIO_MUTE, CAC.SIMPLE_GLOBAL_AUDIO_UNMUTE, CAC.SIMPLE_GLOBAL_AUDIO_MUTE_FLIP, CAC.SIMPLE_EXIT_APPLICATION, CAC.SIMPLE_EXIT_APPLICATION_FORCE_MAINTENANCE, CAC.SIMPLE_RESTART_APPLICATION, CAC.SIMPLE_HIDE_TO_SYSTEM_TRAY, CAC.SIMPLE_GLOBAL_PROFILE_MODE_FLIP, CAC.SIMPLE_GLOBAL_FORCE_ANIMATION_SCANBAR_SHOW ]
+SHORTCUTS_MEDIA_ACTIONS = [ CAC.SIMPLE_MANAGE_FILE_TAGS, CAC.SIMPLE_MANAGE_FILE_RATINGS, CAC.SIMPLE_MANAGE_FILE_URLS, CAC.SIMPLE_MANAGE_FILE_NOTES, CAC.SIMPLE_ARCHIVE_FILE, CAC.SIMPLE_INBOX_FILE, CAC.SIMPLE_DELETE_FILE, CAC.SIMPLE_UNDELETE_FILE, CAC.SIMPLE_EXPORT_FILES, CAC.SIMPLE_EXPORT_FILES_QUICK_AUTO_EXPORT, CAC.SIMPLE_REMOVE_FILE_FROM_VIEW, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_OPEN_SELECTION_IN_NEW_PAGE, CAC.SIMPLE_LAUNCH_THE_ARCHIVE_DELETE_FILTER, CAC.SIMPLE_COPY_BMP, CAC.SIMPLE_COPY_BMP_OR_FILE_IF_NOT_BMPABLE, CAC.SIMPLE_COPY_FILE, CAC.SIMPLE_COPY_PATH, CAC.SIMPLE_COPY_SHA256_HASH, CAC.SIMPLE_COPY_MD5_HASH, CAC.SIMPLE_COPY_SHA1_HASH, CAC.SIMPLE_COPY_SHA512_HASH, CAC.SIMPLE_GET_SIMILAR_TO_EXACT, CAC.SIMPLE_GET_SIMILAR_TO_VERY_SIMILAR, CAC.SIMPLE_GET_SIMILAR_TO_SIMILAR, CAC.SIMPLE_GET_SIMILAR_TO_SPECULATIVE, CAC.SIMPLE_DUPLICATE_MEDIA_SET_ALTERNATE, CAC.SIMPLE_DUPLICATE_MEDIA_SET_ALTERNATE_COLLECTIONS, CAC.SIMPLE_DUPLICATE_MEDIA_SET_CUSTOM, CAC.SIMPLE_DUPLICATE_MEDIA_SET_FOCUSED_BETTER, CAC.SIMPLE_DUPLICATE_MEDIA_SET_FOCUSED_KING, CAC.SIMPLE_DUPLICATE_MEDIA_SET_SAME_QUALITY, CAC.SIMPLE_DUPLICATE_MEDIA_SET_POTENTIAL, CAC.SIMPLE_OPEN_KNOWN_URL ]
+SHORTCUTS_MEDIA_VIEWER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_MEDIA_SEEK_DELTA, CAC.SIMPLE_MOVE_ANIMATION_TO_PREVIOUS_FRAME, CAC.SIMPLE_MOVE_ANIMATION_TO_NEXT_FRAME, CAC.SIMPLE_SWITCH_BETWEEN_FULLSCREEN_BORDERLESS_AND_REGULAR_FRAMED_WINDOW, CAC.SIMPLE_PAN_UP, CAC.SIMPLE_PAN_DOWN, CAC.SIMPLE_PAN_LEFT, CAC.SIMPLE_PAN_RIGHT, CAC.SIMPLE_PAN_TOP_EDGE, CAC.SIMPLE_PAN_BOTTOM_EDGE, CAC.SIMPLE_PAN_LEFT_EDGE, CAC.SIMPLE_PAN_RIGHT_EDGE, CAC.SIMPLE_PAN_VERTICAL_CENTER, CAC.SIMPLE_PAN_HORIZONTAL_CENTER, CAC.SIMPLE_ZOOM_IN, CAC.SIMPLE_ZOOM_OUT, CAC.SIMPLE_SWITCH_BETWEEN_100_PERCENT_AND_CANVAS_ZOOM, CAC.SIMPLE_SWITCH_BETWEEN_100_PERCENT_AND_MAX_ZOOM, CAC.SIMPLE_SWITCH_BETWEEN_CANVAS_AND_MAX_ZOOM, CAC.SIMPLE_ZOOM_MAX, CAC.SIMPLE_FLIP_DARKMODE, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
 SHORTCUTS_MEDIA_VIEWER_BROWSER_ACTIONS = [ CAC.SIMPLE_VIEW_NEXT, CAC.SIMPLE_VIEW_FIRST, CAC.SIMPLE_VIEW_LAST, CAC.SIMPLE_VIEW_PREVIOUS, CAC.SIMPLE_PAUSE_PLAY_SLIDESHOW, CAC.SIMPLE_SHOW_MENU, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
-SHORTCUTS_MAIN_GUI_ACTIONS = [ CAC.SIMPLE_REFRESH, CAC.SIMPLE_REFRESH_ALL_PAGES, CAC.SIMPLE_REFRESH_PAGE_OF_PAGES_PAGES, CAC.SIMPLE_NEW_PAGE, CAC.SIMPLE_NEW_PAGE_OF_PAGES, CAC.SIMPLE_NEW_DUPLICATE_FILTER_PAGE, CAC.SIMPLE_NEW_GALLERY_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_URL_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_SIMPLE_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_WATCHER_DOWNLOADER_PAGE, CAC.SIMPLE_SET_MEDIA_FOCUS, CAC.SIMPLE_SHOW_HIDE_SPLITTERS, CAC.SIMPLE_SET_SEARCH_FOCUS, CAC.SIMPLE_UNCLOSE_PAGE, CAC.SIMPLE_CLOSE_PAGE, CAC.SIMPLE_REDO, CAC.SIMPLE_UNDO, CAC.SIMPLE_FLIP_DARKMODE, CAC.SIMPLE_RUN_ALL_EXPORT_FOLDERS, CAC.SIMPLE_CHECK_ALL_IMPORT_FOLDERS, CAC.SIMPLE_FLIP_DEBUG_FORCE_IDLE_MODE_DO_NOT_SET_THIS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_FAVOURITE_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_RELATED_TAGS, CAC.SIMPLE_REFRESH_RELATED_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_FILE_LOOKUP_SCRIPT_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_RECENT_TAGS, CAC.SIMPLE_FOCUS_MEDIA_VIEWER, CAC.SIMPLE_MOVE_PAGES_SELECTION_LEFT, CAC.SIMPLE_MOVE_PAGES_SELECTION_RIGHT, CAC.SIMPLE_MOVE_PAGES_SELECTION_HOME, CAC.SIMPLE_MOVE_PAGES_SELECTION_END ]
+SHORTCUTS_MAIN_GUI_ACTIONS = [ CAC.SIMPLE_REFRESH, CAC.SIMPLE_REFRESH_ALL_PAGES, CAC.SIMPLE_REFRESH_PAGE_OF_PAGES_PAGES, CAC.SIMPLE_NEW_PAGE, CAC.SIMPLE_NEW_PAGE_OF_PAGES, CAC.SIMPLE_NEW_DUPLICATE_FILTER_PAGE, CAC.SIMPLE_NEW_GALLERY_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_URL_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_SIMPLE_DOWNLOADER_PAGE, CAC.SIMPLE_NEW_WATCHER_DOWNLOADER_PAGE, CAC.SIMPLE_SET_MEDIA_FOCUS, CAC.SIMPLE_SHOW_HIDE_SPLITTERS, CAC.SIMPLE_SET_SEARCH_FOCUS, CAC.SIMPLE_UNCLOSE_PAGE, CAC.SIMPLE_CLOSE_PAGE, CAC.SIMPLE_REDO, CAC.SIMPLE_UNDO, CAC.SIMPLE_FLIP_DARKMODE, CAC.SIMPLE_RUN_ALL_EXPORT_FOLDERS, CAC.SIMPLE_CHECK_ALL_IMPORT_FOLDERS, CAC.SIMPLE_FLIP_DEBUG_FORCE_IDLE_MODE_DO_NOT_SET_THIS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_FAVOURITE_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_RELATED_TAGS, CAC.SIMPLE_REFRESH_RELATED_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_FILE_LOOKUP_SCRIPT_TAGS, CAC.SIMPLE_SHOW_AND_FOCUS_MANAGE_TAGS_RECENT_TAGS, CAC.SIMPLE_FOCUS_MEDIA_VIEWER, CAC.SIMPLE_MOVE_PAGES_SELECTION_LEFT, CAC.SIMPLE_MOVE_PAGES_SELECTION_RIGHT, CAC.SIMPLE_MOVE_PAGES_SELECTION_HOME, CAC.SIMPLE_MOVE_PAGES_SELECTION_END, CAC.SIMPLE_OPEN_COMMAND_PALETTE ]
 SHORTCUTS_TAGS_AUTOCOMPLETE_ACTIONS = [ CAC.SIMPLE_SYNCHRONISED_WAIT_SWITCH, CAC.SIMPLE_AUTOCOMPLETE_FORCE_FETCH, CAC.SIMPLE_AUTOCOMPLETE_IME_MODE ]
 SHORTCUTS_DUPLICATE_FILTER_ACTIONS = [ CAC.SIMPLE_DUPLICATE_FILTER_THIS_IS_BETTER_AND_DELETE_OTHER, CAC.SIMPLE_DUPLICATE_FILTER_THIS_IS_BETTER_BUT_KEEP_BOTH, CAC.SIMPLE_DUPLICATE_FILTER_EXACTLY_THE_SAME, CAC.SIMPLE_DUPLICATE_FILTER_ALTERNATES, CAC.SIMPLE_DUPLICATE_FILTER_FALSE_POSITIVE, CAC.SIMPLE_DUPLICATE_FILTER_CUSTOM_ACTION, CAC.SIMPLE_DUPLICATE_FILTER_SKIP, CAC.SIMPLE_DUPLICATE_FILTER_BACK, CAC.SIMPLE_CLOSE_MEDIA_VIEWER, CAC.SIMPLE_VIEW_NEXT ]
 SHORTCUTS_ARCHIVE_DELETE_FILTER_ACTIONS = [ CAC.SIMPLE_ARCHIVE_DELETE_FILTER_KEEP, CAC.SIMPLE_ARCHIVE_DELETE_FILTER_DELETE, CAC.SIMPLE_ARCHIVE_DELETE_FILTER_SKIP, CAC.SIMPLE_ARCHIVE_DELETE_FILTER_BACK, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
-SHORTCUTS_MEDIA_VIEWER_VIDEO_AUDIO_PLAYER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
-SHORTCUTS_PREVIEW_VIDEO_AUDIO_PLAYER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_LAUNCH_MEDIA_VIEWER ]
+SHORTCUTS_MEDIA_VIEWER_VIDEO_AUDIO_PLAYER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_MEDIA_SEEK_DELTA, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_CLOSE_MEDIA_VIEWER ]
+SHORTCUTS_PREVIEW_VIDEO_AUDIO_PLAYER_ACTIONS = [ CAC.SIMPLE_PAUSE_MEDIA, CAC.SIMPLE_PAUSE_PLAY_MEDIA, CAC.SIMPLE_MEDIA_SEEK_DELTA, CAC.SIMPLE_OPEN_FILE_IN_EXTERNAL_PROGRAM, CAC.SIMPLE_LAUNCH_MEDIA_VIEWER ]
 
-simple_shortcut_name_to_action_lookup = {}
+simple_shortcut_name_to_action_lookup = {
+    'global' : SHORTCUTS_GLOBAL_ACTIONS,
+    'media' : SHORTCUTS_MEDIA_ACTIONS,
+    'media_viewer' : SHORTCUTS_MEDIA_VIEWER_ACTIONS,
+    'media_viewer_browser' : SHORTCUTS_MEDIA_VIEWER_BROWSER_ACTIONS,
+    'main_gui' : SHORTCUTS_MAIN_GUI_ACTIONS,
+    'tags_autocomplete' : SHORTCUTS_TAGS_AUTOCOMPLETE_ACTIONS,
+    'duplicate_filter' : SHORTCUTS_DUPLICATE_FILTER_ACTIONS + SHORTCUTS_MEDIA_ACTIONS + SHORTCUTS_MEDIA_VIEWER_ACTIONS,
+    'archive_delete_filter' : SHORTCUTS_ARCHIVE_DELETE_FILTER_ACTIONS,
+    'media_viewer_media_window' : SHORTCUTS_MEDIA_VIEWER_VIDEO_AUDIO_PLAYER_ACTIONS,
+    'preview_media_window' : SHORTCUTS_PREVIEW_VIDEO_AUDIO_PLAYER_ACTIONS,
+    'custom' : SHORTCUTS_MEDIA_ACTIONS + SHORTCUTS_MEDIA_VIEWER_ACTIONS
+}
 
-simple_shortcut_name_to_action_lookup[ 'global' ] = SHORTCUTS_GLOBAL_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'media' ] = SHORTCUTS_MEDIA_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'media_viewer' ] = SHORTCUTS_MEDIA_VIEWER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'media_viewer_browser' ] = SHORTCUTS_MEDIA_VIEWER_BROWSER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'main_gui' ] = SHORTCUTS_MAIN_GUI_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'tags_autocomplete' ] = SHORTCUTS_TAGS_AUTOCOMPLETE_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'duplicate_filter' ] = SHORTCUTS_DUPLICATE_FILTER_ACTIONS + SHORTCUTS_MEDIA_ACTIONS + SHORTCUTS_MEDIA_VIEWER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'archive_delete_filter' ] = SHORTCUTS_ARCHIVE_DELETE_FILTER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'media_viewer_media_window' ] = SHORTCUTS_MEDIA_VIEWER_VIDEO_AUDIO_PLAYER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'preview_media_window' ] = SHORTCUTS_PREVIEW_VIDEO_AUDIO_PLAYER_ACTIONS
-simple_shortcut_name_to_action_lookup[ 'custom' ] = SHORTCUTS_MEDIA_ACTIONS + SHORTCUTS_MEDIA_VIEWER_ACTIONS
+CUMULATIVE_MOUSEWARP_MANHATTAN_LENGTH = 0
 
 # ok, the problem here is that I get key codes that are converted, so if someone does shift+1 on a US keyboard, this ends up with Shift+! same with ctrl+alt+ to get accented characters
 # it isn't really a big deal since everything still lines up, but the QGuiApplicationPrivate::platformIntegration()->possibleKeys(e) to get some variant of 'yeah this is just !' seems unavailable for python
@@ -257,9 +271,9 @@ def ConvertQtKeyToShortcutKey( key_qt ):
         
     else:
         
+        key_ord = int( key_qt )
+        
         try:
-            
-            key_ord = int( key_qt )
             
             if key_ord == 0:
                 
@@ -339,12 +353,30 @@ def ConvertKeyEventToSimpleTuple( event ):
     
     modifier = QC.Qt.NoModifier
     
-    if event.modifiers() & QC.Qt.AltModifier: modifier = QC.Qt.AltModifier
-    elif event.modifiers() & QC.Qt.ControlModifier: modifier = QC.Qt.ControlModifier
-    elif event.modifiers() & QC.Qt.ShiftModifier: modifier = QC.Qt.ShiftModifier
-    elif event.modifiers() & QC.Qt.KeypadModifier: modifier = QC.Qt.KeypadModifier
-    elif event.modifiers() & QC.Qt.GroupSwitchModifier: modifier = QC.Qt.GroupSwitchModifier
-    elif event.modifiers() & QC.Qt.MetaModifier: modifier = QC.Qt.MetaModifier
+    if event.modifiers() & QC.Qt.AltModifier:
+        
+        modifier = QC.Qt.AltModifier
+        
+    elif event.modifiers() & QC.Qt.ControlModifier:
+        
+        modifier = QC.Qt.ControlModifier
+        
+    elif event.modifiers() & QC.Qt.ShiftModifier:
+        
+        modifier = QC.Qt.ShiftModifier
+        
+    elif event.modifiers() & QC.Qt.KeypadModifier:
+        
+        modifier = QC.Qt.KeypadModifier
+        
+    elif event.modifiers() & QC.Qt.GroupSwitchModifier:
+        
+        modifier = QC.Qt.GroupSwitchModifier
+        
+    elif event.modifiers() & QC.Qt.MetaModifier:
+        
+        modifier = QC.Qt.MetaModifier
+        
     
     key = event.key()
     
@@ -965,7 +997,7 @@ class ShortcutSet( HydrusSerialisable.SerialisableBaseNamed ):
                 
                 if serialisable_service_key is None:
                     
-                    command = CAC.ApplicationCommand( CAC.APPLICATION_COMMAND_TYPE_SIMPLE, data )
+                    command = CAC.ApplicationCommand.STATICCreateSimpleCommand( data )
                     
                 else:
                     
@@ -1029,13 +1061,13 @@ class ShortcutSet( HydrusSerialisable.SerialisableBaseNamed ):
             
         
     
-    def GetShortcuts( self, simple_command: int ):
+    def GetShortcuts( self, simple_action: int ):
         
         shortcuts = []
         
         for ( shortcut, command ) in self._shortcuts_to_commands.items():
             
-            if command.IsSimpleCommand() and command.GetData() == simple_command:
+            if command.IsSimpleCommand() and command.GetSimpleAction() == simple_action:
                 
                 shortcuts.append( shortcut )
                 
@@ -1058,6 +1090,8 @@ class ShortcutsHandler( QC.QObject ):
         QC.QObject.__init__( self, parent )
         
         self._catch_mouse = catch_mouse
+        
+        self._last_click_down_position = QC.QPoint( 0, 0 )
         
         filter_target = parent
         
@@ -1201,6 +1235,15 @@ class ShortcutsHandler( QC.QObject ):
             
             if event.type() in ( QC.QEvent.MouseButtonPress, QC.QEvent.MouseButtonRelease, QC.QEvent.MouseButtonDblClick, QC.QEvent.Wheel ):
                 
+                global CUMULATIVE_MOUSEWARP_MANHATTAN_LENGTH
+                
+                if event.type() == QC.QEvent.MouseButtonPress:
+                    
+                    self._last_click_down_position = event.globalPos()
+                    
+                    CUMULATIVE_MOUSEWARP_MANHATTAN_LENGTH = 0
+                    
+                
                 if event.type() != QC.QEvent.Wheel and self._ignore_activating_mouse_click and not HydrusData.TimeHasPassedPrecise( self._frame_activated_time + 0.017 ):
                     
                     if event.type() == QC.QEvent.MouseButtonRelease:
@@ -1209,6 +1252,22 @@ class ShortcutsHandler( QC.QObject ):
                         
                     
                     return False
+                    
+                
+                if event.type() == QC.QEvent.MouseButtonRelease:
+                    
+                    release_press_pos = event.globalPos()
+                    
+                    delta = release_press_pos - self._last_click_down_position
+                    
+                    approx_distance = delta.manhattanLength() + CUMULATIVE_MOUSEWARP_MANHATTAN_LENGTH
+                    
+                    # if mouse release is some distance from mouse down (i.e. we are ending a drag), then don't fire off a release command
+                    
+                    if approx_distance > 20:
+                        
+                        return False
+                        
                     
                 
                 i_should_catch_shortcut_event = IShouldCatchShortcutEvent( self._filter_target, watched, event = event )
@@ -1436,4 +1495,8 @@ class ShortcutsManager( QC.QObject ):
         
     
 shortcuts_manager = ShortcutsManager.instance
-shortcuts_manager_initialised = lambda: ShortcutsManager.my_instance is not None
+
+def shortcuts_manager_initialised():
+    
+    return ShortcutsManager.my_instance is not None
+    

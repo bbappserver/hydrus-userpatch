@@ -5,11 +5,13 @@ import traceback
 from qtpy import QtCore as QC
 from qtpy import QtWidgets as QW
 
+from hydrus.core import HydrusConstants as HC
 from hydrus.core import HydrusData
 from hydrus.core import HydrusGlobals as HG
 
 from hydrus.client import ClientConstants as CC
 from hydrus.client import ClientData
+from hydrus.client import ClientLocation
 from hydrus.client import ClientThreading
 from hydrus.client.gui import ClientGUIDialogsQuick
 from hydrus.client.gui import ClientGUIFunctions
@@ -17,7 +19,6 @@ from hydrus.client.gui import ClientGUITopLevelWindows
 from hydrus.client.gui import QtPorting as QP
 from hydrus.client.gui.networking import ClientGUINetworkJobControl
 from hydrus.client.gui.widgets import ClientGUICommon
-from hydrus.client.gui.widgets import ClientGUIControls
 
 class PopupWindow( QW.QFrame ):
     
@@ -47,7 +48,7 @@ class PopupMessage( PopupWindow ):
     
     TEXT_CUTOFF = 1024
     
-    def __init__( self, parent, manager, job_key ):
+    def __init__( self, parent, manager, job_key: ClientThreading.JobKey ):
         
         PopupWindow.__init__( self, parent, manager )
         
@@ -120,6 +121,7 @@ class PopupMessage( PopupWindow ):
         
         self._network_job_ctrl = ClientGUINetworkJobControl.NetworkJobControl( self )
         self._network_job_ctrl.hide()
+        self._time_network_job_disappeared = 0
         
         self._copy_to_clipboard_button = ClientGUICommon.BetterButton( self, 'copy to clipboard', self.CopyToClipboard )
         self._copy_to_clipboard_button_ev = QP.WidgetEventFilter( self._copy_to_clipboard_button )
@@ -130,6 +132,11 @@ class PopupMessage( PopupWindow ):
         self._show_files_button_ev = QP.WidgetEventFilter( self._show_files_button )
         self._show_files_button_ev.EVT_RIGHT_DOWN( self.EventDismiss )
         self._show_files_button.hide()
+        
+        self._user_callable_button = ClientGUICommon.BetterButton( self, 'run command', self.CallUserCallable )
+        self._user_callable_button_ev = QP.WidgetEventFilter( self._user_callable_button )
+        self._user_callable_button_ev.EVT_RIGHT_DOWN( self.EventDismiss )
+        self._user_callable_button.hide()
         
         self._show_tb_button = ClientGUICommon.BetterButton( self, 'show traceback', self.ShowTB )
         self._show_tb_button_ev = QP.WidgetEventFilter( self._show_tb_button )
@@ -177,6 +184,7 @@ class PopupMessage( PopupWindow ):
         QP.AddToLayout( vbox, self._network_job_ctrl )
         QP.AddToLayout( vbox, self._copy_to_clipboard_button )
         QP.AddToLayout( vbox, self._show_files_button )
+        QP.AddToLayout( vbox, self._user_callable_button )
         QP.AddToLayout( vbox, self._show_tb_button )
         QP.AddToLayout( vbox, self._tb_text )
         QP.AddToLayout( vbox, self._copy_tb_button )
@@ -223,6 +231,16 @@ class PopupMessage( PopupWindow ):
         self._no.hide()
         
     
+    def CallUserCallable( self ):
+        
+        user_callable = self._job_key.GetUserCallable()
+        
+        if user_callable is not None:
+            
+            user_callable()
+            
+        
+    
     def Cancel( self ):
         
         self._job_key.Cancel()
@@ -233,7 +251,12 @@ class PopupMessage( PopupWindow ):
     
     def CopyTB( self ):
         
-        HG.client_controller.pub( 'clipboard', 'text', self._job_key.ToString() )
+        info = 'v{}, {}, {}'.format( HC.SOFTWARE_VERSION, sys.platform.lower(), 'frozen' if HC.RUNNING_FROM_FROZEN_BUILD else 'source' )
+        trace = self._job_key.ToString()
+        
+        full_text = info + os.linesep + trace
+        
+        HG.client_controller.pub( 'clipboard', 'text', full_text )
         
     
     def CopyToClipboard( self ):
@@ -270,7 +293,9 @@ class PopupMessage( PopupWindow ):
             
             ( popup_files, popup_files_name ) = result
             
-            HG.client_controller.pub( 'new_page_query', CC.LOCAL_FILE_SERVICE_KEY, initial_hashes = popup_files, page_name = popup_files_name )
+            location_context = ClientLocation.LocationContext.STATICCreateSimple( CC.COMBINED_LOCAL_MEDIA_SERVICE_KEY )
+            
+            HG.client_controller.pub( 'new_page_query', location_context, initial_hashes = popup_files, page_name = popup_files_name )
             
         
     
@@ -316,9 +341,7 @@ class PopupMessage( PopupWindow ):
     
     def UpdateMessage( self ):
         
-        paused = self._job_key.IsPaused()
-        
-        title = self._job_key.GetIfHasVariable( 'popup_title' )
+        title = self._job_key.GetStatusTitle()
         
         if title is not None:
             
@@ -330,6 +353,10 @@ class PopupMessage( PopupWindow ):
             
             self._title.hide()
             
+        
+        #
+        
+        paused = self._job_key.IsPaused()
         
         popup_text_1 = self._job_key.GetIfHasVariable( 'popup_text_1' )
         
@@ -353,6 +380,8 @@ class PopupMessage( PopupWindow ):
             self._text_1.hide()
             
         
+        #
+        
         popup_gauge_1 = self._job_key.GetIfHasVariable( 'popup_gauge_1' )
         
         if popup_gauge_1 is not None and not paused:
@@ -369,6 +398,8 @@ class PopupMessage( PopupWindow ):
             self._gauge_1.hide()
             
         
+        #
+        
         popup_text_2 = self._job_key.GetIfHasVariable( 'popup_text_2' )
         
         if popup_text_2 is not None and not paused:
@@ -383,6 +414,8 @@ class PopupMessage( PopupWindow ):
             
             self._text_2.hide()
             
+        
+        #
         
         popup_gauge_2 = self._job_key.GetIfHasVariable( 'popup_gauge_2' )
         
@@ -400,13 +433,15 @@ class PopupMessage( PopupWindow ):
             self._gauge_2.hide()
             
         
+        #
+        
         popup_yes_no_question = self._job_key.GetIfHasVariable( 'popup_yes_no_question' )
         
         if popup_yes_no_question is not None and not paused:
             
             text = popup_yes_no_question
             
-            self._text_yes_no.setText( self._ProcessText(text) )
+            self._text_yes_no.setText( self._ProcessText( text ) )
             
             self._text_yes_no.show()
             
@@ -420,22 +455,32 @@ class PopupMessage( PopupWindow ):
             self._no.hide()
             
         
-        if self._job_key.HasVariable( 'popup_network_job' ):
+        #
+        
+        network_job = self._job_key.GetNetworkJob()
+        
+        if network_job is None:
             
-            # this can be validly None, which confuses the getifhas result
+            if self._network_job_ctrl.HasNetworkJob():
+                
+                self._network_job_ctrl.ClearNetworkJob()
+                
+                self._time_network_job_disappeared = HydrusData.GetNow()
+                
             
-            popup_network_job = self._job_key.GetIfHasVariable( 'popup_network_job' )
-            
-            self._network_job_ctrl.SetNetworkJob( popup_network_job )
-            
-            self._network_job_ctrl.show()
+            if self._network_job_ctrl.isVisible() and HydrusData.TimeHasPassed( self._time_network_job_disappeared + 10 ):
+                
+                self._network_job_ctrl.hide()
+                
             
         else:
             
-            self._network_job_ctrl.ClearNetworkJob()
+            self._network_job_ctrl.SetNetworkJob( network_job )
             
-            self._network_job_ctrl.hide()
+            self._network_job_ctrl.show()
             
+        
+        #
         
         popup_clipboard = self._job_key.GetIfHasVariable( 'popup_clipboard' )
         
@@ -454,6 +499,8 @@ class PopupMessage( PopupWindow ):
             
             self._copy_to_clipboard_button.hide()
             
+        
+        #
         
         result = self._job_key.GetIfHasVariable( 'popup_files' )
         
@@ -477,30 +524,44 @@ class PopupMessage( PopupWindow ):
             self._show_files_button.hide()
             
         
-        popup_traceback = self._job_key.GetIfHasVariable( 'popup_traceback' )
+        #
+        
+        user_callable = self._job_key.GetUserCallable()
+        
+        if user_callable is None:
+            
+            self._user_callable_button.hide()
+            
+        else:
+            
+            self._user_callable_button.setText( user_callable.GetLabel() )
+            
+            self._user_callable_button.show()
+            
+        
+        #
+        
+        popup_traceback = self._job_key.GetTraceback()
         
         if popup_traceback is not None:
             
             self._copy_tb_button.show()
-            
-        else:
-            
-            self._copy_tb_button.hide()
-            
-        
-        if popup_traceback is not None:
+            self._show_tb_button.show()
             
             text = popup_traceback
             
             self._tb_text.setText( self._ProcessText( text ) )
             
-            self._show_tb_button.show()
+            # do not show automatically--that is up to the show button
             
         else:
             
+            self._copy_tb_button.hide()
             self._show_tb_button.hide()
             self._tb_text.hide()
             
+        
+        #
         
         if self._job_key.IsPausable():
             
@@ -584,13 +645,13 @@ class PopupMessageManager( QW.QWidget ):
         
         job_key.SetVariable( 'popup_text_1', 'initialising popup message manager\u2026' )
         
-        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.25, 0.5, self.REPEATINGUpdate )
+        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.25, 0.5, 'repeating popup message update', self.REPEATINGUpdate )
         
         self._summary_bar.expandCollapse.connect( self.ExpandCollapse )
         
-        HG.client_controller.CallLaterQtSafe(self, 0.5, self.AddMessage, job_key)
+        HG.client_controller.CallLaterQtSafe( self, 0.5, 'initialise message', self.AddMessage, job_key )
         
-        HG.client_controller.CallLaterQtSafe(self, 1.0, job_key.Delete)
+        HG.client_controller.CallLaterQtSafe( self, 1.0, 'delete initial message', job_key.Delete )
         
     
     def _CheckPending( self ):
@@ -626,11 +687,14 @@ class PopupMessageManager( QW.QWidget ):
             
             message_window = sizer_item.widget()
             
-            if not message_window: continue
+            if not message_window:
+                
+                continue
+                
             
             job_key = message_window.GetJobKey()
             
-            if job_key.HasVariable( 'popup_traceback' ):
+            if job_key.HadError():
                 
                 return True
                 
@@ -641,7 +705,10 @@ class PopupMessageManager( QW.QWidget ):
     
     def _DoDebugHide( self ):
         
-        if not QP.isValid( self ): return
+        if not QP.isValid( self ):
+            
+            return
+            
         
         parent = self.parentWidget()
         
@@ -716,11 +783,9 @@ class PopupMessageManager( QW.QWidget ):
             
             gui_frame = self.parentWidget()
             
-            possibly_on_hidden_virtual_desktop = not ClientGUIFunctions.MouseIsOnMyDisplay( gui_frame )
-            
             gui_is_hidden = not gui_frame.isVisible()
             
-            going_to_bug_out_at_hide_or_show = possibly_on_hidden_virtual_desktop or gui_is_hidden
+            going_to_bug_out_at_hide_or_show = gui_is_hidden
             
             current_focus_tlw = QW.QApplication.activeWindow()
             
@@ -815,13 +880,37 @@ class PopupMessageManager( QW.QWidget ):
         
         main_gui = self.parentWidget()
         
-        # test both because when user uses a shortcut to send gui to a diff monitor, we can't chase it
-        # this may need a better test for virtual display dismissal
-        not_on_hidden_or_virtual_display = ClientGUIFunctions.MouseIsOnMyDisplay( main_gui ) or ClientGUIFunctions.MouseIsOnMyDisplay( self )
+        gui_is_hidden = not main_gui.isVisible()
         
-        main_gui_up = not main_gui.isMinimized()
+        if gui_is_hidden:
+            
+            return False
+            
         
-        return not_on_hidden_or_virtual_display and main_gui_up
+        if HG.client_controller.new_options.GetBoolean( 'freeze_message_manager_when_mouse_on_other_monitor' ):
+            
+            # test both because when user uses a shortcut to send gui to a diff monitor, we can't chase it
+            # this may need a better test for virtual display dismissal
+            # this is also a proxy for hidden/virtual displays, which is really what it is going on about
+            on_my_monitor = ClientGUIFunctions.MouseIsOnMyDisplay( main_gui ) or ClientGUIFunctions.MouseIsOnMyDisplay( self )
+            
+            if not on_my_monitor:
+                
+                return False
+                
+            
+        
+        if HG.client_controller.new_options.GetBoolean( 'freeze_message_manager_when_main_gui_minimised' ):
+            
+            main_gui_up = not main_gui.isMinimized()
+            
+            if not main_gui_up:
+                
+                return False
+                
+            
+        
+        return True
         
     
     def _TryToMergeMessage( self, job_key ):
@@ -872,7 +961,7 @@ class PopupMessageManager( QW.QWidget ):
     
     def _Update( self ):
         
-        if HG.view_shutdown:
+        if HG.started_shutdown:
             
             self._update_job.Cancel()
             
@@ -1067,6 +1156,7 @@ class PopupMessageManager( QW.QWidget ):
             raise
             
         
+    
 # This was originally a reviewpanel subclass which is a scroll area subclass, but having it in a scroll area didn't work out with dynamically updating size as the widget contents change.
 class PopupMessageDialogPanel( QW.QWidget ):
     
@@ -1094,7 +1184,7 @@ class PopupMessageDialogPanel( QW.QWidget ):
         
         self._message_pubbed = False
         
-        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.25, 0.5, self.REPEATINGUpdate )
+        self._update_job = HG.client_controller.CallRepeatingQtSafe( self, 0.25, 0.5, 'repeating popup dialog update', self.REPEATINGUpdate )
         
     
     def CleanBeforeDestroy( self ):
